@@ -1,0 +1,165 @@
+/* ─────────────────────────────────────────────────────────────────────────
+ * Horae · Patisserie Modern theme
+ * Palette grounded in real bakery materials (mulberry icing, caramel,
+ * buttercream) — warm, muted, modern. Designed to replace the previous
+ * navy/gold/black corporate look without changing app architecture.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Brand */
+  --color-brand: #7B5C7C;          /* mulberry icing */
+  --color-brand-soft: #9B7C9C;
+  --color-brand-tint: #F1E9F0;     /* faintest brand wash */
+  --color-accent: #D4946A;         /* warm caramel */
+  --color-accent-soft: #E8B891;
+  --color-accent-tint: #FBEFE2;
+
+  /* Supporting palette */
+  --color-sage: #9BB89F;
+  --color-rose: #E3B5BC;
+  --color-sky: #A6C0CE;
+
+  /* Surfaces & ink */
+  --color-cream: #FBF6EE;
+  --color-cream-deep: #F4ECDD;
+  --color-ink: #2E2530;            /* deep mulberry-charcoal */
+  --color-ink-soft: #6B5D6E;
+  --color-line: #EFE5D5;           /* warm divider */
+}
+
+/* ─── Base ──────────────────────────────────────────────────────────────── */
+html {
+  background-color: var(--color-cream);
+}
+body {
+  background-color: var(--color-cream);
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  font-size: 15.5px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-display { font-family: var(--font-display); font-feature-settings: "ss01", "ss02"; }
+
+/* ─── Scrollbars (soft, on-brand) ───────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-brand) 28%, transparent);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-brand) 50%, transparent);
+}
+
+/* ─── Type-size bumps for legibility ────────────────────────────────────── */
+/* Bump tiny hard-coded sizes up so dense panels are easier to read. */
+.text-\[7px\]  { font-size: 9px  !important; }
+.text-\[8px\]  { font-size: 10px !important; }
+.text-\[9px\]  { font-size: 11px !important; }
+.text-\[10px\] { font-size: 12px !important; }
+.text-\[11px\] { font-size: 13px !important; }
+.text-\[13px\] { font-size: 14.5px !important; }
+.text-\[15px\] { font-size: 16px !important; }
+.text-\[17px\] { font-size: 18px !important; }
+.text-xs   { font-size: 13px !important; line-height: 1.5; }
+.text-sm   { font-size: 14.5px !important; line-height: 1.55; }
+.text-base { font-size: 16px !important; line-height: 1.6; }
+
+/* ─── Brand color overrides ─────────────────────────────────────────────── */
+/* Map legacy gold #C5A880 → caramel accent */
+.text-\[\#C5A880\]            { color: var(--color-accent) !important; }
+.bg-\[\#C5A880\]              { background-color: var(--color-accent) !important; }
+.border-\[\#C5A880\]          { border-color: var(--color-accent) !important; }
+.border-l-\[\#C5A880\]        { border-left-color: var(--color-accent) !important; }
+.fill-\[\#C5A880\]            { fill: var(--color-accent) !important; }
+.focus\:border-\[\#C5A880\]:focus { border-color: var(--color-accent) !important; }
+
+.hover\:text-\[\#C5A880\]:hover { color: color-mix(in srgb, var(--color-accent) 85%, var(--color-ink)) !important; }
+.hover\:bg-\[\#C5A880\]:hover   { background-color: color-mix(in srgb, var(--color-accent) 85%, var(--color-ink)) !important; }
+.hover\:text-\[\#C5A880\]\/90:hover { color: color-mix(in srgb, var(--color-accent) 90%, transparent) !important; }
+.hover\:bg-\[\#C5A880\]\/90:hover   { background-color: color-mix(in srgb, var(--color-accent) 90%, transparent) !important; }
+
+.text-\[\#C5A880\]\/80   { color: color-mix(in srgb, var(--color-accent) 80%, transparent) !important; }
+.bg-\[\#C5A880\]\/15     { background-color: color-mix(in srgb, var(--color-accent) 18%, transparent) !important; }
+.bg-\[\#C5A880\]\/25     { background-color: color-mix(in srgb, var(--color-accent) 28%, transparent) !important; }
+.ring-\[\#C5A880\]\/20   { --tw-ring-color: color-mix(in srgb, var(--color-accent) 22%, transparent) !important; }
+.border-\[\#C5A880\]\/30 { border-color: color-mix(in srgb, var(--color-accent) 35%, transparent) !important; }
+
+/* Map legacy navy #162D4E → mulberry brand */
+.text-\[\#162D4E\]   { color: var(--color-brand) !important; }
+.bg-\[\#162D4E\]     { background-color: var(--color-brand) !important; }
+.border-\[\#162D4E\] { border-color: var(--color-brand) !important; }
+.fill-\[\#162D4E\]   { fill: var(--color-brand) !important; }
+
+.hover\:bg-\[\#162D4E\]:hover   { background-color: color-mix(in srgb, var(--color-brand) 88%, var(--color-ink)) !important; }
+.hover\:text-\[\#162D4E\]:hover { color: color-mix(in srgb, var(--color-brand) 88%, var(--color-ink)) !important; }
+.hover\:bg-\[\#162D4E\]\/90:hover { background-color: color-mix(in srgb, var(--color-brand) 90%, transparent) !important; }
+
+.bg-\[\#162D4E\]\/10     { background-color: color-mix(in srgb, var(--color-brand) 12%, transparent) !important; }
+.bg-\[\#162D4E\]\/15     { background-color: color-mix(in srgb, var(--color-brand) 18%, transparent) !important; }
+.bg-\[\#162D4E\]\/25     { background-color: color-mix(in srgb, var(--color-brand) 28%, transparent) !important; }
+.text-\[\#162D4E\]\/80   { color: color-mix(in srgb, var(--color-brand) 80%, transparent) !important; }
+.border-\[\#162D4E\]\/30 { border-color: color-mix(in srgb, var(--color-brand) 35%, transparent) !important; }
+.ring-\[\#162D4E\]\/20   { --tw-ring-color: color-mix(in srgb, var(--color-brand) 22%, transparent) !important; }
+
+/* Hover variants for #1E3A5F (legacy darker navy used a few places) */
+.bg-\[\#1E3A5F\]          { background-color: color-mix(in srgb, var(--color-brand) 90%, var(--color-ink)) !important; }
+.hover\:bg-\[\#1E3A5F\]:hover { background-color: color-mix(in srgb, var(--color-brand) 90%, var(--color-ink)) !important; }
+
+/* Form controls — make checkbox/radio accents on-brand */
+.accent-\[\#162D4E\] { accent-color: var(--color-brand) !important; }
+.accent-\[\#C5A880\] { accent-color: var(--color-accent) !important; }
+
+/* ─── Soften dominant slate surfaces toward warm cream ──────────────────── */
+/* Only adjust the surface tones — slate-600..900 text stays for hierarchy. */
+.bg-slate-50  { background-color: var(--color-cream) !important; }
+.bg-slate-100 { background-color: var(--color-cream-deep) !important; }
+.bg-slate-50\/80 { background-color: color-mix(in srgb, var(--color-cream) 92%, transparent) !important; }
+.border-slate-100 { border-color: var(--color-line) !important; }
+.border-slate-200 { border-color: color-mix(in srgb, var(--color-line) 80%, var(--color-ink-soft)) !important; }
+.divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: var(--color-line) !important; }
+.hover\:bg-slate-50:hover  { background-color: var(--color-cream) !important; }
+.hover\:bg-slate-100:hover { background-color: var(--color-cream-deep) !important; }
+
+/* Slate-900 buttons → keep as primary CTA but use brand instead of black */
+.bg-slate-900  { background-color: var(--color-brand) !important; }
+.hover\:bg-slate-800:hover { background-color: color-mix(in srgb, var(--color-brand) 88%, var(--color-ink)) !important; }
+
+/* ─── Soft elevation utility classes used by the new dashboard ──────────── */
+.shadow-warm {
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--color-brand) 8%, transparent),
+    0 8px 24px -12px color-mix(in srgb, var(--color-brand) 18%, transparent);
+}
+.shadow-warm-lg {
+  box-shadow:
+    0 2px 4px color-mix(in srgb, var(--color-brand) 8%, transparent),
+    0 24px 48px -24px color-mix(in srgb, var(--color-brand) 22%, transparent);
+}
+
+/* Decorative repeating "piped dots" pattern used as hero watermark */
+.bg-piped-dots {
+  background-image: radial-gradient(circle at 1px 1px,
+    color-mix(in srgb, var(--color-accent) 38%, transparent) 1.4px,
+    transparent 1.6px);
+  background-size: 16px 16px;
+}
+
+/* Subtle motion respect */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

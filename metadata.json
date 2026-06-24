@@ -1,0 +1,6 @@
+{
+  "name": "Horae Workflow Portal",
+  "description": "Multi-tenant SaaS operational platform for bakery management, featuring granular workspace administration, department/role-based notification/notices, checklist systems, and collaborative task management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

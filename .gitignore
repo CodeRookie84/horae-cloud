@@ -1,0 +1,26 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+
+# Environment & secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Vercel
+.vercel
+
+# Supabase CLI cache
+supabase/.temp
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+desktop.ini
+

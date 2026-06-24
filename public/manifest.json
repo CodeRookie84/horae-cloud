@@ -1,0 +1,37 @@
+{
+  "id": "/",
+  "short_name": "Horae Ops",
+  "name": "Horae Operations Control",
+  "description": "Multi-tenant Operations and Compliance Platform.",
+  "icons": [
+    {
+      "src": "/horae-logo.jpg",
+      "type": "image/jpeg",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/horae-logo.jpg",
+      "type": "image/jpeg",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ],
+  "start_url": "/dashboard",
+  "scope": "/",
+  "background_color": "#0F172A",
+  "theme_color": "#162D4E",
+  "display": "standalone",
+  "orientation": "portrait",
+  "handle_links": "preferred",
+  "categories": ["business", "productivity"],
+  "screenshots": [
+    {
+      "src": "/horae-banner.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Horae Operations Dashboard"
+    }
+  ]
+}
