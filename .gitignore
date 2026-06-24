@@ -24,3 +24,8 @@ supabase/.temp
 Thumbs.db
 desktop.ini
 
+# Local debug/throwaway scripts (often contain hardcoded credentials).
+# Reintroduce specific files explicitly via `git add -f scratch/<file>`
+# only after removing any hardcoded tokens.
+scratch/
+
