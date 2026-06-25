@@ -40,26 +40,62 @@ export async function seedDefaultChannels(
   creatorId: string,
   allUsers: BasicUser[]
 ): Promise<void> {
+  // Scoped to this outlet (tenant) only — each outlet must get its own room,
+  // independent of whether other outlets already have channels.
   const { data: existing } = await supabase
     .from('chat_channels')
     .select('id')
-    // .eq('tenant_id', tenantId)
+    .eq('tenant_id', tenantId)
     .limit(1);
 
   if (existing && existing.length > 0) return;
 
   const allUserIds = allUsers.map(u => u.id);
 
-  // Fetch tenant name to use as channel name
-  const { data: tenant } = await supabase.from('tenants').select('name').eq('id', tenantId).single();
+  // Fetch tenant name + client to use as channel name / scope
+  const { data: tenant } = await supabase.from('tenants').select('name, client_id').eq('id', tenantId).single();
   const outletName = tenant ? tenant.name : 'Outlet';
   const slug = outletName.toLowerCase().replace(/\s+/g, '-');
 
   // Base Outlet Channel
-  const channel = await createChannel(tenantId, slug, 'outlet', creatorId, `${outletName} Outlet Channel`);
+  const channel = await createChannel(tenantId, slug, 'outlet', creatorId, `${outletName} Outlet Channel`, undefined, undefined, tenant?.client_id);
   if (channel) {
     await addMembers(channel.id, allUserIds);
     await sendSystemMessage(channel.id, tenantId, `Welcome to the ${outletName} channel!`);
+  }
+}
+
+/**
+ * Ensure every outlet under a client has its room/channel, and that all
+ * client admins (ADMIN/SUPER_ADMIN) are members of every outlet channel —
+ * so admins always see + can read/post in every outlet's room, regardless
+ * of which outlet they personally belong to. Call this whenever an admin
+ * opens Team Talk, and right after a new outlet is provisioned.
+ */
+export async function ensureOutletChannelsForClient(
+  clientId: string,
+  outletTenantIds: string[],
+  allClientUsers: BasicUser[],
+  adminUserIds: string[],
+  creatorId: string
+): Promise<void> {
+  for (const tenantId of outletTenantIds) {
+    const usersInOutlet = allClientUsers; // outlet channel membership seeds with the full roster like before
+    await seedDefaultChannels(tenantId, creatorId, usersInOutlet);
+  }
+
+  if (adminUserIds.length === 0 || outletTenantIds.length === 0) return;
+
+  const { data: outletChannels } = await supabase
+    .from('chat_channels')
+    .select('id')
+    .eq('client_id', clientId)
+    .in('tenant_id', outletTenantIds)
+    .eq('type', 'outlet')
+    .eq('is_archived', false);
+
+  for (const ch of outletChannels || []) {
+    await addMembers(ch.id, adminUserIds);
   }
 }
 
@@ -174,6 +210,7 @@ function mapChannel(row: any): ChatChannel {
   return {
     id: row.id,
     tenantId: row.tenant_id,
+    clientId: row.client_id ?? undefined,
     name: row.name,
     description: row.description,
     type: row.type,
@@ -272,13 +309,18 @@ export async function getChannelMemberIds(channelId: string): Promise<string[]> 
   return data.map(row => row.user_id);
 }
 
-/** Get all channels for tenant (for admin / manager view â€” sees all Rooms/Channels, plus their own DMs) */
-export async function getAllChannels(tenantId: string, userId: string): Promise<ChatChannel[]> {
-  // 1. Fetch all non-DM channels (Rooms, Channels, Departments)
+/**
+ * Get all channels visible to an admin/manager: every non-DM channel across
+ * the given outlet (tenant) IDs — i.e. every outlet under their client —
+ * plus their own DMs. `outletTenantIds` should be every tenant belonging
+ * to the user's client (their own outlet included).
+ */
+export async function getAllChannels(outletTenantIds: string[], userId: string): Promise<ChatChannel[]> {
+  // 1. Fetch all non-DM channels (Rooms, Channels, Departments) within this client's outlets
   const { data: publicData, error: publicErr } = await supabase
     .from('chat_channels')
     .select('*')
-    // .eq('tenant_id', tenantId)
+    .in('tenant_id', outletTenantIds)
     .neq('type', 'dm')
     .eq('is_archived', false);
 
@@ -333,12 +375,20 @@ export async function createChannel(
   createdBy: string,
   description?: string,
   contextType?: 'task' | 'notice' | 'checklist',
-  contextId?: string
+  contextId?: string,
+  clientId?: string
 ): Promise<ChatChannel | null> {
+  let resolvedClientId = clientId;
+  if (!resolvedClientId) {
+    const { data: tenant } = await supabase.from('tenants').select('client_id').eq('id', tenantId).single();
+    resolvedClientId = tenant?.client_id;
+  }
+
   const { data, error } = await supabase
     .from('chat_channels')
     .insert({
       tenant_id: tenantId,
+      client_id: resolvedClientId ?? null,
       name: name.toLowerCase().replace(/\s+/g, '-'),
       description,
       type,
@@ -765,7 +815,6 @@ export async function getUnreadCount(channelId: string, userId: string): Promise
     .from('chat_messages')
     .select('*', { count: 'exact', head: true })
     .eq('channel_id', channelId)
-    .is('thread_id', null)
     .eq('is_deleted', false)
     .neq('sender_id', userId)
     .gt('created_at', lastRead);

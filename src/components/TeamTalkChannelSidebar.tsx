@@ -44,6 +44,8 @@ interface ChannelSidebarProps {
   onStartDirectChat?: () => void;
   /** All tenant users — used for displaying DM partner name */
   allUsers?: AppUser[];
+  /** Called when user reopens a previously-closed DM from the "Closed Direct Chats" section */
+  onReopenDM?: (channelId: string) => void;
 }
 
 const TYPE_ORDER: ChatChannel['type'][] = ['announcement', 'outlet', 'department', 'channel', 'dm', 'context'];
@@ -89,6 +91,7 @@ function ChannelItem({
   onClick,
   onDelete,
   onClose,
+  onReopen,
   activeThreads = [],
   onOpenThread,
   onDeleteThread,
@@ -100,6 +103,7 @@ function ChannelItem({
   onClick: () => void;
   onDelete?: () => void;
   onClose?: () => void;
+  onReopen?: () => void;
   activeThreads?: import('../types').TeamTalkMessage[];
   onOpenThread?: (msg: import('../types').TeamTalkMessage) => void;
   onDeleteThread?: (threadId: string) => void;
@@ -109,6 +113,7 @@ function ChannelItem({
   const Icon = getChannelIcon(channel.type);
   const unread = channel.unreadCount ?? 0;
   const [hovered, setHovered] = useState(false);
+  const hasTrailingAction = Boolean(onClose || onReopen || (onDelete && channel.type !== 'dm' && channel.name !== 'general' && channel.name !== 'announcements'));
 
   return (
     <>
@@ -120,7 +125,7 @@ function ChannelItem({
       <button
         id={`channel-btn-${channel.id}`}
         onClick={onClick}
-        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-[13px] font-medium transition-all cursor-pointer group pr-8 ${
+        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-[13px] font-medium transition-all cursor-pointer group ${hasTrailingAction ? 'pr-8' : ''} ${
           isActive
             ? 'bg-indigo-50 text-indigo-900 shadow-sm ring-1 ring-indigo-500/30 font-bold'
             : 'text-slate-600 hover:text-[#162D4E] hover:bg-white/50'
@@ -138,14 +143,25 @@ function ChannelItem({
         )}
       </button>
 
-      {/* Close DM button (always on hover) */}
-      {hovered && onClose && (
+      {/* Close DM button — always visible alongside the chat name, not just on hover */}
+      {onClose && (
         <button
           onClick={e => { e.stopPropagation(); onClose(); }}
           className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer z-10"
           title="Move to Closed chats"
         >
           <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+
+      {/* Reopen DM button — shown in the Closed Direct Chats section */}
+      {onReopen && (
+        <button
+          onClick={e => { e.stopPropagation(); onReopen(); }}
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer z-10"
+          title="Reopen chat"
+        >
+          <MessageSquarePlus className="w-3.5 h-3.5" />
         </button>
       )}
 
@@ -320,14 +336,24 @@ export default function TeamTalkChannelSidebar({
   allUsers = [],
   onDeleteThread,
   onCloseThread,
+  onReopenDM,
 }: ChannelSidebarProps) {
   const canManageChannels = currentUser.role === Role.ADMIN || currentUser.role === Role.MANAGER || currentUser.role === Role.SUPER_ADMIN;
+  // Channel create/delete/add-member is client-admin only (Manager/Supervisor cannot)
+  const isClientAdmin = currentUser.role === Role.ADMIN || currentUser.role === Role.SUPER_ADMIN;
+
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const matchesQuery = (c: ChatChannel) => !q || c.name.toLowerCase().includes(q);
 
   // Visible DM channels (not closed)
-  const visibleDMChannels = channels.filter(c => c.type === 'dm' && !closedDMChannelIds.includes(c.id));
+  const visibleDMChannels = channels.filter(c => c.type === 'dm' && !closedDMChannelIds.includes(c.id) && matchesQuery(c));
+  // Closed DM channels — shown in their own section at the bottom of the sidebar
+  const closedDMChannels = channels.filter(c => c.type === 'dm' && closedDMChannelIds.includes(c.id) && matchesQuery(c));
   // Group and Channel channels
-  const groupChannelsList = channels.filter(c => c.type === 'channel' || c.type === 'department');
-  const otherChannelsList = channels.filter(c => c.type !== 'dm' && c.type !== 'channel' && c.type !== 'department');
+  const groupChannelsList = channels.filter(c => (c.type === 'channel' || c.type === 'department') && matchesQuery(c));
+  const otherChannelsList = channels.filter(c => c.type !== 'dm' && c.type !== 'channel' && c.type !== 'department' && matchesQuery(c));
 
   // Split each category into unread and read
   const dmUnread = visibleDMChannels.filter(c => (c.unreadCount ?? 0) > 0);
@@ -346,13 +372,13 @@ export default function TeamTalkChannelSidebar({
   // Reusable sub-section: a collapsible mini-header + list
   function SubSection({
     label, icon: Icon, channels: items, bgClass, iconClass, badgeClass, onAdd, onAddTitle,
-    onClose, onDelete, onDeleteThread, onCloseThread,
+    onClose, onReopen, onDelete, onDeleteThread, onCloseThread,
     alwaysShow = false
   }: {
     label: string; icon: React.ElementType; channels: ChatChannel[];
     bgClass: string; iconClass: string; badgeClass: string;
     onAdd?: () => void; onAddTitle?: string;
-    onClose?: (id: string) => void; onDelete?: (ch: ChatChannel) => void;
+    onClose?: (id: string) => void; onReopen?: (id: string) => void; onDelete?: (ch: ChatChannel) => void;
     onDeleteThread?: (threadId: string) => void;
     onCloseThread?: (threadId: string) => void;
     alwaysShow?: boolean;
@@ -387,9 +413,8 @@ export default function TeamTalkChannelSidebar({
               const chThreadsMap = new Map<string, import('../types').TeamTalkMessage>();
               activeThreads?.filter(t => t.channelId === ch.id).forEach(t => chThreadsMap.set(t.id, t));
               unreadThreads?.filter(t => t.channelId === ch.id).forEach(t => chThreadsMap.set(t.id, t));
-              const isChatAdmin = ch.createdBy === currentUser.id;
-              const isClientAdmin = currentUser.role === Role.ADMIN || currentUser.role === Role.MANAGER || currentUser.role === Role.SUPER_ADMIN;
-              const canCloseDM = onClose && (isChatAdmin || isClientAdmin);
+              // Closing (hiding) a DM from your own sidebar is personal/local — any participant can do it.
+              const canCloseDM = Boolean(onClose);
 
               return (
                 <ChannelItem
@@ -398,6 +423,7 @@ export default function TeamTalkChannelSidebar({
                   isActive={ch.id === activeChannelId}
                   onClick={() => onSelectChannel(ch)}
                   onClose={canCloseDM ? () => onClose(ch.id) : undefined}
+                  onReopen={onReopen ? () => onReopen(ch.id) : undefined}
                   onDelete={onDelete ? () => onDelete(ch) : undefined}
                   activeThreads={Array.from(chThreadsMap.values())}
                   onOpenThread={onOpenThread}
@@ -417,60 +443,78 @@ export default function TeamTalkChannelSidebar({
     <aside className="w-full md:w-56 lg:w-64 shrink-0 bg-white flex flex-col border-r border-slate-200/60" id="team-talk-sidebar">
       {/* Header */}
       <div className="p-3 border-b border-slate-100 bg-white relative z-10">
-        <div className="flex items-stretch gap-2">
+        {searchOpen ? (
+          <div className="flex items-stretch gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+              <input
+                autoFocus
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Search channels & chats..."
+                className="w-full pl-8 pr-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-[12px] text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+              />
+            </div>
+            <button
+              onClick={() => { setSearchOpen(false); setQuery(''); }}
+              className="shrink-0 flex items-center justify-center p-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-500 rounded-xl transition-colors cursor-pointer"
+              title="Close search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
           <button
-            onClick={onSearch}
-            className="flex-1 flex items-center gap-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl px-3 py-2 text-slate-500 hover:text-slate-700 transition-all cursor-pointer"
+            onClick={() => setSearchOpen(true)}
+            className="w-full flex items-center gap-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl px-3 py-2 text-slate-500 hover:text-slate-700 transition-all cursor-pointer"
             title="Search channels..."
           >
             <Search className="w-3.5 h-3.5 shrink-0" />
-            <span className="text-[11px] font-medium hidden sm:inline">Search...</span>
+            <span className="text-[11px] font-medium">Search channels & chats...</span>
           </button>
-          {canManageChannels && (
-            <button
-              onClick={onCreateChannel}
-              id="btn-create-channel"
-              className="shrink-0 flex items-center justify-center p-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 rounded-xl transition-colors cursor-pointer"
-              title="Create new channel"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Channel list */}
       <nav className="flex-1 overflow-y-auto p-3 space-y-3" id="channel-list">
 
-        {/* Quick View — styled like section headers */}
+        {/* Quick View — prominent card entry point (mentions + unread threads) */}
         {onOpenInbox && (
           <button
             onClick={onOpenInbox}
-            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition-all cursor-pointer text-[10px] font-bold uppercase tracking-wider ${
+            className={`w-full flex items-center gap-3 p-3 rounded-2xl transition-all cursor-pointer shadow-sm ${
               isInboxActive
-                ? 'bg-slate-700 text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-gradient-to-br from-indigo-600 to-indigo-700 text-white ring-2 ring-indigo-300'
+                : 'bg-gradient-to-br from-indigo-50 to-white text-slate-800 border border-indigo-100 hover:shadow-md hover:-translate-y-0.5'
             }`}
           >
-            <div className="flex items-center gap-1.5">
-              <Inbox className={`w-3.5 h-3.5 ${isInboxActive ? 'text-slate-200' : 'text-slate-500'}`} />
-              <span>Quick View</span>
-            </div>
-            <div className="flex items-center gap-1.5">
+            <div className={`relative shrink-0 w-9 h-9 rounded-xl flex items-center justify-center ${
+              isInboxActive ? 'bg-white/15' : 'bg-indigo-600'
+            }`}>
+              <Inbox className={`w-4.5 h-4.5 ${isInboxActive ? 'text-white' : 'text-white'}`} />
               {totalUnreadMsgs > 0 && (
-                <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold ${isInboxActive ? 'bg-slate-500 text-white' : 'bg-slate-800 text-white'}`}>
-                  {totalUnreadMsgs}
+                <span className={`absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-extrabold flex items-center justify-center shadow ${
+                  isInboxActive ? 'bg-white text-indigo-700' : 'bg-rose-500 text-white'
+                }`}>
+                  {totalUnreadMsgs > 99 ? '99+' : totalUnreadMsgs}
                 </span>
               )}
-              <ChevronRight className={`w-3 h-3 ${isInboxActive ? 'text-slate-300' : 'text-slate-400'}`} />
             </div>
+            <div className="flex-1 text-left min-w-0">
+              <p className="text-[13px] font-bold leading-tight">Quick View</p>
+              <p className={`text-[10px] mt-0.5 truncate ${isInboxActive ? 'text-indigo-100' : 'text-slate-400'}`}>
+                {totalUnreadMsgs > 0 ? `${totalUnreadMsgs} unread · mentions & threads` : 'Mentions & unread threads'}
+              </p>
+            </div>
+            <ChevronRight className={`w-4 h-4 shrink-0 ${isInboxActive ? 'text-indigo-200' : 'text-slate-300'}`} />
           </button>
         )}
 
         {hasNoChannels && (
           <div className="px-4 py-3 text-center text-slate-500 bg-slate-50 rounded-xl mb-4 border border-slate-100">
-            <p className="text-[12px] font-medium">No channels found.</p>
-            <p className="text-[10px] mt-1 text-slate-400">Use the + buttons to create new spaces.</p>
+            <p className="text-[12px] font-medium">{q ? `No matches for "${query}".` : 'No channels found.'}</p>
+            {!q && <p className="text-[10px] mt-1 text-slate-400">Use the + buttons to create new spaces.</p>}
           </div>
         )}
 
@@ -485,7 +529,7 @@ export default function TeamTalkChannelSidebar({
                 <SubSection
                   label="Direct Chats" icon={MessageCircle} channels={dmUnread}
                   bgClass="bg-sky-50 text-sky-800" iconClass="text-sky-500" badgeClass="bg-sky-200 text-sky-900"
-                  onAdd={onStartDirectChat} onAddTitle="Add member"
+                  onAdd={onStartDirectChat} onAddTitle="Start direct chat"
                   onClose={onCloseDM}
                   onDeleteThread={onDeleteThread}
                   onCloseThread={onCloseThread}
@@ -493,16 +537,15 @@ export default function TeamTalkChannelSidebar({
                 <SubSection
                   label="Channels" icon={Users} channels={groupsUnread}
                   bgClass="bg-emerald-50 text-emerald-800" iconClass="text-emerald-500" badgeClass="bg-emerald-200 text-emerald-900"
-                  onAdd={canManageChannels ? onCreateChannel : undefined} onAddTitle="Add member"
-                  onDelete={canManageChannels ? onDeleteChannel : undefined}
+                  onAdd={isClientAdmin ? onCreateChannel : undefined} onAddTitle="Add member"
+                  onDelete={isClientAdmin ? onDeleteChannel : undefined}
                   onDeleteThread={onDeleteThread}
                   onCloseThread={onCloseThread}
                 />
                 <SubSection
                   label="Rooms" icon={Hash} channels={channelsUnread}
                   bgClass="bg-violet-50 text-violet-800" iconClass="text-violet-500" badgeClass="bg-violet-200 text-violet-900"
-                  onAdd={canManageChannels ? onCreateChannel : undefined} onAddTitle="Create channel"
-                  onDelete={canManageChannels ? onDeleteChannel : undefined}
+                  onDelete={isClientAdmin ? onDeleteChannel : undefined}
                   onDeleteThread={onDeleteThread}
                   onCloseThread={onCloseThread}
                 />
@@ -519,7 +562,7 @@ export default function TeamTalkChannelSidebar({
                 <SubSection
                   label="Direct Messages" icon={MessageCircle} channels={dmRead}
                   bgClass="bg-sky-50/60 text-sky-700" iconClass="text-sky-400" badgeClass="bg-sky-100 text-sky-800"
-                  onAdd={onStartDirectChat} onAddTitle="New Direct Message"
+                  onAdd={onStartDirectChat} onAddTitle="Start direct chat"
                   onClose={onCloseDM}
                   onDeleteThread={onDeleteThread}
                   onCloseThread={onCloseThread}
@@ -528,8 +571,8 @@ export default function TeamTalkChannelSidebar({
                 <SubSection
                   label="Channels" icon={Users} channels={groupsRead}
                   bgClass="bg-emerald-50/60 text-emerald-700" iconClass="text-emerald-400" badgeClass="bg-emerald-100 text-emerald-800"
-                  onAdd={canManageChannels ? onCreateChannel : undefined} onAddTitle="Add member"
-                  onDelete={canManageChannels ? onDeleteChannel : undefined}
+                  onAdd={isClientAdmin ? onCreateChannel : undefined} onAddTitle="Add member"
+                  onDelete={isClientAdmin ? onDeleteChannel : undefined}
                   onDeleteThread={onDeleteThread}
                   onCloseThread={onCloseThread}
                   alwaysShow={true}
@@ -537,10 +580,25 @@ export default function TeamTalkChannelSidebar({
                 <SubSection
                   label="Rooms" icon={Hash} channels={channelsRead}
                   bgClass="bg-violet-50/60 text-violet-700" iconClass="text-violet-400" badgeClass="bg-violet-100 text-violet-800"
-                  onAdd={canManageChannels ? onCreateChannel : undefined} onAddTitle="Create channel"
-                  onDelete={canManageChannels ? onDeleteChannel : undefined}
+                  onDelete={isClientAdmin ? onDeleteChannel : undefined}
                   onDeleteThread={onDeleteThread}
                   onCloseThread={onCloseThread}
+                  alwaysShow={true}
+                />
+              </div>
+            )}
+
+            {/* ═══ CLOSED DIRECT CHATS — always last ═══ */}
+            {closedDMChannels.length > 0 && (
+              <div className="space-y-1.5 mt-4">
+                <div className="flex items-center gap-1.5 px-1 pt-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0"></div>
+                  <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest">Closed Direct Chats</span>
+                </div>
+                <SubSection
+                  label="Closed Direct Chats" icon={MessageCircle} channels={closedDMChannels}
+                  bgClass="bg-slate-100 text-slate-600" iconClass="text-slate-400" badgeClass="bg-slate-200 text-slate-700"
+                  onReopen={onReopenDM}
                   alwaysShow={true}
                 />
               </div>

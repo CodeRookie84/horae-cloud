@@ -171,6 +171,8 @@ export interface ChatChannelAutoRule {
 export interface ChatChannel {
   id: string;
   tenantId: string;
+  /** Client (organization) this channel's outlet belongs to — lets client admins see across outlets */
+  clientId?: string;
   spaceId?: string;
   name: string;
   description?: string;

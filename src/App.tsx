@@ -42,6 +42,67 @@ import NotificationPermissionBanner from "./components/NotificationPermissionBan
 import TeamTalk from "./components/TeamTalk";
 
 
+/** Single row in the notifications dropdown — swipe left/right to dismiss, tap to open + mark read. */
+function NotificationRow({
+  notif, onDismiss, onOpen,
+}: {
+  notif: any;
+  onDismiss: () => void;
+  onOpen: () => void;
+}) {
+  const [dragX, setDragX] = useState(0);
+  const touchStartX = useRef<number | null>(null);
+  const DISMISS_THRESHOLD = 80;
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    setDragX(e.touches[0].clientX - touchStartX.current);
+  };
+  const handleTouchEnd = () => {
+    if (Math.abs(dragX) > DISMISS_THRESHOLD) {
+      onDismiss();
+    } else {
+      setDragX(0);
+    }
+    touchStartX.current = null;
+  };
+
+  return (
+    <div className="relative overflow-hidden rounded-xl">
+      <div className="absolute inset-0 flex items-center justify-between px-3 bg-rose-50 text-rose-500 text-[10px] font-semibold">
+        <span>← Swipe to dismiss</span>
+        <span>Swipe to dismiss →</span>
+      </div>
+      <div
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onClick={onOpen}
+        style={{ transform: `translateX(${dragX}px)`, opacity: 1 - Math.min(Math.abs(dragX) / 200, 0.6) }}
+        className="relative bg-white text-left border-b border-slate-50/50 pb-2 text-[11px] space-y-0.5 cursor-pointer hover:bg-slate-50 p-1.5 rounded-xl transition-transform"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <p className="font-medium text-slate-800 leading-tight flex-1">{notif.title}</p>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDismiss(); }}
+            className="text-slate-300 hover:text-rose-500 transition-colors cursor-pointer shrink-0 leading-none text-sm"
+            title="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+        <p className="text-slate-500 font-normal leading-normal">{notif.message}</p>
+        <p className="text-[9px] text-slate-400 font-mono">
+          {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -167,6 +228,27 @@ function AppInner() {
   // Notification alert state
   const [newAlertMessage, setNewAlertMessage] = useState<string>("");
   const [showNotificationDropdown, setShowNotificationDropdown] = useState<boolean>(false);
+  const [dismissedNotificationIds, setDismissedNotificationIds] = useState<string[]>(() => {
+    try {
+      const val = localStorage.getItem(`horae_dismissed_notifications_${activeUser?.id ?? ''}`);
+      return val ? JSON.parse(val) : [];
+    } catch { return []; }
+  });
+  useEffect(() => {
+    if (!activeUser) return;
+    try {
+      const val = localStorage.getItem(`horae_dismissed_notifications_${activeUser.id}`);
+      setDismissedNotificationIds(val ? JSON.parse(val) : []);
+    } catch { setDismissedNotificationIds([]); }
+  }, [activeUser?.id]);
+  const dismissNotification = (id: string) => {
+    setDismissedNotificationIds(prev => {
+      const next = [...prev, id];
+      if (activeUser) localStorage.setItem(`horae_dismissed_notifications_${activeUser.id}`, JSON.stringify(next));
+      return next;
+    });
+  };
+  const visibleNotifications = notifications.filter(n => !dismissedNotificationIds.includes(n.id));
 
   // Load and refresh state triggers
   const refreshLocalState = async () => {
@@ -222,8 +304,9 @@ function AppInner() {
       const { getChannels, getAllChannels, getUnreadThreads } = await import('./services/chatService');
       const isManager = [Role.ADMIN, Role.MANAGER, Role.SUPER_ADMIN, 'Admin', 'Manager', 'Super Admin'].includes(userObj.role as any);
       
+      const clientOutletIds = filteredTenants.map(t => t.id);
       const [channels, unreadThreads] = await Promise.all([
-        isManager ? getAllChannels(tenantObj.id, userObj.id) : getChannels(tenantObj.id, userObj.id),
+        isManager ? getAllChannels(clientOutletIds, userObj.id) : getChannels(tenantObj.id, userObj.id),
         getUnreadThreads(tenantObj.id, userObj.id)
       ]);
       
@@ -275,8 +358,8 @@ function AppInner() {
     const fetchUnread = () => {
       import('./services/chatService').then(({ getChannels, getAllChannels, getUnreadThreads }) => {
         const isManager = [Role.ADMIN, Role.MANAGER, Role.SUPER_ADMIN, 'Admin', 'Manager', 'Super Admin'].includes(activeUser.role as any);
-        const channelsPromise = isManager 
-          ? getAllChannels(activeUser.tenantId, activeUser.id)
+        const channelsPromise = isManager
+          ? getAllChannels(tenants.map(t => t.id), activeUser.id)
           : getChannels(activeUser.tenantId, activeUser.id);
           
         Promise.all([
@@ -292,7 +375,7 @@ function AppInner() {
     fetchUnread();
     const interval = setInterval(fetchUnread, 15000);
     return () => clearInterval(interval);
-  }, [activeUser, activeTenant]);
+  }, [activeUser, activeTenant, tenants]);
 
   // ── Apply deep link once data is loaded ───────────────────────────────────
   useEffect(() => {
@@ -361,16 +444,18 @@ function AppInner() {
 
   const handleAddTenant = async (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise") => {
     const newTenant = await store.addTenant(clientId, name, subdomain, logo, plan);
-    
-    // Auto-generate the Outlet room in Team Talk
+
+    // Auto-generate the Outlet room in Team Talk and make sure every client
+    // admin (not just whoever clicked "Add Outlet") is already a member of it.
     if (activeUser) {
       try {
-        const { createChannel, addMember } = await import('./services/chatService');
-        const slug = name.toLowerCase().replace(/\s+/g, '-');
-        const channel = await createChannel(newTenant.id, slug, 'outlet', activeUser.id, `${name} Outlet Channel`);
-        if (channel) {
-           await addMember(channel.id, activeUser.id, 'admin');
-        }
+        const { ensureOutletChannelsForClient } = await import('./services/chatService');
+        const clientOutletIds = [...allTenants.filter(t => t.clientId === clientId).map(t => t.id), newTenant.id];
+        const clientUsers = allUsers.filter(u => clientOutletIds.includes(u.tenantId));
+        const adminUserIds = clientUsers
+          .filter(u => u.role === Role.ADMIN || u.role === Role.SUPER_ADMIN)
+          .map(u => u.id);
+        await ensureOutletChannelsForClient(clientId, clientOutletIds, clientUsers, adminUserIds, activeUser.id);
       } catch (e) {
         console.error("Failed to auto-create outlet room:", e);
       }
@@ -782,14 +867,14 @@ function AppInner() {
                 className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all relative cursor-pointer"
               >
                 <Bell className="w-5 h-5" />
-                {notifications.length > 0 && (
+                {visibleNotifications.length > 0 && (
                   <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-amber-500 ring-2 ring-white" />
                 )}
               </button>
 
               {/* Bullet Notifications Feed Dropdown */}
               {showNotificationDropdown && (
-                <div 
+                <div
                   className="absolute right-0 mt-2.5 w-80 bg-white border border-slate-150 rounded-2xl shadow-xl z-50 p-4 space-y-3.5"
                   id="notifications-dropdown-menu"
                 >
@@ -799,19 +884,22 @@ function AppInner() {
                       Dynamic Horae Alerts
                     </h4>
                     <span className="text-[9px] font-mono text-slate-400 font-medium uppercase">
-                      {notifications.length} Shift Messages
+                      {visibleNotifications.length} Shift Messages
                     </span>
                   </div>
 
                   <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1" id="notifications-dropdown-feed">
-                    {notifications.length === 0 ? (
+                    {visibleNotifications.length === 0 ? (
                       <p className="text-[11px] text-slate-400 py-4 text-center">Clear notification queue!</p>
                     ) : (
-                      notifications.map(notif => (
-                        <div 
-                          key={notif.id} 
-                          onClick={() => {
+                      visibleNotifications.map(notif => (
+                        <NotificationRow
+                          key={notif.id}
+                          notif={notif}
+                          onDismiss={() => dismissNotification(notif.id)}
+                          onOpen={() => {
                             setShowNotificationDropdown(false);
+                            dismissNotification(notif.id);
                             if (notif.category === "notice") {
                               handleSetActiveTab("dashboard");
                               setTimeout(() => {
@@ -828,14 +916,7 @@ function AppInner() {
                               }, 150);
                             }
                           }}
-                          className="text-left border-b border-slate-50/50 pb-2 text-[11px] space-y-0.5 cursor-pointer hover:bg-slate-50 p-1.5 rounded-xl transition-all"
-                        >
-                          <p className="font-medium text-slate-800 leading-tight">{notif.title}</p>
-                          <p className="text-slate-500 font-normal leading-normal">{notif.message}</p>
-                          <p className="text-[9px] text-slate-400 font-mono">
-                            {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </p>
-                        </div>
+                        />
                       ))
                     )}
                   </div>
@@ -1070,6 +1151,7 @@ function AppInner() {
                     <TeamTalk
                       activeUser={activeUser}
                       tenantId={activeUser.tenantId}
+                      tenants={tenants}
                       allTenantUsers={[Role.SUPER_ADMIN, Role.ADMIN].includes(activeUser.role as Role) ? allUsers : allUsers.filter(u => tenants.map(t => t.id).includes(u.tenantId))}
                       tasks={tasks}
                       onCreateTask={async (title, description, _channelId, _msgId, assigneeIds) => {

@@ -38,7 +38,7 @@ The UI is grounded in real bakery materials rather than another generic SaaS the
 
 | Token | Hex | Used for |
 |-------|-----|----------|
-| `--color-brand` | `#7B5C7C` | Mulberry — primary actions, key headers |
+| `--color-brand` | `#6FC3CC` | Light cyan — primary actions, key headers |
 | `--color-accent` | `#D4946A` | Caramel — accents, highlights |
 | `--color-cream` | `#FBF6EE` | Page background |
 | `--color-ink` | `#2E2530` | Primary text |

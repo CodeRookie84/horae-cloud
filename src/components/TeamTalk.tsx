@@ -6,7 +6,7 @@
  * v2: 3-tab staff view (My Day | My Outlet | Directory) +
  *     Manager view with outlet switcher + channel sidebar
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   ArrowLeft, MessageCircle, Sun, Building2, Users, Hash,
   Megaphone, MessageSquare, X, Search, Plus,
@@ -14,13 +14,13 @@ import {
   Users2, Pin, Trash2, GitPullRequest, UserPlus, CheckCircle2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import type { ChatChannel, TeamTalkMessage } from '../types';
+import type { ChatChannel, TeamTalkMessage, Tenant } from '../types';
 import type { User as AppUser } from '../types';
 import { Role } from '../types';
 import * as chatService from '../services/chatService';
 import { supabase } from '../services/supabaseClient';
-import { store } from '../services/store';
 import TeamTalkChannelSidebar from './TeamTalkChannelSidebar';
+import TeamTalkMemberPicker, { resolveMemberIds, EMPTY_SELECTION, type MemberPickerSelection } from './TeamTalkMemberPicker';
 import TeamTalkMessageBubble from './TeamTalkMessageBubble';
 import TeamTalkInput from './TeamTalkInput';
 import TeamTalkPinnedBanner from './TeamTalkPinnedBanner';
@@ -33,6 +33,8 @@ type TalkTab = 'my-day' | 'my-outlet' | 'directory';
 interface TeamTalkProps {
   activeUser: AppUser;
   tenantId: string;
+  /** All outlets (tenants) under the active client — used so admins see every outlet's rooms */
+  tenants: Tenant[];
   allTenantUsers: AppUser[];
   tasks?: import('../types').Task[];
   onCreateTask?: (title: string, description: string, channelId: string, msgId: string, assigneeIds: string[]) => Promise<string | undefined>;
@@ -42,6 +44,11 @@ interface TeamTalkProps {
 // ─── Helpers ─────────────────────────────────────────────────
 function isManagerOrAbove(role: string) {
   return [Role.ADMIN, Role.MANAGER, Role.SUPER_ADMIN, 'Admin', 'Manager', 'Super Admin'].includes(role as any);
+}
+
+/** Client admin only — the level allowed to create/delete channels and manage their membership */
+function isClientAdmin(role: string) {
+  return [Role.ADMIN, Role.SUPER_ADMIN, 'Admin', 'Super Admin'].includes(role as any);
 }
 
 /** Map department to the keyword used in channel names */
@@ -192,10 +199,11 @@ function ConvertToTaskModal({
 
 // ─── Manage Channel Members Modal ──────────────────────────────
 function ManageChannelMembersModal({
-  channel, allUsers, currentMembers, currentUser, onClose, onSave,
+  channel, allUsers, tenants, currentMembers, currentUser, onClose, onSave,
 }: {
   channel: ChatChannel;
   allUsers: AppUser[];
+  tenants: Tenant[];
   currentMembers: AppUser[];
   currentUser: AppUser;
   onClose: () => void;
@@ -203,26 +211,19 @@ function ManageChannelMembersModal({
 }) {
   const [viewMode, setViewMode] = useState<'view' | 'add'>('view');
   const [saving, setSaving] = useState(false);
-  const [searchText, setSearchText] = useState('');
-  const [selectedDepts, setSelectedDepts] = useState<string[]>([]);
-  const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
-  const [selectedIndividuals, setSelectedIndividuals] = useState<string[]>([]);
-
-  const allDepts = Array.from(new Set(allUsers.map(u => u.department).filter(Boolean)));
-  const allRoles = Array.from(new Set(allUsers.map(u => u.role).filter(Boolean)));
+  const [picked, setPicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
 
   const currentMemberIds = currentMembers.map(u => u.id);
   const nonMembers = allUsers.filter(u => !currentMemberIds.includes(u.id));
 
-  const previewMembers: AppUser[] = (() => {
-    let result = new Set<AppUser>();
-    if (selectedDepts.length > 0) nonMembers.forEach(u => selectedDepts.includes(u.department) && result.add(u));
-    if (selectedRoles.length > 0) nonMembers.forEach(u => selectedRoles.includes(u.role) && result.add(u));
-    if (selectedIndividuals.length > 0) nonMembers.forEach(u => selectedIndividuals.includes(u.id) && result.add(u));
-    return Array.from(result);
-  })();
+  const previewMemberIds = resolveMemberIds(picked, nonMembers, tenants);
+  const previewMembers = nonMembers.filter(u => previewMemberIds.includes(u.id));
 
-  const canManage = currentUser.role === Role.ADMIN || currentUser.role === Role.MANAGER || currentUser.role === Role.SUPER_ADMIN || (channel.type === 'dm' && channel.createdBy === currentUser.id);
+  // Channels: client admin only. DMs: any current member can add/remove others.
+  const isAdmin = currentUser.role === Role.ADMIN || currentUser.role === Role.SUPER_ADMIN;
+  const canManage = channel.type === 'dm'
+    ? (isAdmin || currentMembers.some(m => m.id === currentUser.id))
+    : isAdmin;
 
   const handleSave = async () => {
     setSaving(true);
@@ -289,80 +290,17 @@ function ManageChannelMembersModal({
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search staff by name..."
-                  value={searchText}
-                  onChange={e => setSearchText(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20"
-                />
-              </div>
-
-              <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-1">
-                {searchText === '' && allDepts.length > 0 && (
-                  <div>
-                    <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Departments</h4>
-                    <div className="space-y-1 bg-slate-50 rounded-xl border border-slate-100 p-2">
-                      {allDepts.map(dept => (
-                        <label key={dept} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-100 cursor-pointer transition-colors">
-                          <input type="checkbox" checked={selectedDepts.includes(dept)} onChange={() => setSelectedDepts(p => p.includes(dept) ? p.filter(d => d !== dept) : [...p, dept])} className="w-4 h-4 accent-[#162D4E] cursor-pointer" />
-                          <span className="text-[12px] text-slate-700 font-medium flex-1 truncate">{dept}</span>
-                          <span className="text-[10px] text-slate-400">{nonMembers.filter(u => u.department === dept).length}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {searchText === '' && allRoles.length > 0 && (
-                  <div>
-                    <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Roles</h4>
-                    <div className="space-y-1 bg-slate-50 rounded-xl border border-slate-100 p-2">
-                      {allRoles.map(role => (
-                        <label key={role} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-100 cursor-pointer transition-colors">
-                          <input type="checkbox" checked={selectedRoles.includes(role)} onChange={() => setSelectedRoles(p => p.includes(role) ? p.filter(r => r !== role) : [...p, role])} className="w-4 h-4 accent-[#162D4E] cursor-pointer" />
-                          <span className="text-[12px] text-slate-700 font-medium flex-1 truncate">{role}</span>
-                          <span className="text-[10px] text-slate-400">{nonMembers.filter(u => u.role === role).length}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Individuals</h4>
-                  <div className="space-y-0.5 bg-slate-50 rounded-xl border border-slate-100 p-2">
-                    {nonMembers.filter(u => u.name.toLowerCase().includes(searchText.toLowerCase())).map(user => (
-                      <label key={user.id} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-100 cursor-pointer transition-colors">
-                        <input type="checkbox" checked={selectedIndividuals.includes(user.id)} onChange={() => setSelectedIndividuals(p => p.includes(user.id) ? p.filter(i => i !== user.id) : [...p, user.id])} className="w-4 h-4 accent-[#162D4E] cursor-pointer" />
-                        <img src={user.avatar} alt="" className="w-6 h-6 rounded-md object-cover shadow-sm" />
-                        <div className="min-w-0">
-                          <p className="text-[12px] text-slate-700 font-semibold truncate">{user.name}</p>
-                          <p className="text-[9px] text-slate-400 truncate">{user.role}</p>
-                        </div>
-                      </label>
-                    ))}
-                    {nonMembers.length === 0 && <p className="text-center text-[11px] text-slate-400 p-2">All users are already in this chat.</p>}
-                  </div>
-                </div>
-              </div>
-
-              <div className={`rounded-xl p-3 flex items-center gap-3 ${previewMembers.length > 0 ? 'bg-emerald-50 border border-emerald-200' : 'bg-amber-50 border border-amber-200'}`}>
-                <UserCheck className={`w-4 h-4 shrink-0 ${previewMembers.length > 0 ? 'text-emerald-600' : 'text-amber-500'}`} />
-                <div>
-                  <p className={`text-[12px] font-bold ${previewMembers.length > 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
-                    {previewMembers.length > 0 ? `${previewMembers.length} staff will be added` : 'No new members selected'}
-                  </p>
-                  {previewMembers.length > 0 && (
-                    <p className="text-[10px] text-emerald-600">
-                      {previewMembers.slice(0, 4).map(u => u.name.split(' ')[0]).join(', ')}{previewMembers.length > 4 ? ` +${previewMembers.length - 4} more` : ''}
-                    </p>
-                  )}
-                </div>
-              </div>
-
+              <TeamTalkMemberPicker
+                candidates={nonMembers}
+                tenants={tenants}
+                value={picked}
+                onChange={setPicked}
+              />
+              {previewMembers.length > 0 && (
+                <p className="text-[10px] text-emerald-600 -mt-2">
+                  {previewMembers.slice(0, 4).map(u => u.name.split(' ')[0]).join(', ')}{previewMembers.length > 4 ? ` +${previewMembers.length - 4} more` : ''}
+                </p>
+              )}
               <div className="flex gap-2">
                 <button type="button" onClick={() => setViewMode('view')} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">← Back</button>
                 <button type="button" onClick={handleSave} disabled={saving || previewMembers.length === 0} className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[12px] font-bold cursor-pointer disabled:opacity-50">
@@ -378,39 +316,23 @@ function ManageChannelMembersModal({
 }
 // ─── Create Channel Modal ─────────────────────────────────────
 function CreateChannelModal({
-  onClose, onCreate, allUsers, currentUserId,
+  onClose, onCreate, allUsers, tenants, currentUserId,
 }: {
   onClose: () => void;
   onCreate: (name: string, type: ChatChannel['type'], description: string, memberIds: string[]) => Promise<void>;
   allUsers: AppUser[];
+  tenants: Tenant[];
   currentUserId: string;
 }) {
   const [step, setStep] = useState<1 | 2>(1);
   const [displayName, setDisplayName] = useState('');
   const [slug, setSlug] = useState('');
   const [description, setDescription] = useState('');
-  const [searchText, setSearchText] = useState('');
-  const [selectedDepts, setSelectedDepts] = useState<string[]>([]);
-  const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
-  const [selectedIndividuals, setSelectedIndividuals] = useState<string[]>([]);
+  const [picked, setPicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
   const [creating, setCreating] = useState(false);
 
-  const allDepts = Array.from(new Set([
-    ...allUsers.map(u => u.department),
-    ...store.getCustomDepts()
-  ].filter(Boolean)));
-  const allRoles = Array.from(new Set([
-    ...allUsers.map(u => u.role),
-    ...store.getCustomRoles()
-  ].filter(Boolean)));
-
-  const previewMembers: AppUser[] = (() => {
-    let result = new Set<AppUser>();
-    if (selectedDepts.length > 0) allUsers.forEach(u => selectedDepts.includes(u.department) && result.add(u));
-    if (selectedRoles.length > 0) allUsers.forEach(u => selectedRoles.includes(u.role) && result.add(u));
-    if (selectedIndividuals.length > 0) allUsers.forEach(u => selectedIndividuals.includes(u.id) && result.add(u));
-    return Array.from(result);
-  })();
+  const previewMemberIds = resolveMemberIds(picked, allUsers, tenants);
+  const previewMembers = allUsers.filter(u => previewMemberIds.includes(u.id));
 
   const handleCreate = async () => {
     if (!slug) return;
@@ -481,80 +403,12 @@ function CreateChannelModal({
 
           {step === 2 && (
             <div className="space-y-4">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search staff by name..."
-                  value={searchText}
-                  onChange={e => setSearchText(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20"
-                />
-              </div>
-
-              <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-1">
-                {searchText === '' && allDepts.length > 0 && (
-                  <div>
-                    <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Departments</h4>
-                    <div className="space-y-1 bg-slate-50 rounded-xl border border-slate-100 p-2">
-                      {allDepts.map(dept => (
-                        <label key={dept} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-100 cursor-pointer transition-colors">
-                          <input type="checkbox" checked={selectedDepts.includes(dept)} onChange={() => setSelectedDepts(p => p.includes(dept) ? p.filter(d => d !== dept) : [...p, dept])} className="w-4 h-4 accent-[#162D4E] cursor-pointer" />
-                          <span className="text-[12px] text-slate-700 font-medium flex-1 truncate">{dept}</span>
-                          <span className="text-[10px] text-slate-400">{allUsers.filter(u => u.department === dept).length}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {searchText === '' && allRoles.length > 0 && (
-                  <div>
-                    <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Roles</h4>
-                    <div className="space-y-1 bg-slate-50 rounded-xl border border-slate-100 p-2">
-                      {allRoles.map(role => (
-                        <label key={role} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-100 cursor-pointer transition-colors">
-                          <input type="checkbox" checked={selectedRoles.includes(role)} onChange={() => setSelectedRoles(p => p.includes(role) ? p.filter(r => r !== role) : [...p, role])} className="w-4 h-4 accent-[#162D4E] cursor-pointer" />
-                          <span className="text-[12px] text-slate-700 font-medium flex-1 truncate">{role}</span>
-                          <span className="text-[10px] text-slate-400">{allUsers.filter(u => u.role === role).length}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Individuals</h4>
-                  <div className="space-y-0.5 bg-slate-50 rounded-xl border border-slate-100 p-2">
-                    {allUsers.filter(u => u.name.toLowerCase().includes(searchText.toLowerCase())).map(user => (
-                      <label key={user.id} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-100 cursor-pointer transition-colors">
-                        <input type="checkbox" checked={selectedIndividuals.includes(user.id)} onChange={() => setSelectedIndividuals(p => p.includes(user.id) ? p.filter(i => i !== user.id) : [...p, user.id])} className="w-4 h-4 accent-[#162D4E] cursor-pointer" />
-                        <div className="w-6 h-6 rounded-full bg-[#162D4E]/10 flex items-center justify-center text-[10px] font-bold text-[#162D4E] shrink-0">{user.name.charAt(0)}</div>
-                        <div className="min-w-0">
-                          <p className="text-[12px] text-slate-700 font-semibold truncate">{user.name}</p>
-                          <p className="text-[9px] text-slate-400 truncate">{user.role}</p>
-                        </div>
-                      </label>
-                    ))}
-                    {allUsers.length === 0 && <p className="text-center text-[11px] text-slate-400 p-2">No users found.</p>}
-                  </div>
-                </div>
-              </div>
-
-              <div className={`rounded-xl p-3 flex items-center gap-3 ${previewMembers.length > 0 ? 'bg-emerald-50 border border-emerald-200' : 'bg-amber-50 border border-amber-200'}`}>
-                <UserCheck className={`w-4 h-4 shrink-0 ${previewMembers.length > 0 ? 'text-emerald-600' : 'text-amber-500'}`} />
-                <div>
-                  <p className={`text-[12px] font-bold ${previewMembers.length > 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
-                    {previewMembers.length > 0 ? `${previewMembers.length} staff will be added` : 'No members selected'}
-                  </p>
-                  {previewMembers.length > 0 && (
-                    <p className="text-[10px] text-emerald-600">
-                      {previewMembers.slice(0, 4).map(u => u.name.split(' ')[0]).join(', ')}{previewMembers.length > 4 ? ` +${previewMembers.length - 4} more` : ''}
-                    </p>
-                  )}
-                </div>
-              </div>
-
+              <TeamTalkMemberPicker
+                candidates={allUsers}
+                tenants={tenants}
+                value={picked}
+                onChange={setPicked}
+              />
               <div className="flex gap-2">
                 <button type="button" onClick={() => setStep(1)} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">← Back</button>
                 <button type="button" onClick={handleCreate} disabled={creating || previewMembers.length === 0} className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[12px] font-bold cursor-pointer disabled:opacity-50">
@@ -563,6 +417,65 @@ function CreateChannelModal({
               </div>
             </div>
           )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+// ─── Start Direct Chat Modal ────────────────────────────────────
+function StartDirectChatModal({
+  onClose, onStart, allUsers, currentUserId,
+}: {
+  onClose: () => void;
+  onStart: (userIds: string[]) => Promise<void>;
+  allUsers: AppUser[];
+  currentUserId: string;
+}) {
+  const [picked, setPicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
+  const [starting, setStarting] = useState(false);
+  const candidates = allUsers.filter(u => u.id !== currentUserId);
+  const memberIds = resolveMemberIds(picked, candidates, []);
+
+  const handleStart = async () => {
+    if (memberIds.length === 0) return;
+    setStarting(true);
+    await onStart(memberIds);
+    setStarting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <MessageCircle className="w-5 h-5 text-[#162D4E]" />
+            <h3 className="text-base font-bold text-slate-800">Start Direct Chat</h3>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg cursor-pointer">
+            <X className="w-4 h-4 text-slate-500" />
+          </button>
+        </div>
+        <TeamTalkMemberPicker
+          candidates={candidates}
+          value={picked}
+          onChange={setPicked}
+        />
+        <div className="flex gap-2 mt-4">
+          <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
+          <button
+            type="button"
+            onClick={handleStart}
+            disabled={starting || memberIds.length === 0}
+            className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[12px] font-bold cursor-pointer disabled:opacity-50"
+          >
+            {starting ? 'Starting...' : 'Start Chat ✓'}
+          </button>
         </div>
       </motion.div>
     </div>
@@ -797,6 +710,19 @@ function ThreadPanel({
               Make Active
             </button>
           )}
+          {isActive && onCloseThread && (
+            <button
+              onClick={() => {
+                onCloseThread(rootMessage.id);
+                onClose();
+              }}
+              className="flex-1 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-lg border border-emerald-200 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+              title="Close this thread and move it back into the inline chat"
+            >
+              <CheckCircle2 className="w-3 h-3" />
+              Close Thread
+            </button>
+          )}
         </div>
       </div>
 
@@ -960,12 +886,22 @@ function DeleteChannelConfirm({
 export default function TeamTalk({
   activeUser,
   tenantId,
+  tenants,
   allTenantUsers,
   tasks = [],
   onCreateTask,
   onBack,
 }: TeamTalkProps) {
   const userIsManager = isManagerOrAbove(activeUser.role);
+  // Every outlet (tenant) under this user's client — for admins this spans
+  // outlets beyond their own home tenant; falls back to just their own tenant.
+  // Memoized by the actual ID set (not just array identity) so it doesn't
+  // change every render and retrigger the channel-loading effect in a loop.
+  const tenantIdsKey = tenants.map(t => t.id).join(',');
+  const clientOutletIds = useMemo(
+    () => (tenants.length > 0 ? tenants.map(t => t.id) : [tenantId]),
+    [tenantIdsKey, tenantId]
+  );
 
   // ── Channel state ──────────────────────────────────────────
   const [channels, setChannels] = useState<ChatChannel[]>([]);
@@ -1024,6 +960,7 @@ export default function TeamTalk({
 
   // ── Modals ─────────────────────────────────────────────────
   const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [showStartDirectChat, setShowStartDirectChat] = useState(false);
   const [showManageMembers, setShowManageMembers] = useState(false);
   const [convertingMessage, setConvertingMessage] = useState<TeamTalkMessage | null>(null);
   const [showQuickReport, setShowQuickReport] = useState(false);
@@ -1031,6 +968,8 @@ export default function TeamTalk({
   const [showGlobalInbox, setShowGlobalInbox] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
+  const [showMobileSearch, setShowMobileSearch] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
   // ── Direct Chat ─────────────────────────────────────────────
   /** IDs of DM channels the user has explicitly "closed" — moved from sidebar to Inbox */
   const [closedDMChannelIds, setClosedDMChannelIds] = useState<string[]>(() => {
@@ -1044,6 +983,16 @@ export default function TeamTalk({
   const realtimeUnsubRef = useRef<(() => void) | null>(null);
   const mentionUnsubRef = useRef<(() => void) | null>(null);
 
+  /**
+   * Push one history entry per Team Talk "screen" (channel, quick view, thread)
+   * on mobile, so the hardware/edge back gesture always closes exactly one
+   * panel — same as the on-screen back arrow — instead of exiting Team Talk.
+   */
+  const pushTeamTalkState = useCallback((label: string) => {
+    if (window.innerWidth >= 768) return;
+    window.history.pushState({ teamTalk: true, label }, '', window.location.href);
+  }, []);
+
   useEffect(() => {
     const handlePopState = () => {
       if (threadRoot) {
@@ -1052,6 +1001,9 @@ export default function TeamTalk({
       }
       if (showGlobalInbox) {
          setShowGlobalInbox(false);
+         if (window.innerWidth < 768) {
+           setShowMobileSidebar(true);
+         }
          return;
       }
       if (window.innerWidth < 768 && !showMobileSidebar) {
@@ -1067,14 +1019,12 @@ export default function TeamTalk({
   useEffect(() => {
     const handleOpenQuickView = () => {
       setShowGlobalInbox(true);
-      if (window.innerWidth < 768) {
-        setShowMobileSidebar(false);
-        window.history.pushState({ modal: 'teamtalk-globalinbox' }, '', window.location.href);
-      }
+      setShowMobileSidebar(false);
+      pushTeamTalkState('quickview');
     };
     window.addEventListener('openQuickView', handleOpenQuickView);
     return () => window.removeEventListener('openQuickView', handleOpenQuickView);
-  }, []);
+  }, [pushTeamTalkState]);
 
   // ── Load channels ──────────────────────────────────────────
   const handleSaveMembers = async (userIds: string[]) => {
@@ -1096,15 +1046,24 @@ export default function TeamTalk({
   const loadChannels = useCallback(async () => {
     setLoadingChannels(true);
     try {
-      let raw = userIsManager
-        ? await chatService.getAllChannels(tenantId, activeUser.id)
-        : await chatService.getChannels(tenantId, activeUser.id);
-
-      if (raw.length === 0) {
-        await chatService.seedDefaultChannels(tenantId, activeUser.id, allTenantUsers);
-        raw = userIsManager
-          ? await chatService.getAllChannels(tenantId, activeUser.id)
-          : await chatService.getChannels(tenantId, activeUser.id);
+      let raw: ChatChannel[];
+      if (userIsManager) {
+        // Admins/managers: make sure every outlet under the client has its
+        // room synced before fetching, so newly onboarded outlets always show up.
+        const clientId = tenants.find(t => t.id === tenantId)?.clientId || tenants[0]?.clientId;
+        if (clientId) {
+          const adminUserIds = allTenantUsers
+            .filter(u => u.role === Role.ADMIN || u.role === Role.SUPER_ADMIN)
+            .map(u => u.id);
+          await chatService.ensureOutletChannelsForClient(clientId, clientOutletIds, allTenantUsers, adminUserIds, activeUser.id);
+        }
+        raw = await chatService.getAllChannels(clientOutletIds, activeUser.id);
+      } else {
+        raw = await chatService.getChannels(tenantId, activeUser.id);
+        if (raw.length === 0) {
+          await chatService.seedDefaultChannels(tenantId, activeUser.id, allTenantUsers);
+          raw = await chatService.getChannels(tenantId, activeUser.id);
+        }
       }
 
       setChannels(raw);
@@ -1116,7 +1075,7 @@ export default function TeamTalk({
       }
     } catch (e) { console.error('loadChannels:', e); }
     finally { setLoadingChannels(false); }
-  }, [tenantId, activeUser.id, activeUser.department, userIsManager, allTenantUsers]);
+  }, [tenantId, activeUser.id, activeUser.department, userIsManager, allTenantUsers, tenants, clientOutletIds]);
 
 
 
@@ -1274,7 +1233,7 @@ export default function TeamTalk({
 
   const handleOpenThread = useCallback(async (msg: TeamTalkMessage) => {
     setThreadRoot(msg);
-    window.history.pushState({ modal: 'teamtalk-thread' }, '', window.location.href);
+    pushTeamTalkState('thread');
     const [replies, participants] = await Promise.all([
       chatService.getThreadReplies(msg.id),
       chatService.getThreadParticipants(msg.id),
@@ -1285,7 +1244,7 @@ export default function TeamTalk({
     // Mark thread as read
     await chatService.markThreadRead(msg.id, activeUser.id);
     setUnreadThreads(prev => prev.filter(t => t.id !== msg.id));
-  }, [activeUser.id]);
+  }, [activeUser.id, pushTeamTalkState]);
 
   const handleNavigateToThread = useCallback(async (msg: TeamTalkMessage) => {
     const ch = channels.find(c => c.id === msg.channelId);
@@ -1531,18 +1490,26 @@ export default function TeamTalk({
     }
   }, [activeUser.id, channels]);
 
-  /** Create an instant untitled direct chat */
-  const handleCreateInstantDM = useCallback(async () => {
-    const dmName = `Untitled Chat`;
-    const ch = await chatService.createChannel(tenantId, dmName, 'dm', activeUser.id, `New Direct Chat`);
-    if (ch) {
-      await chatService.addMembers(ch.id, [activeUser.id]);
-      await loadChannels();
-      setActiveChannel(ch);
-      setShowGlobalInbox(false);
-      setShowMobileSidebar(false);
+  /** Start a direct chat with one or more chosen teammates (single -> 1:1 DM, multiple -> group DM) */
+  const handleStartDirectChat = useCallback(async (userIds: string[]) => {
+    if (userIds.length === 0) return;
+    if (userIds.length === 1) {
+      const target = allTenantUsers.find(u => u.id === userIds[0]);
+      if (target) await handleDMUser(target);
+    } else {
+      const names = userIds.map(id => allTenantUsers.find(u => u.id === id)?.name).filter(Boolean) as string[];
+      const dmName = [activeUser.name, ...names].sort().join('-');
+      const ch = await chatService.createChannel(tenantId, dmName, 'dm', activeUser.id, `Group chat: ${[activeUser.name, ...names].join(', ')}`);
+      if (ch) {
+        await chatService.addMembers(ch.id, [activeUser.id, ...userIds]);
+        await loadChannels();
+        setActiveChannel(ch);
+      }
     }
-  }, [tenantId, activeUser, loadChannels]);
+    setShowGlobalInbox(false);
+    setShowMobileSidebar(false);
+    setShowStartDirectChat(false);
+  }, [allTenantUsers, activeUser, tenantId, loadChannels, handleDMUser]);
 
   const handleRenameChannel = useCallback(async () => {
     if (!activeChannel || !newChannelName.trim()) return;
@@ -1579,12 +1546,6 @@ export default function TeamTalk({
       // If they were mentioned directly
       if (m.mentionedUserIds?.includes(activeUser.id)) {
         isPrivate = true;
-      }
-
-      // Hide closed/resolved threads from main channel view
-      if (m.threadStatus === 'closed' || m.threadStatus === 'resolved') {
-        if (searchQuery) return true;
-        return false;
       }
 
       return true;
@@ -1665,11 +1626,9 @@ export default function TeamTalk({
               channels={channels}
               currentUser={activeUser}
               activeChannelId={activeChannel?.id ?? null}
-              onSelectChannel={ch => { 
+              onSelectChannel={ch => {
                 setActiveChannel(ch);  setThreadRoot(null); setShowGlobalInbox(false);
-                if (window.innerWidth < 768) {
-                  window.history.pushState({ modal: 'teamtalk-channel' }, '', window.location.href);
-                }
+                pushTeamTalkState('channel');
                 setShowMobileSidebar(false);
               }}
               onCreateChannel={() => { setShowCreateChannel(true); setShowMobileSidebar(false); }}
@@ -1680,15 +1639,18 @@ export default function TeamTalk({
               onOpenInbox={() => {
                 setShowGlobalInbox(true);
                 setShowMobileSidebar(false);
+                pushTeamTalkState('quickview');
               }}
               unreadMentionCount={mentionCount}
               isInboxActive={showGlobalInbox}
               closedDMChannelIds={closedDMChannelIds}
               onCloseDM={handleCloseDM}
-              onStartDirectChat={handleCreateInstantDM}
+              onReopenDM={handleReopenClosedDM}
+              onStartDirectChat={() => setShowStartDirectChat(true)}
               allUsers={allTenantUsers}
               onOpenThread={handleNavigateToThread}
               onDeleteThread={handleDelete}
+              onCloseThread={handleCloseThread}
             />
           )}
         </div>
@@ -1704,9 +1666,10 @@ export default function TeamTalk({
               currentUserId={activeUser.id}
               onMenuClick={() => setShowMobileSidebar(true)}
               onBack={() => {
-                setShowGlobalInbox(false);
                 if (window.innerWidth < 768) {
-                  setShowMobileSidebar(true);
+                  window.history.back();
+                } else {
+                  setShowGlobalInbox(false);
                 }
               }}
               onOpenThread={handleNavigateToThread}
@@ -1786,30 +1749,32 @@ export default function TeamTalk({
                   <span className="hidden sm:inline">Members</span>
                 </button>
 
-                {/* Search Messages */}
-                <div className="flex items-center gap-1 mr-2">
-                  <div className="relative hidden sm:block">
+                {/* Search Messages — desktop: inline expanding input with results dropdown */}
+                <div className="hidden sm:flex items-center gap-1 mr-2 relative">
+                  <div className="relative">
                     <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                     <input
                       type="text"
                       value={searchQuery}
-                      onChange={e => setSearchQuery(e.target.value)}
+                      onChange={e => { setSearchQuery(e.target.value); setShowSearchResults(true); }}
+                      onFocus={() => setShowSearchResults(true)}
+                      onBlur={() => setTimeout(() => setShowSearchResults(false), 150)}
                       placeholder="Search messages..."
-                      className="w-40 pl-7 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all focus:w-56"
+                      className="w-48 pl-7 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all focus:w-80"
                     />
                   </div>
                   {searchResults.length > 0 && (
-                    <div className="hidden sm:flex items-center gap-1 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-100">
+                    <div className="flex items-center gap-1 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-100 shrink-0">
                       <span className="text-[10px] font-medium text-indigo-600">
                         {Math.min(currentSearchIndex + 1, searchResults.length)}/{searchResults.length}
                       </span>
-                      <button 
+                      <button
                         onClick={() => setCurrentSearchIndex(prev => prev > 0 ? prev - 1 : searchResults.length - 1)}
                         className="p-0.5 hover:bg-indigo-200 rounded cursor-pointer text-indigo-700 transition-colors"
                       >
                         <ChevronUp className="w-3 h-3" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => setCurrentSearchIndex(prev => prev < searchResults.length - 1 ? prev + 1 : 0)}
                         className="p-0.5 hover:bg-indigo-200 rounded cursor-pointer text-indigo-700 transition-colors"
                       >
@@ -1817,25 +1782,98 @@ export default function TeamTalk({
                       </button>
                     </div>
                   )}
+                  {showSearchResults && searchQuery && (
+                    <div className="absolute top-full left-0 mt-1 w-96 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50">
+                      {searchResults.length === 0 ? (
+                        <p className="text-[11px] text-slate-400 px-3 py-3">No messages match "{searchQuery}"</p>
+                      ) : (
+                        <div className="divide-y divide-slate-50">
+                          {searchResults.map((id, idx) => {
+                            const msg = visibleMessages.find(m => m.id === id);
+                            if (!msg) return null;
+                            return (
+                              <button
+                                key={id}
+                                onClick={() => { setCurrentSearchIndex(idx); setShowSearchResults(false); }}
+                                className="w-full text-left px-3 py-2 hover:bg-slate-50 cursor-pointer"
+                              >
+                                <p className="text-[11px] font-semibold text-slate-700">{msg.senderName}</p>
+                                <p className="text-[11px] text-slate-500 truncate">{msg.content}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-
-                {(isManagerOrAbove(activeUser.role) || (activeChannel?.type === 'dm' && activeChannel?.createdBy === activeUser.id)) && (
-                  <>
-                    <button className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 cursor-pointer" title="Search">
-                      <Search className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setDeletingChannel(activeChannel!)}
-                      className="p-1.5 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 cursor-pointer"
-                      title="Delete chat"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </>
+                {/* Search Messages — mobile: icon toggles a full-width search row */}
+                <button
+                  onClick={() => setShowMobileSearch(prev => !prev)}
+                  className={`sm:hidden p-1.5 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors ${showMobileSearch ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400'}`}
+                  title="Search messages"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                </button>
+                {/* Channel delete: client admin only. DM delete: chat-starter or client admin. */}
+                {activeChannel && (
+                  isClientAdmin(activeUser.role) ||
+                  (activeChannel.type === 'dm' && activeChannel.createdBy === activeUser.id)
+                ) && (
+                  <button
+                    onClick={() => setDeletingChannel(activeChannel!)}
+                    className="p-1.5 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 cursor-pointer"
+                    title="Delete chat"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 )}
               </div>
             </div>
+
+            {/* Mobile search row */}
+            {showMobileSearch && (
+              <div className="sm:hidden px-3 py-2 border-b border-slate-100 bg-white flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <input
+                    autoFocus
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Search messages..."
+                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[12px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  />
+                </div>
+                {searchResults.length > 0 && (
+                  <div className="flex items-center gap-1 bg-indigo-50 px-2 py-1.5 rounded-lg border border-indigo-100 shrink-0">
+                    <span className="text-[10px] font-medium text-indigo-600">
+                      {Math.min(currentSearchIndex + 1, searchResults.length)}/{searchResults.length}
+                    </span>
+                    <button
+                      onClick={() => setCurrentSearchIndex(prev => prev > 0 ? prev - 1 : searchResults.length - 1)}
+                      className="p-0.5 hover:bg-indigo-200 rounded cursor-pointer text-indigo-700 transition-colors"
+                    >
+                      <ChevronUp className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => setCurrentSearchIndex(prev => prev < searchResults.length - 1 ? prev + 1 : 0)}
+                      className="p-0.5 hover:bg-indigo-200 rounded cursor-pointer text-indigo-700 transition-colors"
+                    >
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+                <button
+                  onClick={() => { setShowMobileSearch(false); setSearchQuery(''); }}
+                  className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 cursor-pointer shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
           {/* Pinned banner */}
           {pinnedMessage && !pinnedDismissed && activeChannel && (
             <TeamTalkPinnedBanner
@@ -1926,6 +1964,7 @@ export default function TeamTalk({
         <ManageChannelMembersModal
           channel={activeChannel}
           allUsers={allTenantUsers}
+          tenants={tenants}
           currentMembers={channelMembers}
           currentUser={activeUser}
           onClose={() => setShowManageMembers(false)}
@@ -1938,8 +1977,25 @@ export default function TeamTalk({
       {showCreateChannel && (
         <CreateChannelModal
             key="create-ch"
-            onClose={() => setShowCreateChannel(false)}
+            onClose={() => {
+              setShowCreateChannel(false);
+              // Closing/cancelling without creating shouldn't leave mobile on a blank
+              // "no channel selected" screen — return to the side panel instead.
+              if (window.innerWidth < 768 && !activeChannel) {
+                setShowMobileSidebar(true);
+              }
+            }}
             onCreate={handleCreateChannel}
+            allUsers={allTenantUsers}
+            tenants={tenants}
+            currentUserId={activeUser.id}
+          />
+        )}
+        {showStartDirectChat && (
+          <StartDirectChatModal
+            key="start-dm"
+            onClose={() => setShowStartDirectChat(false)}
+            onStart={handleStartDirectChat}
             allUsers={allTenantUsers}
             currentUserId={activeUser.id}
           />

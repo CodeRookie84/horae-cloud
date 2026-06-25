@@ -4,21 +4,8 @@
  *
  * Dashboard — Patisserie Modern redesign.
  *
- * What changed from the previous version:
- *  - Replaced the empty header-only Team Talk/Tasks panels with content-preview
- *    cards (counts, latest item, micro-stats) so the dashboard feels useful at
- *    a glance instead of acting as a navigation stub.
- *  - Added a time-aware greeting hero with a soft "piped dots" watermark
- *    (single decorative moment, on-brand to the bakery context).
- *  - Promoted four "today at a glance" tiles up front: Open tasks, Assigned
- *    to me, Unread notices, Pending checklists. These surface information
- *    the previous layout buried behind icons.
- *
- * What did NOT change:
- *  - Component signature, props, derived state, callbacks, navigation events,
- *    localStorage keys — all preserved.
- *  - Bottom "Workspace Tools" collapsible strip behavior.
- *  - Trial-banner logic.
+ * Layout: trial banner, greeting hero (greeting + date only), Team Talk and
+ * Tasks action cards, and the fixed Workspace Tools strip.
  */
 
 import React from "react";
@@ -34,8 +21,6 @@ import {
   MessageCircle,
   GraduationCap,
   Sparkles,
-  AlertTriangle,
-  ArrowUpRight,
 } from "lucide-react";
 import {
   Tenant,
@@ -131,17 +116,7 @@ export default function Dashboard({
   const checklists = rawChecklists;
   const tasks = rawTasks.filter((t) => t.status !== "Closed");
 
-  const urgentCount = notices.filter((n) => n.isUrgent).length;
   const unreadNoticesCount = notices.filter((n) => !readNoticeIds.includes(n.id)).length;
-
-  const totalCheckItems = checklists.reduce((acc, chk) => acc + chk.items.length, 0);
-  const completedCheckItems = checklists.reduce(
-    (acc, chk) => acc + chk.items.filter((i) => i.completed).length,
-    0,
-  );
-  const checklistPercentage = totalCheckItems > 0
-    ? Math.round((completedCheckItems / totalCheckItems) * 100)
-    : 100;
 
   const unsubmittedChecklistsCount = checklists.filter((c) => c.items.some((i) => !i.completed)).length;
 
@@ -157,8 +132,6 @@ export default function Dashboard({
   const unattemptedQuizzesCount = unattemptedQuizzes.length;
 
   const tasksFiltered = rawTasks;
-  const activeTasks = tasksFiltered.filter((t) => t.status !== "Completed" && t.status !== "Closed");
-
   const assignedToMe = tasksFiltered.filter(
     (t) =>
       (t.assignedUserIds && t.assignedUserIds.includes(activeUser.id)) ||
@@ -202,65 +175,11 @@ export default function Dashboard({
 
   // ── Presentation helpers ───────────────────────────────────────────────
   const now = new Date();
-  const hour = now.getHours();
-  const greeting =
-    hour < 5 ? "Still awake" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const todayLabel = now.toLocaleDateString("en-IN", {
     weekday: "long",
     day: "numeric",
     month: "long",
   });
-  const firstName = activeUser.name.split(" ")[0];
-
-  // Latest notice (for action card preview)
-  const latestNotice = [...notices]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-
-  // Stat tile component
-  const StatTile = ({
-    label,
-    value,
-    sub,
-    accent,
-    icon,
-    onClick,
-  }: {
-    label: string;
-    value: number | string;
-    sub: string;
-    accent: "brand" | "accent" | "sage" | "rose";
-    icon: React.ReactNode;
-    onClick: () => void;
-  }) => {
-    const accentClasses: Record<string, { ring: string; text: string; bg: string }> = {
-      brand: { ring: "ring-[var(--color-brand)]/10", text: "text-[var(--color-brand)]", bg: "bg-[var(--color-brand-tint)]" },
-      accent: { ring: "ring-[var(--color-accent)]/10", text: "text-[var(--color-accent)]", bg: "bg-[var(--color-accent-tint)]" },
-      sage: { ring: "ring-[var(--color-sage)]/20", text: "text-[#5C8567]", bg: "bg-[#EDF3EE]" },
-      rose: { ring: "ring-[var(--color-rose)]/20", text: "text-[#A85F6A]", bg: "bg-[#FAEDEF]" },
-    };
-    const a = accentClasses[accent];
-    return (
-      <button
-        onClick={onClick}
-        className="group text-left bg-white rounded-2xl border border-[var(--color-line)] p-5 shadow-warm hover:shadow-warm-lg hover:-translate-y-0.5 transition-all cursor-pointer relative overflow-hidden"
-      >
-        <div className={`absolute -top-6 -right-6 w-28 h-28 rounded-full ${a.bg} opacity-70`} aria-hidden />
-        <div className="relative flex items-start justify-between">
-          <div className={`w-10 h-10 rounded-xl ${a.bg} ${a.text} flex items-center justify-center`}>
-            {icon}
-          </div>
-          <ArrowUpRight className="w-4 h-4 text-[var(--color-ink-soft)] opacity-0 group-hover:opacity-100 transition-opacity" />
-        </div>
-        <div className="relative mt-4">
-          <div className="font-display text-3xl font-semibold tracking-tight text-[var(--color-ink)] leading-none">
-            {value}
-          </div>
-          <div className="mt-2 text-sm font-medium text-[var(--color-ink)]">{label}</div>
-          <div className="text-xs text-[var(--color-ink-soft)] mt-0.5">{sub}</div>
-        </div>
-      </button>
-    );
-  };
 
   return (
     <div className="space-y-6 pb-28" id="dashboard-wrapper">
@@ -307,83 +226,86 @@ export default function Dashboard({
         {/* Piped-dots watermark in the corner — the one decorative moment */}
         <div className="absolute top-0 right-0 w-64 h-40 bg-piped-dots opacity-50 pointer-events-none" aria-hidden />
 
-        <div className="relative px-6 sm:px-8 py-7 sm:py-8 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-          <div>
-            <div className="text-xs font-medium tracking-[0.18em] uppercase text-[var(--color-brand)]">
-              {todayLabel}
-            </div>
-            <h1 className="mt-2 font-display text-3xl sm:text-4xl font-semibold tracking-tight text-[var(--color-ink)] leading-tight">
-              {greeting}, {firstName}.
-            </h1>
-            <p className="mt-2 text-sm sm:text-base text-[var(--color-ink-soft)] max-w-xl">
-              {activeTasks.length === 0 && unreadNoticesCount === 0
-                ? `A quiet board at ${activeTenant.name}. Good time to plan ahead.`
-                : `You have ${pendingAssignedToMe.length} task${pendingAssignedToMe.length === 1 ? "" : "s"} on your plate${
-                    unreadNoticesCount > 0 ? ` and ${unreadNoticesCount} unread notice${unreadNoticesCount === 1 ? "" : "s"}` : ""
-                  } at ${activeTenant.name}.`}
-            </p>
+        <div className="relative px-6 sm:px-8 py-7 sm:py-8">
+          <div className="text-xs font-medium tracking-[0.18em] uppercase text-[var(--color-brand)]">
+            {todayLabel}
           </div>
-          <div className="flex flex-wrap gap-2">
+
+          <div className="mt-5 bg-white/70 backdrop-blur-sm border border-[var(--color-line)] rounded-2xl overflow-hidden">
             <button
-              onClick={() => onNavigate("team-talk")}
-              className="inline-flex items-center gap-2 bg-[var(--color-brand)] hover:bg-[color-mix(in_srgb,var(--color-brand)_88%,var(--color-ink))] text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-warm transition-all cursor-pointer"
+              onClick={() => setIsToolsExpanded(!isToolsExpanded)}
+              className="flex items-center justify-between px-4 py-3 bg-[var(--color-cream)] hover:bg-[var(--color-cream-deep)] transition-colors w-full cursor-pointer"
             >
-              <MessageCircle className="w-4 h-4" />
-              Open Team Talk
-              {teamTalkUnread > 0 && (
-                <span className="ml-1 bg-white/20 text-white text-[11px] font-bold px-1.5 py-0.5 rounded-full">
-                  {teamTalkUnread > 99 ? "99+" : teamTalkUnread}
-                </span>
+              <span className="text-xs font-bold text-[var(--color-ink)] tracking-wider uppercase">
+                Workspace tools
+              </span>
+              {isToolsExpanded ? (
+                <ChevronDown className="w-4 h-4 text-[var(--color-ink-soft)]" />
+              ) : (
+                <ChevronUp className="w-4 h-4 text-[var(--color-ink-soft)]" />
               )}
             </button>
-            <button
-              onClick={() => onNavigate("tasks")}
-              className="inline-flex items-center gap-2 bg-white border border-[var(--color-line)] text-[var(--color-ink)] hover:bg-[var(--color-cream)] text-sm font-semibold px-4 py-2.5 rounded-xl shadow-warm transition-all cursor-pointer"
-            >
-              <CheckSquare className="w-4 h-4" />
-              Tasks
-            </button>
+
+            <AnimatePresence>
+              {isToolsExpanded && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="grid grid-cols-3 gap-0 border-t border-[var(--color-line)] divide-x divide-[var(--color-line)]"
+                >
+                  <button
+                    onClick={() => onNavigate("notices")}
+                    className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
+                    title="Unopened notices"
+                  >
+                    <div className="relative">
+                      <Megaphone className="w-5 h-5 text-[var(--color-accent)] group-hover:scale-110 transition-transform" />
+                      {unreadNoticesCount > 0 && (
+                        <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
+                          {unreadNoticesCount}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Notices</span>
+                  </button>
+
+                  <button
+                    onClick={() => onNavigate("checklists")}
+                    className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
+                    title="Unsubmitted checklists"
+                  >
+                    <div className="relative">
+                      <ClipboardCheck className="w-5 h-5 text-[#5C8567] group-hover:scale-110 transition-transform" />
+                      {unsubmittedChecklistsCount > 0 && (
+                        <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
+                          {unsubmittedChecklistsCount}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Checklists</span>
+                  </button>
+
+                  <button
+                    onClick={() => onNavigate("quizzes")}
+                    className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
+                    title="Unattempted quizzes"
+                  >
+                    <div className="relative">
+                      <GraduationCap className="w-5 h-5 text-[var(--color-brand-soft)] group-hover:scale-110 transition-transform" />
+                      {unattemptedQuizzesCount > 0 && (
+                        <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
+                          {unattemptedQuizzesCount}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Quizzes</span>
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
-      </section>
-
-      {/* ── Today at a glance — four stat tiles ───────────────────────── */}
-      <section
-        id="dashboard-stat-grid"
-        className="grid grid-cols-2 lg:grid-cols-4 gap-4"
-      >
-        <StatTile
-          label="Open tasks"
-          value={activeTasks.length}
-          sub={`${pendingAssignedToMe.length} assigned to you`}
-          accent="brand"
-          icon={<CheckSquare className="w-5 h-5" />}
-          onClick={() => onNavigate("tasks")}
-        />
-        <StatTile
-          label="Newly assigned"
-          value={newlyAssignedToMeCount}
-          sub="Waiting on your action"
-          accent="accent"
-          icon={<Plus className="w-5 h-5" />}
-          onClick={() => onNavigate("tasks")}
-        />
-        <StatTile
-          label="Unread notices"
-          value={unreadNoticesCount}
-          sub={urgentCount > 0 ? `${urgentCount} marked urgent` : "Nothing urgent"}
-          accent={urgentCount > 0 ? "rose" : "sage"}
-          icon={urgentCount > 0 ? <AlertTriangle className="w-5 h-5" /> : <Megaphone className="w-5 h-5" />}
-          onClick={() => onNavigate("notices")}
-        />
-        <StatTile
-          label="Checklists due"
-          value={unsubmittedChecklistsCount}
-          sub={`${checklistPercentage}% complete overall`}
-          accent="sage"
-          icon={<ClipboardCheck className="w-5 h-5" />}
-          onClick={() => onNavigate("checklists")}
-        />
       </section>
 
       {/* ── Two action cards: Team Talk preview + Tasks summary ───────── */}
@@ -483,122 +405,6 @@ export default function Dashboard({
         </div>
       </section>
 
-      {/* ── Latest notice preview (only when there is one) ────────────── */}
-      {latestNotice && (
-        <section className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm p-5 flex items-start gap-4">
-          <div
-            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-              latestNotice.isUrgent
-                ? "bg-[#FAEDEF] text-[#A85F6A]"
-                : "bg-[var(--color-accent-tint)] text-[var(--color-accent)]"
-            }`}
-          >
-            <Megaphone className="w-5 h-5" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-semibold tracking-wide uppercase text-[var(--color-ink-soft)]">
-                Latest notice
-              </span>
-              {latestNotice.isUrgent && (
-                <span className="text-[11px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-[#FAEDEF] text-[#A85F6A]">
-                  Urgent
-                </span>
-              )}
-            </div>
-            <h4 className="font-display text-lg font-semibold text-[var(--color-ink)] mt-1 truncate">
-              {latestNotice.title}
-            </h4>
-            <p className="text-sm text-[var(--color-ink-soft)] mt-1 line-clamp-2">
-              {latestNotice.content}
-            </p>
-          </div>
-          <button
-            onClick={() => onNavigate("notices")}
-            className="self-center text-sm font-medium text-[var(--color-brand)] hover:text-[var(--color-ink)] px-3 py-2 rounded-xl hover:bg-[var(--color-cream)] cursor-pointer transition-all shrink-0"
-          >
-            Read &rarr;
-          </button>
-        </section>
-      )}
-
-      {/* ── Fixed workspace tools strip (unchanged behavior, restyled) ── */}
-      <div className="fixed bottom-4 left-4 right-4 md:left-64 md:right-auto z-40 w-auto">
-        <div className="bg-white/90 backdrop-blur-md border border-[var(--color-line)] shadow-warm-lg rounded-2xl overflow-hidden flex flex-col transition-all duration-300">
-          <button
-            onClick={() => setIsToolsExpanded(!isToolsExpanded)}
-            className="flex items-center justify-between px-4 py-3 bg-[var(--color-cream)] hover:bg-[var(--color-cream-deep)] transition-colors w-full cursor-pointer"
-          >
-            <span className="text-xs font-bold text-[var(--color-ink)] tracking-wider uppercase">
-              Workspace tools
-            </span>
-            {isToolsExpanded ? (
-              <ChevronDown className="w-4 h-4 text-[var(--color-ink-soft)]" />
-            ) : (
-              <ChevronUp className="w-4 h-4 text-[var(--color-ink-soft)]" />
-            )}
-          </button>
-
-          <AnimatePresence>
-            {isToolsExpanded && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="grid grid-cols-3 gap-0 border-t border-[var(--color-line)] divide-x divide-[var(--color-line)]"
-              >
-                <button
-                  onClick={() => onNavigate("notices")}
-                  className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
-                  title="Unopened notices"
-                >
-                  <div className="relative">
-                    <Megaphone className="w-5 h-5 text-[var(--color-accent)] group-hover:scale-110 transition-transform" />
-                    {unreadNoticesCount > 0 && (
-                      <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
-                        {unreadNoticesCount}
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Notices</span>
-                </button>
-
-                <button
-                  onClick={() => onNavigate("checklists")}
-                  className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
-                  title="Unsubmitted checklists"
-                >
-                  <div className="relative">
-                    <ClipboardCheck className="w-5 h-5 text-[#5C8567] group-hover:scale-110 transition-transform" />
-                    {unsubmittedChecklistsCount > 0 && (
-                      <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
-                        {unsubmittedChecklistsCount}
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Checklists</span>
-                </button>
-
-                <button
-                  onClick={() => onNavigate("quizzes")}
-                  className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
-                  title="Unattempted quizzes"
-                >
-                  <div className="relative">
-                    <GraduationCap className="w-5 h-5 text-[var(--color-brand-soft)] group-hover:scale-110 transition-transform" />
-                    {unattemptedQuizzesCount > 0 && (
-                      <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
-                        {unattemptedQuizzesCount}
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Quizzes</span>
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </div>
     </div>
   );
 }

@@ -14,9 +14,9 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
   /* Brand */
-  --color-brand: #7B5C7C;          /* mulberry icing */
-  --color-brand-soft: #9B7C9C;
-  --color-brand-tint: #F1E9F0;     /* faintest brand wash */
+  --color-brand: #6FC3CC;          /* light cyan */
+  --color-brand-soft: #93D4DA;
+  --color-brand-tint: #E8F8F9;     /* faintest brand wash */
   --color-accent: #D4946A;         /* warm caramel */
   --color-accent-soft: #E8B891;
   --color-accent-tint: #FBEFE2;
