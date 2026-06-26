@@ -47,7 +47,12 @@ const TEMP_TEMPLATE_NAME = "horae_task_alert";
 
 // ─── Entry Point ─────────────────────────────────────────────────────────────
 serve(async (req) => {
-  const body = await req.json();
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "Empty or invalid JSON body" }), { status: 400 });
+  }
   const { type, table, record, old_record } = body;
   console.log(`[notify-dispatcher] Received ${type} event on table ${table}`);
 
