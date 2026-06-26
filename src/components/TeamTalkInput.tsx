@@ -10,7 +10,7 @@
  *   • Reply banner
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Send, X, Square, Slash, Lock } from 'lucide-react';
+import { Mic, MicOff, Send, X, Square, Slash, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type { User as AppUser } from '../types';
 import TeamTalkMentionPicker from './TeamTalkMentionPicker';
@@ -49,6 +49,11 @@ export default function TeamTalkInput({
   const [mode, setMode] = useState<InputMode>('idle');
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [mentionedUsers, setMentionedUsers] = useState<AppUser[]>([]);
+
+  // Dictation (speech-to-text) — same languages as the Task input
+  const [speechLanguage, setSpeechLanguage] = useState<"en-US" | "hi-IN" | "kn-IN" | "ta-IN">("en-US");
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   // Mention/command picker state
   const [showMentionPicker, setShowMentionPicker] = useState(false);
@@ -170,6 +175,41 @@ export default function TeamTalkInput({
       setShowCommandPicker(false);
     }
   }, [handleSend]);
+
+  // ── Dictation (speech-to-text into the textarea) ─────────────
+  const startListening = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.error('Speech recognition not supported in this browser');
+      return;
+    }
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = speechLanguage;
+
+      recognition.onstart = () => setIsListening(true);
+      recognition.onresult = (event: any) => {
+        const resultText = event.results[0][0].transcript;
+        setText(prev => prev ? prev + " " + resultText : resultText);
+        setMode('typing');
+      };
+      recognition.onerror = () => setIsListening(false);
+      recognition.onend = () => setIsListening(false);
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (e) {
+      console.error(e);
+      setIsListening(false);
+    }
+  }, [speechLanguage]);
+
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current) recognitionRef.current.stop();
+    setIsListening(false);
+  }, []);
 
   // ── Voice recording ─────────────────────────────────────────
   const startRecording = useCallback(async () => {
@@ -313,7 +353,7 @@ export default function TeamTalkInput({
           </div>
         ) : (
           /* ── TYPING STATE ── */
-          <div className="flex-1 flex items-end gap-2">
+          <div className="flex-1 flex flex-col gap-1">
             {/* Text area */}
             <div className="flex-1 bg-slate-100 rounded-2xl flex items-end gap-2 px-3 py-2 min-h-[40px]">
               <textarea
@@ -328,6 +368,38 @@ export default function TeamTalkInput({
                 id="team-talk-input"
               />
 
+            </div>
+
+            {/* Dictation controls — speak in your language, transcribed into the box above */}
+            <div className="flex items-center gap-1.5 px-1">
+              <select
+                value={speechLanguage}
+                onChange={(e) => setSpeechLanguage(e.target.value as any)}
+                className="bg-slate-50 border border-slate-200 text-slate-600 text-[10px] font-medium px-2 py-1 rounded-lg focus:outline-none focus:border-amber-500 cursor-pointer"
+              >
+                <option value="en-US">English (US)</option>
+                <option value="hi-IN">हिन्दी (Hindi)</option>
+                <option value="kn-IN">ಕನ್ನಡ (Kannada)</option>
+                <option value="ta-IN">தமிழ் (Tamil)</option>
+              </select>
+              <button
+                type="button"
+                onClick={isListening ? stopListening : startListening}
+                disabled={disabled}
+                className={`p-1.5 rounded-lg flex items-center justify-center transition-all border cursor-pointer disabled:opacity-50 ${
+                  isListening
+                    ? "bg-slate-900 text-white border-slate-800 animate-pulse shadow-sm"
+                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                }`}
+                title={isListening ? "Stop Voice Input" : "Start Voice Input"}
+              >
+                {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+              </button>
+              {isListening && (
+                <span className="text-[9px] text-red-500 font-medium uppercase tracking-wide animate-pulse">
+                  Listening...
+                </span>
+              )}
             </div>
           </div>
         )}

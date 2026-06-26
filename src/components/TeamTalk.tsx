@@ -485,7 +485,7 @@ function StartDirectChatModal({
 
 // ─── Message List ─────────────────────────────────────────────
 function MessageList({
-  messages, currentUser, replyCounts, onReplyInThread, onStartThread, onConvertToTask, onDelete, onPin, onNotify, isLoading, canPin, highlightId, threadParticipantMap, currentUserId,
+  messages, currentUser, replyCounts, onReplyInThread, onStartThread, onConvertToTask, onDelete, onPin, onNotify, isLoading, canPin, canModerate, highlightId, threadParticipantMap, currentUserId,
 }: {
   messages: TeamTalkMessage[];
   currentUser: AppUser;
@@ -498,6 +498,7 @@ function MessageList({
   onNotify?: (msg: TeamTalkMessage) => void;
   isLoading: boolean;
   canPin?: boolean;
+  canModerate?: boolean;
   highlightId?: string;
   /** Map of messageId -> participantUserIds for thread privacy filtering */
   threadParticipantMap?: Record<string, string[]>;
@@ -573,6 +574,7 @@ function MessageList({
                 onDelete={onDelete}
                 onPin={canPin ? onPin : undefined}
                 onNotify={onNotify}
+                canModerate={canModerate}
                 showAvatar={showAvatar}
                 isHighlighted={msg.id === highlightId}
                 threadParticipantIds={threadParticipantMap?.[msg.id]}
@@ -591,7 +593,7 @@ function MessageList({
 function ThreadPanel({
   rootMessage, replies, currentUser, allUsers, isManager,
   onSendReply, onSendVoiceReply, onClose, onConvertToTask, onDelete, onPin, onNotify,
-  canPin, onActivateThread, onRenameThread, onCloseThread, threadTitle,
+  canPin, canModerate, onActivateThread, onRenameThread, onCloseThread, threadTitle,
 }: {
   rootMessage: TeamTalkMessage;
   replies: TeamTalkMessage[];
@@ -606,6 +608,7 @@ function ThreadPanel({
   onPin?: (id: string) => void;
   onNotify?: (msg: TeamTalkMessage) => void;
   canPin?: boolean;
+  canModerate?: boolean;
   onActivateThread?: (threadId: string, title: string) => void;
   onRenameThread?: (threadId: string, title: string) => void;
   onCloseThread?: (threadId: string) => void;
@@ -693,6 +696,7 @@ function ThreadPanel({
           onDelete={onDelete}
           onPin={canPin ? onPin : undefined}
           onNotify={onNotify}
+          canModerate={canModerate}
           showAvatar
           isThreadView
         />
@@ -750,6 +754,7 @@ function ThreadPanel({
               onDelete={onDelete}
               onPin={canPin ? onPin : undefined}
               onNotify={onNotify}
+              canModerate={canModerate}
               showAvatar={showAvatar}
               isThreadView
             />
@@ -1915,6 +1920,7 @@ export default function TeamTalk({
                 onNotify={handleNotify}
                 isLoading={loadingMessages}
                 canPin={userIsManager}
+                canModerate={userIsManager}
                 highlightId={searchResults.length > 0 ? searchResults[Math.min(currentSearchIndex, searchResults.length - 1)] : highlightMsgId}
                 threadParticipantMap={threadParticipantIds.reduce((acc, uid) => {
                   if (threadRoot) acc[threadRoot.id] = threadParticipantIds;
@@ -1967,6 +1973,7 @@ export default function TeamTalk({
                 onPin={handlePin}
                 onNotify={handleNotify}
                 canPin={userIsManager}
+                canModerate={userIsManager}
                 threadTitle={threadRoot.threadTitle}
                 onActivateThread={handleActivateThread}
                 onRenameThread={handleRenameThread}

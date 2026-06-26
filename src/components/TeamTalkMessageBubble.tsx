@@ -29,6 +29,8 @@ interface MessageBubbleProps {
   onDelete: (msgId: string) => void;
   onPin?: (msgId: string) => void;
   onNotify?: (msg: TeamTalkMessage) => void;
+  /** Managers can delete any message, not just their own */
+  canModerate?: boolean;
   showAvatar?: boolean;
   isThreadView?: boolean;
   isHighlighted?: boolean;
@@ -47,6 +49,7 @@ export default function TeamTalkMessageBubble({
   onDelete,
   onPin,
   onNotify,
+  canModerate = false,
   showAvatar = true,
   isThreadView = false,
   isHighlighted = false,
@@ -61,7 +64,9 @@ export default function TeamTalkMessageBubble({
   const [showActions, setShowActions] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-  const [translatedText, setTranslatedText] = useState<string | null>(null);
+  const [showLangPicker, setShowLangPicker] = useState(false);
+  const [selectedLang, setSelectedLang] = useState<"original" | "en" | "hi" | "kn" | "ta">("original");
+  const [langCache, setLangCache] = useState<Record<string, string>>(message.translations || {});
   const [isTranslating, setIsTranslating] = useState(false);
   const [reacted, setReacted] = useState<Record<string, string[]>>(message.reactions || {});
 
@@ -108,23 +113,22 @@ export default function TeamTalkMessageBubble({
     setShowReactions(false);
   };
 
-  const handleTranslate = async () => {
-    if (translatedText) { setTranslatedText(null); return; }
+  const handleLanguageToggle = async (lang: "original" | "en" | "hi" | "kn" | "ta") => {
+    setSelectedLang(lang);
+    if (lang === "original" || langCache[lang]) return;
     setIsTranslating(true);
     try {
-      // Detect preferred language (hardcoded to English for now)
-      const targetLang = 'en';
       const result = await chatService.translateMessage(
         message.id,
-        targetLang,
+        lang,
         message.content || message.voiceTranscript || '',
-        message.translations || {}
+        langCache
       );
-      if (!result) throw new Error("Empty response from AI service");
-      setTranslatedText(result);
+      setLangCache(prev => ({ ...prev, [lang]: result }));
     } catch (e) {
       console.error('Translation error:', e);
       alert('Translation failed. Please ensure your VITE_GEMINI_API_KEY is properly configured.\n\nError details: ' + (e as Error).message);
+      setSelectedLang("original");
     } finally {
       setIsTranslating(false);
     }
@@ -171,8 +175,12 @@ export default function TeamTalkMessageBubble({
 
         {/* Bubble */}
         <div className="relative">
+          {showActions && (
+            <div className="fixed inset-0 z-20 lg:hidden" onClick={() => setShowActions(false)} />
+          )}
           <div
-            className={`relative rounded-2xl px-3.5 py-2.5 shadow-xs ${
+            onClick={(e) => { e.stopPropagation(); setShowActions(v => !v); }}
+            className={`relative rounded-2xl px-3.5 py-2.5 shadow-xs cursor-pointer ${
               isMine
                 ? 'bg-[#162D4E] text-white rounded-br-sm'
                 : 'bg-white border border-slate-200/80 text-slate-800 rounded-bl-sm'
@@ -203,6 +211,8 @@ export default function TeamTalkMessageBubble({
               <p className="text-[13px] leading-relaxed break-words whitespace-pre-wrap">
                 {message.isDeleted ? (
                   <span className="italic opacity-50 text-[12px]">Message deleted</span>
+                ) : selectedLang !== "original" && langCache[selectedLang] ? (
+                  langCache[selectedLang]
                 ) : (
                   // Render @mentions highlighted
                   renderMentionContent(message.content || '', currentUser.id)
@@ -210,11 +220,28 @@ export default function TeamTalkMessageBubble({
               </p>
             )}
 
-            {/* Translation result */}
-            {translatedText && (
-              <div className={`mt-2 pt-2 border-t text-[11px] italic leading-relaxed ${isMine ? 'border-white/20 text-white/75' : 'border-slate-100 text-slate-500'}`}>
-                <Globe className="w-2.5 h-2.5 inline mr-1 opacity-60" />
-                {translatedText}
+            {/* Language toggle — same 4 languages as the Task input */}
+            {showLangPicker && !message.isDeleted && (
+              <div className={`flex gap-1 mt-2 pt-2 border-t ${isMine ? 'border-white/20' : 'border-slate-100'}`}>
+                {(["original", "en", "hi", "kn", "ta"] as const).map((lang) => {
+                  const label = lang === "original" ? "Original" : lang === "en" ? "English" : lang === "hi" ? "हिन्दी" : lang === "kn" ? "ಕನ್ನಡ" : "தமிழ்";
+                  const isSelected = selectedLang === lang;
+                  return (
+                    <button
+                      key={lang}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleLanguageToggle(lang); }}
+                      disabled={isTranslating}
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition-all cursor-pointer disabled:opacity-50 ${
+                        isSelected
+                          ? (isMine ? 'bg-white/20 text-white' : 'bg-slate-800 text-white')
+                          : (isMine ? 'text-white/60 hover:text-white' : 'text-slate-500 hover:text-slate-800')
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+                {isTranslating && <span className="text-[9px] animate-spin">⟳</span>}
               </div>
             )}
 
@@ -273,7 +300,7 @@ export default function TeamTalkMessageBubble({
 
       {/* Hover action buttons (always visible on mobile, hover on desktop) */}
       {!message.isDeleted && (
-        <div className={`flex items-center gap-0.5 self-center transition-opacity opacity-100 lg:opacity-0 lg:group-hover:opacity-100 relative z-30 ${isMine ? 'flex-row-reverse' : ''}`}>
+        <div className={`flex items-center gap-0.5 self-center transition-opacity relative z-30 ${showActions ? 'opacity-100' : 'opacity-0 pointer-events-none'} lg:group-hover:opacity-100 lg:group-hover:pointer-events-auto ${isMine ? 'flex-row-reverse' : ''}`}>
           {/* Quick reactions */}
           <div className="relative">
             <button
@@ -308,16 +335,12 @@ export default function TeamTalkMessageBubble({
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                handleTranslate();
+                setShowLangPicker(v => !v);
               }}
-              disabled={isTranslating}
-              className="p-1.5 hover:bg-blue-50 rounded-lg text-blue-500 transition-colors cursor-pointer disabled:opacity-40"
+              className={`p-1.5 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer ${showLangPicker ? 'text-blue-700 bg-blue-50' : 'text-blue-500'}`}
               title="Translate"
             >
-              {isTranslating
-                ? <span className="text-[10px] animate-spin block">⟳</span>
-                : <Globe className="w-3.5 h-3.5" />
-              }
+              <Globe className="w-3.5 h-3.5" />
             </button>
           )}
 
@@ -397,7 +420,7 @@ export default function TeamTalkMessageBubble({
                     </button>
                   )}
 
-                  {isMine && (
+                  {(isMine || canModerate) && (
                     <button
                       onClick={() => { onDelete(message.id); setShowMenu(false); }}
                       className="flex items-center gap-2.5 w-full px-3 py-2 text-[11px] text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer font-medium border-t border-slate-100"
