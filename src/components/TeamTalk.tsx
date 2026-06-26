@@ -905,6 +905,7 @@ export default function TeamTalk({
   onBack,
 }: TeamTalkProps) {
   const userIsManager = isManagerOrAbove(activeUser.role);
+  const userIsClientAdmin = isClientAdmin(activeUser.role);
   // Every outlet (tenant) under this user's client — for admins this spans
   // outlets beyond their own home tenant; falls back to just their own tenant.
   // Memoized by the actual ID set (not just array identity) so it doesn't
@@ -1920,7 +1921,7 @@ export default function TeamTalk({
                 onNotify={handleNotify}
                 isLoading={loadingMessages}
                 canPin={userIsManager}
-                canModerate={userIsManager}
+                canModerate={userIsClientAdmin}
                 highlightId={searchResults.length > 0 ? searchResults[Math.min(currentSearchIndex, searchResults.length - 1)] : highlightMsgId}
                 threadParticipantMap={threadParticipantIds.reduce((acc, uid) => {
                   if (threadRoot) acc[threadRoot.id] = threadParticipantIds;
@@ -1973,7 +1974,7 @@ export default function TeamTalk({
                 onPin={handlePin}
                 onNotify={handleNotify}
                 canPin={userIsManager}
-                canModerate={userIsManager}
+                canModerate={userIsClientAdmin}
                 threadTitle={threadRoot.threadTitle}
                 onActivateThread={handleActivateThread}
                 onRenameThread={handleRenameThread}

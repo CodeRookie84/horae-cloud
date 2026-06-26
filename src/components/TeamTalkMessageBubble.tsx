@@ -29,7 +29,7 @@ interface MessageBubbleProps {
   onDelete: (msgId: string) => void;
   onPin?: (msgId: string) => void;
   onNotify?: (msg: TeamTalkMessage) => void;
-  /** Managers can delete any message, not just their own */
+  /** Client admins can delete any message, not just their own */
   canModerate?: boolean;
   showAvatar?: boolean;
   isThreadView?: boolean;
