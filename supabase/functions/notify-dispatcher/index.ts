@@ -45,13 +45,29 @@ const MAX_MESSAGES_PER_USER_DAY  = 20;   // Daily WhatsApp cap per user
 // own params shape if "horae_alert" differs.
 const TEMP_TEMPLATE_NAME = "horae_task_alert";
 
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+// Needed because this function is called directly from the browser (urgent
+// push button), not just server-to-server (DB webhooks, cron, curl).
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 // ─── Entry Point ─────────────────────────────────────────────────────────────
 serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: CORS_HEADERS });
+  }
+
   let body: any;
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "Empty or invalid JSON body" }), { status: 400 });
+    return new Response(JSON.stringify({ error: "Empty or invalid JSON body" }), {
+      status: 400,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    });
   }
   const { type, table, record, old_record } = body;
   console.log(`[notify-dispatcher] Received ${type} event on table ${table}`);
@@ -67,11 +83,17 @@ serve(async (req) => {
     } else if (type === "URGENT_PUSH") {
       await handleUrgentPush(body.kind, body.record, body.userIds, body.tenantId);
     }
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    });
   } catch (err) {
     console.error("[notify-dispatcher] Error:", err);
     await logNotif("system", "system", "debug", "global_error", "system", "failed", String(err));
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+    return new Response(JSON.stringify({ error: String(err) }), {
+      status: 500,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    });
   }
 });
 
