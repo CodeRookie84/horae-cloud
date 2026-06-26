@@ -4,13 +4,13 @@
  */
 
 import React, { useState } from "react";
-import { 
-  Building2, 
-  User, 
-  ClipboardCheck, 
-  MessageSquare, 
-  BookOpen, 
-  UserSquare2, 
+import {
+  Building2,
+  User,
+  ClipboardCheck,
+  MessageSquare,
+  BookOpen,
+  UserSquare2,
   Layers,
   ChevronDown,
   Megaphone,
@@ -19,10 +19,13 @@ import {
   LogOut,
   X,
   Key,
-  MessageCircle
+  MessageCircle,
+  Bell,
+  BellOff
 } from "lucide-react";
 import { Client, Tenant, User as AppUser, Role, Department } from "../types";
 import { store } from "../services/store";
+import { initPush, clearPushSubscription, setPushOptOut } from "../services/fcmService";
 
 interface SidebarProps {
   clients: Client[];
@@ -72,6 +75,32 @@ export default function Sidebar({
   loggedInEmail,
   onLogout
 }: SidebarProps) {
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(
+    typeof Notification !== 'undefined' && Notification.permission === 'granted' && !!activeUser.fcmToken
+  );
+
+  const handleTogglePush = async () => {
+    setPushBusy(true);
+    try {
+      if (pushEnabled) {
+        await clearPushSubscription(activeUser.id);
+        setPushOptOut(true);
+        setPushEnabled(false);
+      } else {
+        const token = await initPush(activeUser.id);
+        if (token) {
+          await store.updateUserFCMToken(activeUser.id, token);
+          setPushEnabled(true);
+        } else {
+          alert("Notifications are blocked for this site in your browser settings. Enable them there, then try again.");
+        }
+      }
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
   // Mobile helper wraps to collapse drawer on action
   const handleTabClick = (tab: string) => {
     onSelectTab(tab);
@@ -477,6 +506,17 @@ export default function Sidebar({
                    <span>{activeUser.department}</span>
                  </p>
                </div>
+               <button
+                 type="button"
+                 onClick={handleTogglePush}
+                 disabled={pushBusy}
+                 className={`p-1 rounded-lg transition-colors cursor-pointer shrink-0 disabled:opacity-50 ${
+                   pushEnabled ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:bg-white hover:text-slate-600'
+                 }`}
+                 title={pushEnabled ? "Notifications on — tap to turn off" : "Notifications off — tap to turn on"}
+               >
+                 {pushEnabled ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+               </button>
                <button
                  type="button"
                  onClick={() => {

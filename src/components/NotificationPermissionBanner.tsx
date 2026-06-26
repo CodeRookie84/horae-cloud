@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Bell, BellOff, X, Smartphone } from 'lucide-react';
-import { isPushConfigured, initPush } from '../services/fcmService';
+import { isPushConfigured, initPush, isPushOptedOut } from '../services/fcmService';
 
 interface NotificationPermissionBannerProps {
   userId: string;
@@ -40,12 +40,29 @@ const NotificationPermissionBanner: React.FC<NotificationPermissionBannerProps> 
     // Don't show if already granted
     if (Notification.permission === 'granted') return;
 
+    // Browser previously blocked — re-asking is pointless until the user
+    // changes it in browser settings; no banner can help with that.
+    if (Notification.permission === 'denied') return;
+
+    // User explicitly turned push off via Settings — respect that, don't re-prompt
+    if (isPushOptedOut()) return;
+
     // Don't show if user explicitly dismissed this session
     if (sessionStorage.getItem('horae_notif_dismissed')) return;
 
     if (variant === 'login') {
-      // Show immediately on login
-      setVisible(true);
+      // Push is on by default — try the permission prompt immediately,
+      // no click required. If the browser silently blocks the
+      // programmatic call (no decision made), fall back to the banner
+      // so there's at least one user-gesture path to grant it.
+      (async () => {
+        const token = await initPush(userId);
+        if (token) {
+          onPermissionGranted?.(token);
+        } else if (Notification.permission === 'default') {
+          setVisible(true);
+        }
+      })();
     } else {
       // Show reminder only after 60 seconds of use
       const timer = setTimeout(() => {
@@ -55,7 +72,7 @@ const NotificationPermissionBanner: React.FC<NotificationPermissionBannerProps> 
       }, 60_000);
       return () => clearTimeout(timer);
     }
-  }, [variant]);
+  }, [variant, userId, onPermissionGranted]);
 
   const handleEnable = async () => {
     setRequesting(true);

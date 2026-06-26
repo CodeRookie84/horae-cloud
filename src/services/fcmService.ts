@@ -23,6 +23,18 @@ const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string;
 // Session-level state — avoid re-asking in same session
 let pushInitialized = false;
 
+const OPT_OUT_KEY = 'horae_push_opt_out';
+
+/** User explicitly turned push off via Settings — never auto-prompt again until they turn it back on */
+export function isPushOptedOut(): boolean {
+  return localStorage.getItem(OPT_OUT_KEY) === 'true';
+}
+
+export function setPushOptOut(optedOut: boolean): void {
+  if (optedOut) localStorage.setItem(OPT_OUT_KEY, 'true');
+  else localStorage.removeItem(OPT_OUT_KEY);
+}
+
 /** True only if VAPID key is configured and browser supports push */
 export function isPushConfigured(): boolean {
   return !!(
@@ -88,6 +100,7 @@ export async function initPush(userId: string): Promise<string | null> {
 
     // Save to Supabase so Edge Function can send pushes
     await savePushSubscription(userId, subscriptionJson);
+    setPushOptOut(false);
 
     console.info('[Push] Subscribed successfully.');
     return subscriptionJson;

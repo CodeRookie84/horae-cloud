@@ -37,41 +37,51 @@ self.addEventListener('fetch', (e) => {
 });
 
 // ---------- FCM PUSH NOTIFICATIONS ----------
+// WhatsApp-style grouping: notifications sharing a tag collapse into ONE
+// notification with a running count + latest preview, instead of stacking
+// as separate entries in the notification tray.
 self.addEventListener('push', (event) => {
-  let data = {};
-  try {
-    data = event.data ? event.data.json() : {};
-  } catch (e) {
-    data = { title: 'Horae', body: event.data ? event.data.text() : 'You have a new notification.' };
-  }
+  event.waitUntil((async () => {
+    let data = {};
+    try {
+      data = event.data ? event.data.json() : {};
+    } catch (e) {
+      data = { title: 'Horae', body: event.data ? event.data.text() : 'You have a new notification.' };
+    }
 
-  const {
-    title = 'Horae Notification',
-    body = 'Tap to open Horae.',
-    url = '/',
-    icon = '/horae-logo.jpg',
-    badge = '/horae-logo.jpg',
-    tag,
-    requireInteraction = false
-  } = data;
+    const {
+      title = 'Horae Notification',
+      body = 'Tap to open Horae.',
+      url = '/',
+      icon = '/horae-logo.jpg',
+      badge = '/horae-logo.jpg',
+      tag = 'horae-notif',
+      requireInteraction = false
+    } = data;
 
-  const options = {
-    body,
-    icon,
-    badge,
-    tag: tag || 'horae-notif-' + Date.now(),
-    data: { url },
-    requireInteraction,
-    vibrate: [200, 100, 200],
-    actions: [
-      { action: 'open', title: '📂 Open' },
-      { action: 'dismiss', title: 'Dismiss' }
-    ]
-  };
+    const existing = await self.registration.getNotifications({ tag });
+    let count = 1;
+    let displayBody = body;
+    if (existing.length > 0) {
+      count = (existing[0].data?.count || 1) + 1;
+      displayBody = `${count} new alerts from Horae\nLatest: ${body}`;
+      existing.forEach((n) => n.close());
+    }
 
-  event.waitUntil(
-    self.registration.showNotification(title, options)
-  );
+    await self.registration.showNotification(count > 1 ? 'Horae' : title, {
+      body: displayBody,
+      icon,
+      badge,
+      tag,
+      data: { url, count },
+      requireInteraction,
+      vibrate: [200, 100, 200],
+      actions: [
+        { action: 'open', title: '📂 Open' },
+        { action: 'dismiss', title: 'Dismiss' }
+      ]
+    });
+  })());
 });
 
 // ---------- NOTIFICATION CLICK (Deep Link Handler) ----------
