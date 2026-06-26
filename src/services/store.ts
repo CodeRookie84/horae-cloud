@@ -1746,11 +1746,12 @@ export class StoreService {
       userIds = (users || []).map((u: any) => u.id);
     }
 
-    if (!userIds.length) return;
+    if (!userIds.length) throw new Error("No recipients found for this " + kind);
 
-    await supabase.functions.invoke('notify-dispatcher', {
+    const { error } = await supabase.functions.invoke('notify-dispatcher', {
       body: { type: 'URGENT_PUSH', kind, record, userIds, tenantId: me.tenantId },
     });
+    if (error) throw error;
   }
 
   public async addTaskChatMessage(taskId: string, messageText: string): Promise<Task | null> {

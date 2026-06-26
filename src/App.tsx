@@ -637,13 +637,23 @@ function AppInner() {
   };
 
   const handleUrgentTaskNotify = async (taskId: string) => {
-    await store.sendUrgentWhatsAppPush("task", taskId);
-    triggerToast("Sent to staff on WhatsApp.");
+    try {
+      await store.sendUrgentWhatsAppPush("task", taskId);
+      triggerToast("Sent to staff on WhatsApp.");
+    } catch (err: any) {
+      console.error("Urgent WhatsApp push failed:", err);
+      triggerToast("Failed to send WhatsApp notification: " + (err?.message || "unknown error"));
+    }
   };
 
   const handleUrgentNoticeNotify = async (noticeId: string) => {
-    await store.sendUrgentWhatsAppPush("notice", noticeId);
-    triggerToast("Sent to staff on WhatsApp.");
+    try {
+      await store.sendUrgentWhatsAppPush("notice", noticeId);
+      triggerToast("Sent to staff on WhatsApp.");
+    } catch (err: any) {
+      console.error("Urgent WhatsApp push failed:", err);
+      triggerToast("Failed to send WhatsApp notification: " + (err?.message || "unknown error"));
+    }
   };
 
   const handleAddMessage = async (taskId: string, message: string) => {

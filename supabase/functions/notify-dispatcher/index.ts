@@ -38,6 +38,13 @@ const ONLINE_THRESHOLD_MIN       = 0;   // Skip WA if user seen < 5 min ago (set
 const TASK_DEDUP_HOURS           = 0;   // No repeat for same task within 3h
 const MAX_MESSAGES_PER_USER_DAY  = 20;   // Daily WhatsApp cap per user
 
+// TEMP: until "horae_alert" (generic template) is approved by Meta, reuse the
+// already-approved "horae_task_alert" template for every event type so the
+// send pipeline can be verified end-to-end. Swap this back to "horae_alert"
+// once that template is approved, and revert non-task event types to their
+// own params shape if "horae_alert" differs.
+const TEMP_TEMPLATE_NAME = "horae_task_alert";
+
 // ─── Entry Point ─────────────────────────────────────────────────────────────
 serve(async (req) => {
   const body = await req.json();
@@ -80,11 +87,12 @@ async function handleTaskAssigned(task: any) {
     }
     if (!await checkAntiSpam(userId, task.tenant_id, "task_assigned", task.id)) continue;
 
+    const details = `Priority: ${task.priority} | Due: ${task.due_date} | ${deepLink}`;
     await sendNotifications(user, {
       waMessage: buildTaskAssignedMessage(user.name, task.title, task.priority, task.due_date, deepLink),
       waTemplate: {
-        name: "hello_world",
-        params: []
+        name: "horae_task_alert",
+        params: [task.title, details]
       },
       pushTitle: `🔔 New Task: ${task.title}`,
       pushBody: `Priority: ${task.priority}`,
@@ -105,6 +113,7 @@ async function handleTaskUpdated(task: any, oldTask: any) {
       if (!await checkAntiSpam(user.id, task.tenant_id, "task_status", task.id)) continue;
       await sendNotifications(user, {
         waMessage: buildStatusMessage(user.name, task.title, task.status, deepLink),
+        waTemplate: { name: TEMP_TEMPLATE_NAME, params: [task.title, `Now ${task.status}. ${deepLink}`] },
         pushTitle: `🔄 Task ${task.status}: ${task.title}`,
         pushBody: `Status updated`,
         url: deepLink,
@@ -121,6 +130,7 @@ async function handleTaskUpdated(task: any, oldTask: any) {
       if (!await checkAntiSpam(user.id, task.tenant_id, "task_chat", task.id)) continue;
       await sendNotifications(user, {
         waMessage: buildChatMessage(latest?.senderName || "Someone", task.title, latest?.message || "", deepLink),
+        waTemplate: { name: TEMP_TEMPLATE_NAME, params: [task.title, `${latest?.senderName || "Someone"}: ${(latest?.message || "").slice(0, 80)} ${deepLink}`] },
         pushTitle: `💬 ${latest?.senderName}: ${task.title}`,
         pushBody: (latest?.message || "").slice(0, 80),
         url: deepLink,
@@ -138,6 +148,7 @@ async function handleNoticePosted(notice: any) {
     if (!await checkAntiSpam(user.id, notice.tenant_id, "notice", notice.id)) continue;
     await sendNotifications(user, {
       waMessage: buildNoticeMessage(user.name, notice.title, notice.content?.slice(0, 100) || "", deepLink),
+      waTemplate: { name: TEMP_TEMPLATE_NAME, params: [notice.title, `${(notice.content || "").slice(0, 80)} ${deepLink}`] },
       pushTitle: `📢 ${notice.title}`,
       pushBody: notice.content?.slice(0, 80) || "",
       url: deepLink,
@@ -168,8 +179,10 @@ async function handleDigest(userId: string, tenantId: string, items: any, runMod
   const deepLink = `${APP_BASE_URL}/digest`;
   parts.push(`\n👉 Open Horae: ${deepLink}`);
 
+  const digestHeading = runMode === "evening" ? "Evening wrap-up" : "Morning briefing";
   await sendNotifications(user, {
     waMessage: parts.join("\n"),
+    waTemplate: { name: TEMP_TEMPLATE_NAME, params: [digestHeading, `${parts.slice(1, -1).join(" ")} ${deepLink}`] },
     pushTitle: runMode === "evening" ? "🌙 Your Horae Evening Wrap-up" : "📋 Your Horae Morning Briefing",
     pushBody: `${items.tasks?.length || 0} tasks${runMode === "evening" ? ", " + (items.mentions?.length || 0) + " mentions" : ", " + (items.checklists?.length || 0) + " checklists"}`,
     url: deepLink,
@@ -192,6 +205,7 @@ async function handleUrgentPush(kind: "task" | "notice", record: any, userIds: s
 
     await sendNotifications(user, {
       waMessage,
+      waTemplate: { name: TEMP_TEMPLATE_NAME, params: [record.title, `Urgent — action within the hour. ${deepLink}`] },
       pushTitle: kind === "task" ? `🔴 Urgent task: ${record.title}` : `🔴 Urgent notice: ${record.title}`,
       pushBody: "Needs attention within the hour",
       url: deepLink,
