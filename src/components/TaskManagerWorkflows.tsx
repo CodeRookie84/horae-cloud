@@ -1963,14 +1963,21 @@ export default function TaskManagerWorkflows({
                       {tasksInPrio.map(t => {
                         const isOverdue = isTaskOverdue(t);
                         return (
-                          <button
+                          <div
                             key={t.id}
-                            type="button"
+                            role="button"
+                            tabIndex={0}
                             onClick={() => {
                               setSelectedTaskId(t.id);
                               setMobileView("detail");
                             }}
-                            className={`w-full text-left p-3.5 transition-all focus:outline-none flex flex-col gap-2 ${
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                setSelectedTaskId(t.id);
+                                setMobileView("detail");
+                              }
+                            }}
+                            className={`w-full text-left p-3.5 transition-all focus:outline-none flex flex-col gap-2 cursor-pointer ${
                               isOverdue ? "bg-rose-50/30 hover:bg-rose-50/60 border-l-[3px] border-l-rose-500" : "hover:bg-slate-50/60 bg-white"
                             }`}
                           >
@@ -1979,9 +1986,13 @@ export default function TaskManagerWorkflows({
                                 {renderPriorityBadge(t.priority)}
                                 {renderUnreadChatBadge(t)}
                               </div>
-                              <span className={`text-[8px] font-medium px-1.5 py-0.5 rounded border font-mono ${
-                                t.status === "Completed" ? "bg-slate-800/10 border-emerald-200 text-emerald-800" : t.status === "Closed" ? "bg-slate-500/10 border-slate-200 text-slate-500" : "bg-slate-1000/10 border-indigo-200 text-indigo-800"
-                              }`}>{t.status}</span>
+                              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                {renderUrgentNotifyButton(t)}
+                                {renderReminderBell(t)}
+                                <span className={`text-[8px] font-medium px-1.5 py-0.5 rounded border font-mono ${
+                                  t.status === "Completed" ? "bg-slate-800/10 border-emerald-200 text-emerald-800" : t.status === "Closed" ? "bg-slate-500/10 border-slate-200 text-slate-500" : "bg-slate-1000/10 border-indigo-200 text-indigo-800"
+                                }`}>{t.status}</span>
+                              </div>
                             </div>
 
                             <div className="space-y-1">
@@ -1997,7 +2008,7 @@ export default function TaskManagerWorkflows({
                               <span className={isOverdue ? "text-rose-600 font-bold" : "text-slate-400"}>Due: {t.dueDate}</span>
                               <span className="text-slate-400">By: {getAssigneeName(t.createdByUserId).split(" ")[0]}</span>
                             </div>
-                          </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -2030,6 +2041,8 @@ export default function TaskManagerWorkflows({
               
               <div className="flex items-center gap-2">
                 {renderPriorityBadge(activeTask.priority)}
+                {renderUrgentNotifyButton(activeTask)}
+                {renderReminderBell(activeTask)}
                 {(activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN || activeTask.createdByUserId === activeUser.id) && (
                   <button
                     onClick={() => {

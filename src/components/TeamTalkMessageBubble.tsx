@@ -8,7 +8,7 @@
 import React, { useState } from 'react';
 import {
   MoreHorizontal, MessageSquare, Trash2, Edit3,
-  CheckSquare, Link, Globe, GitBranch, ChevronRight, Check, Pin, GitPullRequest
+  CheckSquare, Link, Globe, GitBranch, ChevronRight, Check, Pin, GitPullRequest, Send as NotifyIcon
 } from 'lucide-react';
 import type { TeamTalkMessage } from '../types';
 import type { User as AppUser } from '../types';
@@ -28,6 +28,7 @@ interface MessageBubbleProps {
   onConvertToTask: (msg: TeamTalkMessage) => void;
   onDelete: (msgId: string) => void;
   onPin?: (msgId: string) => void;
+  onNotify?: (msg: TeamTalkMessage) => void;
   showAvatar?: boolean;
   isThreadView?: boolean;
   isHighlighted?: boolean;
@@ -45,6 +46,7 @@ export default function TeamTalkMessageBubble({
   onConvertToTask,
   onDelete,
   onPin,
+  onNotify,
   showAvatar = true,
   isThreadView = false,
   isHighlighted = false,
@@ -320,18 +322,18 @@ export default function TeamTalkMessageBubble({
           )}
 
 
-          {/* Delete Action */}
-          {isMine && (
+          {/* Notify on WhatsApp */}
+          {onNotify && (
             <button
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                onDelete(message.id);
+                onNotify(message);
               }}
-              className="p-1.5 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-              title="Delete message"
+              className="p-1.5 hover:bg-emerald-50 rounded-lg text-slate-400 hover:text-emerald-600 transition-colors cursor-pointer"
+              title="Notify on WhatsApp"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <NotifyIcon className="w-3.5 h-3.5" />
             </button>
           )}
 
@@ -374,7 +376,17 @@ export default function TeamTalkMessageBubble({
                     <CheckSquare className="w-3.5 h-3.5 text-emerald-500" />
                     Convert to Task
                   </button>
-                  
+
+                  {onNotify && (
+                    <button
+                      onClick={() => { onNotify(message); setShowMenu(false); }}
+                      className="flex items-center gap-2.5 w-full px-3 py-2 text-[11px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium border-t border-slate-100"
+                    >
+                      <NotifyIcon className="w-3.5 h-3.5 text-emerald-500" />
+                      Notify on WhatsApp
+                    </button>
+                  )}
+
                   {onPin && (
                     <button
                       onClick={() => { onPin(message.id); setShowMenu(false); }}

@@ -18,6 +18,7 @@ import type { ChatChannel, TeamTalkMessage, Tenant } from '../types';
 import type { User as AppUser } from '../types';
 import { Role } from '../types';
 import * as chatService from '../services/chatService';
+import { store } from '../services/store';
 import { supabase } from '../services/supabaseClient';
 import TeamTalkChannelSidebar from './TeamTalkChannelSidebar';
 import TeamTalkMemberPicker, { resolveMemberIds, EMPTY_SELECTION, type MemberPickerSelection } from './TeamTalkMemberPicker';
@@ -484,7 +485,7 @@ function StartDirectChatModal({
 
 // ─── Message List ─────────────────────────────────────────────
 function MessageList({
-  messages, currentUser, replyCounts, onReplyInThread, onStartThread, onConvertToTask, onDelete, onPin, isLoading, canPin, highlightId, threadParticipantMap, currentUserId,
+  messages, currentUser, replyCounts, onReplyInThread, onStartThread, onConvertToTask, onDelete, onPin, onNotify, isLoading, canPin, highlightId, threadParticipantMap, currentUserId,
 }: {
   messages: TeamTalkMessage[];
   currentUser: AppUser;
@@ -494,6 +495,7 @@ function MessageList({
   onConvertToTask: (msg: TeamTalkMessage) => void;
   onDelete: (id: string) => void;
   onPin?: (id: string) => void;
+  onNotify?: (msg: TeamTalkMessage) => void;
   isLoading: boolean;
   canPin?: boolean;
   highlightId?: string;
@@ -570,6 +572,7 @@ function MessageList({
                 onConvertToTask={onConvertToTask}
                 onDelete={onDelete}
                 onPin={canPin ? onPin : undefined}
+                onNotify={onNotify}
                 showAvatar={showAvatar}
                 isHighlighted={msg.id === highlightId}
                 threadParticipantIds={threadParticipantMap?.[msg.id]}
@@ -587,7 +590,7 @@ function MessageList({
 // ─── Thread Panel ─────────────────────────────────────────────
 function ThreadPanel({
   rootMessage, replies, currentUser, allUsers, isManager,
-  onSendReply, onSendVoiceReply, onClose, onConvertToTask, onDelete, onPin,
+  onSendReply, onSendVoiceReply, onClose, onConvertToTask, onDelete, onPin, onNotify,
   canPin, onActivateThread, onRenameThread, onCloseThread, threadTitle,
 }: {
   rootMessage: TeamTalkMessage;
@@ -601,6 +604,7 @@ function ThreadPanel({
   onConvertToTask: (msg: TeamTalkMessage) => void;
   onDelete: (id: string) => void;
   onPin?: (id: string) => void;
+  onNotify?: (msg: TeamTalkMessage) => void;
   canPin?: boolean;
   onActivateThread?: (threadId: string, title: string) => void;
   onRenameThread?: (threadId: string, title: string) => void;
@@ -688,6 +692,7 @@ function ThreadPanel({
           onConvertToTask={onConvertToTask}
           onDelete={onDelete}
           onPin={canPin ? onPin : undefined}
+          onNotify={onNotify}
           showAvatar
           isThreadView
         />
@@ -743,6 +748,8 @@ function ThreadPanel({
               onReplyInThread={() => {}}
               onConvertToTask={onConvertToTask}
               onDelete={onDelete}
+              onPin={canPin ? onPin : undefined}
+              onNotify={onNotify}
               showAvatar={showAvatar}
               isThreadView
             />
@@ -1397,6 +1404,16 @@ export default function TeamTalk({
     setPinnedDismissed(false);
   }, [activeChannel, userIsManager, activeUser.id]);
 
+  const handleNotify = useCallback(async (msg: TeamTalkMessage) => {
+    try {
+      await store.sendUrgentMessageWhatsAppPush(msg.id, msg.channelId, msg.content || msg.voiceTranscript || '', msg.senderName, msg.mentionedUserIds);
+      alert("Sent to staff on WhatsApp.");
+    } catch (err: any) {
+      console.error("Urgent WhatsApp push failed:", err);
+      alert("Failed to send WhatsApp notification: " + (err?.message || "unknown error"));
+    }
+  }, []);
+
   const handleUnpin = useCallback(async () => {
     if (!activeChannel) return;
     await chatService.unpinMessage(activeChannel.id);
@@ -1895,6 +1912,7 @@ export default function TeamTalk({
                 onConvertToTask={setConvertingMessage}
                 onDelete={handleDelete}
                 onPin={handlePin}
+                onNotify={handleNotify}
                 isLoading={loadingMessages}
                 canPin={userIsManager}
                 highlightId={searchResults.length > 0 ? searchResults[Math.min(currentSearchIndex, searchResults.length - 1)] : highlightMsgId}
@@ -1947,6 +1965,7 @@ export default function TeamTalk({
                 onConvertToTask={setConvertingMessage}
                 onDelete={handleDelete}
                 onPin={handlePin}
+                onNotify={handleNotify}
                 canPin={userIsManager}
                 threadTitle={threadRoot.threadTitle}
                 onActivateThread={handleActivateThread}

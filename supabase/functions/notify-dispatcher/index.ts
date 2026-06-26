@@ -217,9 +217,11 @@ async function handleDigest(userId: string, tenantId: string, items: any, runMod
   }, tenantId, "daily_digest", `digest-${runMode}-` + new Date().toISOString().slice(0, 10));
 }
 
-async function handleUrgentPush(kind: "task" | "notice", record: any, userIds: string[], tenantId: string) {
+async function handleUrgentPush(kind: "task" | "notice" | "message", record: any, userIds: string[], tenantId: string) {
   if (!record || !userIds?.length) return;
-  const deepLink = kind === "task" ? `${APP_BASE_URL}/tasks/${record.id}` : `${APP_BASE_URL}/notices/${record.id}`;
+  const deepLink = kind === "task" ? `${APP_BASE_URL}/tasks/${record.id}`
+    : kind === "notice" ? `${APP_BASE_URL}/notices/${record.id}`
+    : `${APP_BASE_URL}/team-talk?channel=${record.channelId}&msg=${record.id}`;
 
   for (const userId of userIds) {
     const user = await getUser(userId);
@@ -228,7 +230,9 @@ async function handleUrgentPush(kind: "task" | "notice", record: any, userIds: s
 
     const waMessage = kind === "task"
       ? `🔴 *Urgent task — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\nPlease action within the hour.\n\n👉 ${deepLink}`
-      : `🔴 *Urgent notice — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\n\n👉 ${deepLink}`;
+      : kind === "notice"
+      ? `🔴 *Urgent notice — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\n\n👉 ${deepLink}`
+      : `🔴 *Urgent message — Horae*\n\nHi ${user.name.split(" ")[0]},\n${record.senderName ? `${record.senderName}: ` : ""}"${record.title}"\n\n👉 ${deepLink}`;
 
     await sendNotifications(user, {
       waMessage,

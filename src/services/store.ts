@@ -1754,6 +1754,24 @@ export class StoreService {
     if (error) throw error;
   }
 
+  public async sendUrgentMessageWhatsAppPush(messageId: string, channelId: string, content: string, senderName: string, mentionedUserIds?: string[]): Promise<void> {
+    const me = await this.getActiveUser();
+    let userIds = mentionedUserIds && mentionedUserIds.length ? mentionedUserIds : [];
+
+    if (!userIds.length) {
+      const { data: members } = await supabase.from('chat_members').select('user_id').eq('channel_id', channelId);
+      userIds = (members || []).map((m: any) => m.user_id).filter((id: string) => id !== me.id);
+    }
+
+    if (!userIds.length) throw new Error("No recipients found for this message");
+
+    const record = { id: messageId, channelId, title: content.slice(0, 100), senderName };
+    const { error } = await supabase.functions.invoke('notify-dispatcher', {
+      body: { type: 'URGENT_PUSH', kind: 'message', record, userIds, tenantId: me.tenantId },
+    });
+    if (error) throw error;
+  }
+
   public async addTaskChatMessage(taskId: string, messageText: string): Promise<Task | null> {
     const me = await this.getActiveUser();
     const newMessage = {
