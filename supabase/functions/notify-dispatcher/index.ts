@@ -36,7 +36,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE);
 // ─── Anti-spam constants ──────────────────────────────────────────────────────
 const ONLINE_THRESHOLD_MIN       = 0;   // Skip WA if user seen < 5 min ago (set to 0 for testing)
 const TASK_DEDUP_HOURS           = 0;   // No repeat for same task within 3h
-const MAX_MESSAGES_PER_USER_DAY  = 50;   // Daily WhatsApp cap per user
+const MAX_MESSAGES_PER_USER_DAY  = 20;   // Daily WhatsApp cap per user
 
 // ─── Entry Point ─────────────────────────────────────────────────────────────
 serve(async (req) => {
@@ -51,7 +51,9 @@ serve(async (req) => {
     } else if (table === "notices" && type === "INSERT") {
       await handleNoticePosted(record);
     } else if (type === "DIGEST") {
-      await handleDigest(body.userId, body.tenantId, body.items);
+      await handleDigest(body.userId, body.tenantId, body.items, body.runMode);
+    } else if (type === "URGENT_PUSH") {
+      await handleUrgentPush(body.kind, body.record, body.userIds, body.tenantId);
     }
     return new Response(JSON.stringify({ ok: true }), { status: 200 });
   } catch (err) {
@@ -143,15 +145,24 @@ async function handleNoticePosted(notice: any) {
   }
 }
 
-async function handleDigest(userId: string, tenantId: string, items: any) {
+async function handleDigest(userId: string, tenantId: string, items: any, runMode: "morning" | "evening" = "morning") {
   const user = await getUser(userId);
   if (!user) return;
 
-  const parts: string[] = [`Good morning ${user.name.split(" ")[0]}! Your Horae briefing 🌅\n`];
-  if (items.checklists?.length) parts.push(`✅ CHECKLIST: "${items.checklists[0].title}" is pending`);
-  if (items.notices?.length)    parts.push(`📢 NOTICE: "${items.notices[0].title}"`);
-  if (items.quizzes?.length)    parts.push(`📝 QUIZ: "${items.quizzes[0].title}" — complete today`);
-  if (items.tasks?.length)      parts.push(`📋 TASKS DUE: ${items.tasks.length} task(s) need attention`);
+  const firstName = user.name.split(" ")[0];
+  const parts: string[] = runMode === "evening"
+    ? [`Evening wrap-up, ${firstName} 🌙\n`]
+    : [`Good morning ${firstName}! Your Horae briefing 🌅\n`];
+
+  if (runMode === "morning") {
+    if (items.checklists?.length) parts.push(`✅ CHECKLIST: "${items.checklists[0].title}" is pending`);
+    if (items.notices?.length)    parts.push(`📢 NOTICE: "${items.notices[0].title}"`);
+    if (items.quizzes?.length)    parts.push(`📝 QUIZ: "${items.quizzes[0].title}" — complete today`);
+    if (items.tasks?.length)      parts.push(`📋 TASKS DUE TODAY: ${items.tasks.length} task(s) need attention`);
+  } else {
+    if (items.tasks?.length)      parts.push(`📋 STILL OPEN: ${items.tasks.length} task(s) — check before tomorrow`);
+    if (items.mentions?.length)   parts.push(`💬 TEAM TALK: ${items.mentions.length} unread mention(s) today`);
+  }
   if (parts.length <= 1) return;
 
   const deepLink = `${APP_BASE_URL}/digest`;
@@ -159,11 +170,33 @@ async function handleDigest(userId: string, tenantId: string, items: any) {
 
   await sendNotifications(user, {
     waMessage: parts.join("\n"),
-    pushTitle: "📋 Your Horae Morning Briefing",
-    pushBody: `${items.tasks?.length || 0} tasks, ${items.checklists?.length || 0} checklists today`,
+    pushTitle: runMode === "evening" ? "🌙 Your Horae Evening Wrap-up" : "📋 Your Horae Morning Briefing",
+    pushBody: `${items.tasks?.length || 0} tasks${runMode === "evening" ? ", " + (items.mentions?.length || 0) + " mentions" : ", " + (items.checklists?.length || 0) + " checklists"}`,
     url: deepLink,
     pushTag: "horae-digest",
-  }, tenantId, "daily_digest", "digest-" + new Date().toISOString().slice(0, 10));
+  }, tenantId, "daily_digest", `digest-${runMode}-` + new Date().toISOString().slice(0, 10));
+}
+
+async function handleUrgentPush(kind: "task" | "notice", record: any, userIds: string[], tenantId: string) {
+  if (!record || !userIds?.length) return;
+  const deepLink = kind === "task" ? `${APP_BASE_URL}/tasks/${record.id}` : `${APP_BASE_URL}/notices/${record.id}`;
+
+  for (const userId of userIds) {
+    const user = await getUser(userId);
+    if (!user) continue;
+    if (!await checkAntiSpam(userId, tenantId, "urgent_push", record.id)) continue;
+
+    const waMessage = kind === "task"
+      ? `🔴 *Urgent task — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\nPlease action within the hour.\n\n👉 ${deepLink}`
+      : `🔴 *Urgent notice — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\n\n👉 ${deepLink}`;
+
+    await sendNotifications(user, {
+      waMessage,
+      pushTitle: kind === "task" ? `🔴 Urgent task: ${record.title}` : `🔴 Urgent notice: ${record.title}`,
+      pushBody: "Needs attention within the hour",
+      url: deepLink,
+    }, tenantId, "urgent_push", record.id, true);
+  }
 }
 
 // ─── Anti-Spam Check ──────────────────────────────────────────────────────────
@@ -242,7 +275,7 @@ async function sendNotifications(user: any, payload: {
   pushBody: string;
   url: string;
   pushTag?: string;
-}, tenantId: string, eventType: string, refId: string) {
+}, tenantId: string, eventType: string, refId: string, isUrgent: boolean = false) {
   const promises: Promise<void>[] = [];
 
   if (user.phone_number && user.whatsapp_opted_in && !DISABLE_WHATSAPP) {
@@ -250,16 +283,16 @@ async function sendNotifications(user: any, payload: {
     await logNotif(user.id, tenantId, "debug", refId, "whatsapp", "sent", "Token prefix in EF: " + prefix);
     promises.push(
       sendWhatsApp(user.phone_number, payload.waMessage, payload.waTemplate)
-        .then(() => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "sent"))
-        .catch(e => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "failed", String(e)))
+        .then(() => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "sent", undefined, isUrgent))
+        .catch(e => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "failed", String(e), isUrgent))
     );
   }
 
   if (user.fcm_token) {
     promises.push(
       sendWebPush(user.fcm_token, payload)
-        .then(() => logNotif(user.id, tenantId, eventType, refId, "webpush", "sent"))
-        .catch(e => logNotif(user.id, tenantId, eventType, refId, "webpush", "failed", String(e)))
+        .then(() => logNotif(user.id, tenantId, eventType, refId, "webpush", "sent", undefined, isUrgent))
+        .catch(e => logNotif(user.id, tenantId, eventType, refId, "webpush", "failed", String(e), isUrgent))
     );
   }
 
@@ -499,10 +532,10 @@ async function getTaskRecipients(task: any, excludeId?: string) {
   return data || [];
 }
 
-async function logNotif(userId: string, tenantId: string, eventType: string, refId: string, channel: string, status: string, error?: string) {
+async function logNotif(userId: string, tenantId: string, eventType: string, refId: string, channel: string, status: string, error?: string, isUrgent: boolean = false) {
   await supabase.from("notification_log").insert([{
     user_id: userId, tenant_id: tenantId, event_type: eventType,
-    reference_id: refId, channel, status, error_message: error,
+    reference_id: refId, channel, status, error_message: error, is_urgent: isUrgent,
   }]);
 }
 

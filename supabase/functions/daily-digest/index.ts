@@ -1,15 +1,14 @@
 /**
  * Supabase Edge Function: daily-digest
  *
- * Runs every morning at 8:00 AM (configured via Supabase cron).
- * For each active staff member, builds a digest of:
- *  - Pending checklists
- *  - Notices posted in last 24h
- *  - Quizzes not yet attempted
- *  - Tasks due today
+ * Runs twice a day (configured via Supabase cron):
+ *  - "morning" (~8:00 AM IST): pending checklists, notices from last 24h,
+ *    quizzes not yet attempted, tasks due today.
+ *  - "evening" (~6:30 PM IST): tasks still open from today, unread Team
+ *    Talk mentions since the morning run, tasks due tomorrow.
  *
  * Calls notify-dispatcher with the digest payload.
- * Skips users who already received a digest today.
+ * Skips users who already received a digest for that run today.
  */
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
@@ -21,11 +20,24 @@ const DISPATCHER_URL   = `${SUPABASE_URL}/functions/v1/notify-dispatcher`;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE);
 
-serve(async (_req) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString();
+type RunMode = "morning" | "evening";
 
-  console.log(`[daily-digest] Running for ${today}`);
+serve(async (req) => {
+  let runMode: RunMode = "morning";
+  try {
+    const body = await req.json();
+    if (body?.runMode === "evening") runMode = "evening";
+  } catch {
+    // No body (manual trigger) — default to morning
+  }
+
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString();
+  const startOfToday = today + "T00:00:00Z";
+
+  console.log(`[daily-digest] Running ${runMode} digest for ${today}`);
 
   // Get all active tenants
   const { data: tenants } = await supabase.from("tenants").select("id");
@@ -48,62 +60,89 @@ serve(async (_req) => {
         continue;
       }
 
-      // Skip if digest already sent today
+      // Skip if this run's digest already sent today
       const { data: existing } = await supabase
         .from("digest_tracker")
         .select("id")
         .eq("user_id", user.id)
         .eq("digest_date", today)
+        .eq("run_mode", runMode)
         .single();
       if (existing) { skipped++; continue; }
 
-      // Build digest items
-      const items: { checklists: any[]; notices: any[]; quizzes: any[]; tasks: any[] } = {
+      const items: { checklists: any[]; notices: any[]; quizzes: any[]; tasks: any[]; mentions: any[] } = {
         checklists: [],
         notices: [],
         quizzes: [],
         tasks: [],
+        mentions: [],
       };
 
-      // 1. Pending checklists (not yet submitted today by this user)
-      const { data: checklists } = await supabase
-        .from("checklists")
-        .select("id, title, recurrence")
-        .eq("tenant_id", tenant.id);
+      if (runMode === "morning") {
+        // 1. Pending checklists (not yet submitted today by this user)
+        const { data: checklists } = await supabase
+          .from("checklists")
+          .select("id, title, recurrence")
+          .eq("tenant_id", tenant.id);
+        items.checklists = (checklists || []).slice(0, 3);
 
-      // Simple check — include all active checklists for now
-      // (Full per-user submission check requires submissions table)
-      items.checklists = (checklists || []).slice(0, 3);
+        // 2. Notices posted in last 24h
+        const { data: notices } = await supabase
+          .from("notices")
+          .select("id, title")
+          .eq("tenant_id", tenant.id)
+          .gte("created_at", yesterday)
+          .order("created_at", { ascending: false })
+          .limit(3);
+        items.notices = notices || [];
 
-      // 2. Notices posted in last 24h
-      const { data: notices } = await supabase
-        .from("notices")
-        .select("id, title")
-        .eq("tenant_id", tenant.id)
-        .gte("created_at", yesterday)
-        .order("created_at", { ascending: false })
-        .limit(3);
-      items.notices = notices || [];
+        // 3. Tasks due today assigned to this user
+        const { data: tasks } = await supabase
+          .from("tasks")
+          .select("id, title, status, priority")
+          .eq("tenant_id", tenant.id)
+          .contains("assigned_user_ids", [user.id])
+          .not("status", "in", '("Completed","Closed")')
+          .lte("due_date", today + "T23:59:59Z")
+          .gte("due_date", startOfToday);
+        items.tasks = tasks || [];
+      } else {
+        // Evening run: tasks still open from today
+        const { data: openTasks } = await supabase
+          .from("tasks")
+          .select("id, title, status, priority")
+          .eq("tenant_id", tenant.id)
+          .contains("assigned_user_ids", [user.id])
+          .not("status", "in", '("Completed","Closed")')
+          .lte("due_date", today + "T23:59:59Z")
+          .gte("due_date", startOfToday);
+        items.tasks = openTasks || [];
 
-      // 3. Quizzes not yet attempted by this user
-      // (simplified — include any quizzes in this tenant)
-      // Full implementation would join with quiz_attempts table
-      // For now we signal "check quizzes" if any exist
-      // items.quizzes = ...; (left for tenant-specific quiz integration)
+        // Tasks due tomorrow
+        const { data: tomorrowTasks } = await supabase
+          .from("tasks")
+          .select("id, title, status, priority")
+          .eq("tenant_id", tenant.id)
+          .contains("assigned_user_ids", [user.id])
+          .not("status", "in", '("Completed","Closed")')
+          .lte("due_date", tomorrow + "T23:59:59Z")
+          .gte("due_date", tomorrow + "T00:00:00Z");
+        items.notices = []; // not used in evening run
+        items.tasks = [...items.tasks, ...(tomorrowTasks || [])];
 
-      // 4. Tasks due today assigned to this user
-      const { data: tasks } = await supabase
-        .from("tasks")
-        .select("id, title, status, priority")
-        .eq("tenant_id", tenant.id)
-        .contains("assigned_user_ids", [user.id])
-        .not("status", "in", '("Completed","Closed")')
-        .lte("due_date", today + "T23:59:59Z")
-        .gte("due_date", today + "T00:00:00Z");
-      items.tasks = tasks || [];
+        // Unread Team Talk mentions since this morning
+        const { data: mentions } = await supabase
+          .from("chat_messages")
+          .select("id, content, channel_id")
+          .contains("mentioned_user_ids", [user.id])
+          .gte("created_at", startOfToday)
+          .order("created_at", { ascending: false })
+          .limit(5);
+        items.mentions = mentions || [];
+      }
 
       // Skip empty digest
-      const totalItems = items.checklists.length + items.notices.length + items.tasks.length;
+      const totalItems = items.checklists.length + items.notices.length + items.tasks.length + items.mentions.length;
       if (totalItems === 0) { skipped++; continue; }
 
       // Call dispatcher with DIGEST type
@@ -117,6 +156,7 @@ serve(async (_req) => {
           type: "DIGEST",
           userId: user.id,
           tenantId: tenant.id,
+          runMode,
           items,
         }),
       });
@@ -127,6 +167,7 @@ serve(async (_req) => {
           user_id: user.id,
           tenant_id: tenant.id,
           digest_date: today,
+          run_mode: runMode,
           items_count: totalItems,
           items_summary: items,
         });
@@ -137,22 +178,12 @@ serve(async (_req) => {
     }
   }
 
-  console.log(`[daily-digest] Done. Dispatched: ${dispatched}, Skipped: ${skipped}`);
-  return new Response(JSON.stringify({ dispatched, skipped }), { status: 200 });
+  console.log(`[daily-digest] Done (${runMode}). Dispatched: ${dispatched}, Skipped: ${skipped}`);
+  return new Response(JSON.stringify({ runMode, dispatched, skipped }), { status: 200 });
 });
 
 /**
- * To schedule this function at 8 AM daily, add to Supabase dashboard:
- * Dashboard → Edge Functions → daily-digest → Cron: "0 2 * * *" (8 AM IST = 2:30 AM UTC)
- * or use pg_cron in Supabase SQL editor:
- *
- * SELECT cron.schedule(
- *   'daily-digest-8am-IST',
- *   '30 2 * * *',
- *   $$SELECT net.http_post(
- *     url := 'https://<project>.supabase.co/functions/v1/daily-digest',
- *     headers := '{"Authorization": "Bearer <service-role-key>"}'::jsonb,
- *     body := '{}'::jsonb
- *   )$$
- * );
+ * Cron setup (pg_cron, run in Supabase SQL editor — see
+ * supabase/migrations/20260626_digest_run_mode.sql for the exact
+ * cron.schedule calls for both the morning and evening runs).
  */

@@ -4,22 +4,25 @@
  */
 
 import React, { useState } from "react";
-import { Megaphone, Inbox, Building2, ArrowLeft, ChevronRight, ShieldAlert, Clock } from "lucide-react";
-import { Notice, Tenant, User as AppUser } from "../types";
+import { Megaphone, Inbox, Building2, ArrowLeft, ChevronRight, ShieldAlert, Clock, MessageSquare } from "lucide-react";
+import { Notice, Tenant, User as AppUser, Role } from "../types";
 
 interface NoticesWorkflowsProps {
   notices: Notice[];
   tenants: Tenant[];
   activeUser: AppUser;
   onBack?: () => void;
+  onUrgentNotify?: (id: string) => void;
 }
 
 export default function NoticesWorkflows({
   notices: rawNotices,
   tenants = [],
   activeUser,
-  onBack
+  onBack,
+  onUrgentNotify
 }: NoticesWorkflowsProps) {
+  const canNotify = [Role.ADMIN, Role.SUPER_ADMIN, Role.MANAGER, Role.SUPERVISOR].includes(activeUser.role as Role);
   const [selectedTenantId, setSelectedTenantId] = useState<string>("ALL");
   const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null);
 
@@ -91,14 +94,25 @@ export default function NoticesWorkflows({
               <span className="inline-block w-1.5 h-1.5 bg-amber-400 rounded-full animate-ping" />
               By: {selectedNotice.createdBy.name} ({selectedNotice.createdBy.role})
             </span>
-            {isUnread && (
-              <button
-                onClick={() => handleMarkNoticeRead(selectedNotice.id)}
-                className="py-1.5 px-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold rounded-lg border border-emerald-200 transition-colors cursor-pointer"
-              >
-                Mark as Read
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {canNotify && onUrgentNotify && (
+                <button
+                  onClick={() => onUrgentNotify(selectedNotice.id)}
+                  title="Notify staff on WhatsApp now"
+                  className="flex items-center gap-1.5 py-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold rounded-lg border border-emerald-200 transition-colors cursor-pointer"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" /> Notify on WhatsApp
+                </button>
+              )}
+              {isUnread && (
+                <button
+                  onClick={() => handleMarkNoticeRead(selectedNotice.id)}
+                  className="py-1.5 px-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold rounded-lg border border-emerald-200 transition-colors cursor-pointer"
+                >
+                  Mark as Read
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -148,30 +162,43 @@ export default function NoticesWorkflows({
           {notices.map((notice, idx) => {
             const isUnread = !readNoticeIds.includes(notice.id);
             return (
-              <button
+              <div
                 key={notice.id}
-                onClick={() => setSelectedNotice(notice)}
-                className={`w-full flex items-center gap-3 px-5 py-3.5 text-left transition-colors hover:bg-slate-50 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-5 py-3.5 hover:bg-slate-50 ${
                   idx < notices.length - 1 ? 'border-b border-slate-100' : ''
                 }`}
               >
-                {/* Urgency / read indicator */}
-                <span className={`shrink-0 w-2 h-2 rounded-full ${
-                  notice.isUrgent ? 'bg-red-500' : isUnread ? 'bg-emerald-500 animate-pulse' : 'bg-slate-200'
-                }`} />
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-semibold truncate ${ isUnread ? 'text-slate-800' : 'text-slate-500'}`}>
-                    {notice.isUrgent && <span className="text-[9px] font-bold text-red-600 bg-red-50 border border-red-100 px-1 py-0.5 rounded mr-1.5 uppercase">Urgent</span>}
-                    {isUnread && <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-1 py-0.5 rounded mr-1.5 uppercase">New</span>}
-                    {notice.title}
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
-                    <Clock className="w-2.5 h-2.5" />
-                    {new Date(notice.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} · {notice.createdBy.name}
-                  </p>
-                </div>
+                <button
+                  onClick={() => setSelectedNotice(notice)}
+                  className="flex-1 flex items-center gap-3 text-left cursor-pointer min-w-0"
+                >
+                  {/* Urgency / read indicator */}
+                  <span className={`shrink-0 w-2 h-2 rounded-full ${
+                    notice.isUrgent ? 'bg-red-500' : isUnread ? 'bg-emerald-500 animate-pulse' : 'bg-slate-200'
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-semibold truncate ${ isUnread ? 'text-slate-800' : 'text-slate-500'}`}>
+                      {notice.isUrgent && <span className="text-[9px] font-bold text-red-600 bg-red-50 border border-red-100 px-1 py-0.5 rounded mr-1.5 uppercase">Urgent</span>}
+                      {isUnread && <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-1 py-0.5 rounded mr-1.5 uppercase">New</span>}
+                      {notice.title}
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
+                      <Clock className="w-2.5 h-2.5" />
+                      {new Date(notice.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} · {notice.createdBy.name}
+                    </p>
+                  </div>
+                </button>
+                {canNotify && onUrgentNotify && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onUrgentNotify(notice.id); }}
+                    title="Notify staff on WhatsApp now"
+                    className="shrink-0 p-1.5 rounded-lg text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 cursor-pointer"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <ChevronRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-              </button>
+              </div>
             );
           })}
         </div>

@@ -636,6 +636,16 @@ function AppInner() {
     triggerToast("Task reminder sent successfully!");
   };
 
+  const handleUrgentTaskNotify = async (taskId: string) => {
+    await store.sendUrgentWhatsAppPush("task", taskId);
+    triggerToast("Sent to staff on WhatsApp.");
+  };
+
+  const handleUrgentNoticeNotify = async (noticeId: string) => {
+    await store.sendUrgentWhatsAppPush("notice", noticeId);
+    triggerToast("Sent to staff on WhatsApp.");
+  };
+
   const handleAddMessage = async (taskId: string, message: string) => {
     await store.addTaskChatMessage(taskId, message);
     await refreshLocalState();
@@ -1096,6 +1106,7 @@ function AppInner() {
                       tenants={tenants}
                       activeUser={activeUser}
                       onBack={handleBack}
+                      onUrgentNotify={handleUrgentNoticeNotify}
                     />
                   )}
 
@@ -1123,6 +1134,7 @@ function AppInner() {
                       onAddMessage={handleAddMessage}
                       onDeleteTask={handleDeleteTask}
                       onSendReminder={handleSendReminder}
+                      onUrgentNotify={handleUrgentTaskNotify}
                       onBack={handleBack}
                     />
                   )}

@@ -1726,6 +1726,33 @@ export class StoreService {
     return updatedTasks.find(t => t.id === taskId) || null;
   }
 
+  public async sendUrgentWhatsAppPush(kind: "task" | "notice", recordId: string): Promise<void> {
+    const me = await this.getActiveUser();
+    let record: any;
+    let userIds: string[];
+
+    if (kind === "task") {
+      const tasks = await this.getTasks();
+      const task = tasks.find(t => t.id === recordId);
+      if (!task) return;
+      record = { id: task.id, title: task.title };
+      userIds = task.assignedUserIds && task.assignedUserIds.length ? task.assignedUserIds : (task.assignedUserId ? [task.assignedUserId] : []);
+    } else {
+      const notices = await this.getNotices();
+      const notice = notices.find(n => n.id === recordId);
+      if (!notice) return;
+      record = { id: notice.id, title: notice.title };
+      const { data: users } = await supabase.from('users').select('id').eq('tenant_id', notice.tenantId);
+      userIds = (users || []).map((u: any) => u.id);
+    }
+
+    if (!userIds.length) return;
+
+    await supabase.functions.invoke('notify-dispatcher', {
+      body: { type: 'URGENT_PUSH', kind, record, userIds, tenantId: me.tenantId },
+    });
+  }
+
   public async addTaskChatMessage(taskId: string, messageText: string): Promise<Task | null> {
     const me = await this.getActiveUser();
     const newMessage = {

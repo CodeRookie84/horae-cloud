@@ -54,6 +54,7 @@ interface TaskManagerWorkflowsProps {
   onAddMessage: (taskId: string, message: string) => void;
   onDeleteTask: (id: string) => void;
   onSendReminder: (id: string) => void;
+  onUrgentNotify: (id: string) => void;
   onBack?: () => void;
 }
 
@@ -68,6 +69,7 @@ export default function TaskManagerWorkflows({
   onAddMessage,
   onDeleteTask,
   onSendReminder,
+  onUrgentNotify,
   onBack
 }: TaskManagerWorkflowsProps) {
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
@@ -629,6 +631,30 @@ export default function TaskManagerWorkflows({
     );
   };
 
+  const renderUrgentNotifyButton = (t: Task) => {
+    const isCreator = activeUser.id === t.createdByUserId;
+    const isManager = activeUser.role === Role.ADMIN ||
+                      activeUser.role === Role.SUPER_ADMIN ||
+                      activeUser.role === Role.MANAGER ||
+                      activeUser.role === Role.SUPERVISOR;
+    const canNotify = isCreator || isManager;
+    if (!canNotify) return null;
+
+    return (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onUrgentNotify(t.id);
+        }}
+        title="Notify assignee on WhatsApp now"
+        className="p-1 rounded-lg shrink-0 flex items-center gap-1 text-[9px] font-medium text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 cursor-pointer"
+      >
+        <MessageSquare className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">Notify</span>
+      </button>
+    );
+  };
+
   // Render a list of tasks for a status group inside a column
   const renderTaskCardsForGroup = (groupTasks: Task[]) => {
     if (groupTasks.length === 0) return null;
@@ -662,6 +688,7 @@ export default function TaskManagerWorkflows({
                   {renderUnreadChatBadge(t)}
                 </div>
                 <div className="flex items-center gap-1">
+                  {renderUrgentNotifyButton(t)}
                   {renderReminderBell(t)}
                 </div>
               </div>
@@ -881,8 +908,9 @@ export default function TaskManagerWorkflows({
                     {/* Action buttons */}
                     <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-2">
+                        {renderUrgentNotifyButton(t)}
                         {renderReminderBell(t)}
-                        
+
                         <button
                           type="button"
                           onClick={() => {
