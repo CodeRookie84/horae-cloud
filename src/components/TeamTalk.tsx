@@ -1660,6 +1660,21 @@ export default function TeamTalk({
               currentUser={activeUser}
               activeChannelId={activeChannel?.id ?? null}
               onSelectChannel={async ch => {
+                // If this channel has a pending mention or unread thread reply, opening the
+                // row should land on that exact spot — not just the generic first unread message.
+                const channelMention = mentionMessages.find(m => m.channelId === ch.id);
+                if (channelMention) {
+                  await handleNavigateToMention(channelMention);
+                  setShowMobileSidebar(false);
+                  return;
+                }
+                const channelUnreadThread = unreadThreads.find(t => t.channelId === ch.id);
+                if (channelUnreadThread) {
+                  await handleNavigateToThread(channelUnreadThread);
+                  setShowMobileSidebar(false);
+                  return;
+                }
+
                 const isSameChannel = activeChannel?.id === ch.id;
                 const firstUnreadId = (!isSameChannel && ch.unreadCount > 0)
                   ? await chatService.getFirstUnreadMessageId(ch.id, activeUser.id)
