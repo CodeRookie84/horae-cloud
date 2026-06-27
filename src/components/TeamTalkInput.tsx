@@ -354,7 +354,7 @@ export default function TeamTalkInput({
         ) : (
           /* ── TYPING STATE ── */
           <div className="flex-1 flex flex-col gap-1">
-            {/* Text area */}
+            {/* Text area, with the dictation mic docked inside it */}
             <div className="flex-1 bg-slate-100 rounded-2xl flex items-end gap-2 px-3 py-2 min-h-[40px]">
               <textarea
                 ref={textareaRef}
@@ -367,40 +367,36 @@ export default function TeamTalkInput({
                 className="flex-1 bg-transparent text-[13px] text-slate-800 placeholder-slate-400 resize-none focus:outline-none leading-5 max-h-[120px] overflow-y-auto disabled:opacity-50"
                 id="team-talk-input"
               />
-
-            </div>
-
-            {/* Dictation controls — speak in your language, transcribed into the box above */}
-            <div className="flex items-center gap-1.5 px-1">
               <select
                 value={speechLanguage}
                 onChange={(e) => setSpeechLanguage(e.target.value as any)}
-                className="bg-slate-50 border border-slate-200 text-slate-600 text-[10px] font-medium px-2 py-1 rounded-lg focus:outline-none focus:border-amber-500 cursor-pointer"
+                title="Dictation language"
+                className="bg-transparent text-slate-400 text-[9px] font-medium pr-0.5 focus:outline-none cursor-pointer shrink-0"
               >
-                <option value="en-US">English (US)</option>
-                <option value="hi-IN">हिन्दी (Hindi)</option>
-                <option value="kn-IN">ಕನ್ನಡ (Kannada)</option>
-                <option value="ta-IN">தமிழ் (Tamil)</option>
+                <option value="en-US">EN</option>
+                <option value="hi-IN">हिं</option>
+                <option value="kn-IN">ಕನ</option>
+                <option value="ta-IN">தமி</option>
               </select>
               <button
                 type="button"
                 onClick={isListening ? stopListening : startListening}
                 disabled={disabled}
-                className={`p-1.5 rounded-lg flex items-center justify-center transition-all border cursor-pointer disabled:opacity-50 ${
+                className={`p-1 rounded-full flex items-center justify-center transition-all cursor-pointer disabled:opacity-50 shrink-0 ${
                   isListening
-                    ? "bg-slate-900 text-white border-slate-800 animate-pulse shadow-sm"
-                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                    ? "bg-slate-900 text-white animate-pulse shadow-sm"
+                    : "text-slate-400 hover:text-slate-600 hover:bg-slate-200"
                 }`}
-                title={isListening ? "Stop Voice Input" : "Start Voice Input"}
+                title={isListening ? "Stop dictation" : "Dictate — converts speech to text in this box"}
               >
                 {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
               </button>
-              {isListening && (
-                <span className="text-[9px] text-red-500 font-medium uppercase tracking-wide animate-pulse">
-                  Listening...
-                </span>
-              )}
             </div>
+            {isListening && (
+              <span className="text-[9px] text-red-500 font-medium uppercase tracking-wide animate-pulse px-1">
+                Listening...
+              </span>
+            )}
           </div>
         )}
 

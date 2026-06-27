@@ -822,6 +822,45 @@ export async function getUnreadCount(channelId: string, userId: string): Promise
   return count ?? 0;
 }
 
+/** ID of the oldest unread message in a channel for a user, for scroll-to-unread navigation */
+export async function getFirstUnreadMessageId(channelId: string, userId: string): Promise<string | null> {
+  const { data: member } = await supabase
+    .from('chat_members')
+    .select('last_read_at')
+    .eq('channel_id', channelId)
+    .eq('user_id', userId)
+    .single();
+
+  if (!member) return null;
+
+  const lastRead = member.last_read_at ?? '1970-01-01T00:00:00Z';
+
+  const { data } = await supabase
+    .from('chat_messages')
+    .select('id')
+    .eq('channel_id', channelId)
+    .eq('is_deleted', false)
+    .neq('sender_id', userId)
+    .gt('created_at', lastRead)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .single();
+
+  return data?.id ?? null;
+}
+
+/** Fetch a single message by ID (e.g. to resolve a thread's root from a reply) */
+export async function getMessageById(messageId: string): Promise<TeamTalkMessage | null> {
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select('*')
+    .eq('id', messageId)
+    .single();
+
+  if (error || !data) return null;
+  return mapMessage(data);
+}
+
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // TASK BRANCHING (Fork + Link pattern)
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1014,6 +1053,15 @@ export async function markMentionsRead(userId: string, channelId: string): Promi
     .update({ is_read: true })
     .eq('mentioned_user_id', userId)
     .eq('channel_id', channelId);
+}
+
+/** Mark a single @mention as read — used when the user actually opens that specific message */
+export async function markMentionRead(userId: string, messageId: string): Promise<void> {
+  await supabase
+    .from('chat_mentions')
+    .update({ is_read: true })
+    .eq('mentioned_user_id', userId)
+    .eq('message_id', messageId);
 }
 
 /** Count unread @mentions for a user in a tenant */
@@ -1343,6 +1391,25 @@ export async function addThreadParticipants(threadId: string, userIds: string[])
     joined_at: new Date().toISOString(),
   }));
   await supabase.from('chat_thread_participants').upsert(rows, { onConflict: 'thread_id,user_id' });
+}
+
+/**
+ * Register every channel member as a participant when a thread is activated,
+ * so subsequent replies show up as "unread" for the whole channel in Quick View
+ * — not just for users who were already @mentioned.
+ */
+export async function registerChannelAsThreadParticipants(
+  threadId: string,
+  channelMemberIds: string[],
+  activatorId: string
+): Promise<void> {
+  if (!channelMemberIds.length) return;
+  const rows = channelMemberIds.map(uid => ({
+    thread_id: threadId,
+    user_id: uid,
+    last_read_at: uid === activatorId ? new Date().toISOString() : '1970-01-01T00:00:00Z',
+  }));
+  await supabase.from('chat_thread_participants').upsert(rows, { onConflict: 'thread_id,user_id', ignoreDuplicates: true });
 }
 
 /** Close a thread — set status to resolved, clears from active sidebar */

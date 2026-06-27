@@ -320,7 +320,7 @@ function CreateChannelModal({
   onClose, onCreate, allUsers, tenants, currentUserId,
 }: {
   onClose: () => void;
-  onCreate: (name: string, type: ChatChannel['type'], description: string, memberIds: string[]) => Promise<void>;
+  onCreate: (name: string, type: ChatChannel['type'], description: string, memberIds: string[]) => Promise<boolean>;
   allUsers: AppUser[];
   tenants: Tenant[];
   currentUserId: string;
@@ -331,6 +331,7 @@ function CreateChannelModal({
   const [description, setDescription] = useState('');
   const [picked, setPicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   const previewMemberIds = resolveMemberIds(picked, allUsers, tenants);
   const previewMembers = allUsers.filter(u => previewMemberIds.includes(u.id));
@@ -338,10 +339,15 @@ function CreateChannelModal({
   const handleCreate = async () => {
     if (!slug) return;
     setCreating(true);
+    setCreateError('');
     const ids = Array.from(new Set([currentUserId, ...previewMembers.map(u => u.id)]));
-    await onCreate(displayName, 'channel', description, ids);
+    const ok = await onCreate(displayName, 'channel', description, ids);
     setCreating(false);
-    onClose();
+    if (ok) {
+      onClose();
+    } else {
+      setCreateError('Could not create the channel. Please try again.');
+    }
   };
 
   return (
@@ -410,6 +416,9 @@ function CreateChannelModal({
                 value={picked}
                 onChange={setPicked}
               />
+              {createError && (
+                <p className="text-[11px] text-rose-600 font-medium">{createError}</p>
+              )}
               <div className="flex gap-2">
                 <button type="button" onClick={() => setStep(1)} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">← Back</button>
                 <button type="button" onClick={handleCreate} disabled={creating || previewMembers.length === 0} className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[12px] font-bold cursor-pointer disabled:opacity-50">
@@ -429,20 +438,23 @@ function StartDirectChatModal({
   onClose, onStart, allUsers, currentUserId,
 }: {
   onClose: () => void;
-  onStart: (userIds: string[]) => Promise<void>;
+  onStart: (userIds: string[]) => Promise<boolean>;
   allUsers: AppUser[];
   currentUserId: string;
 }) {
   const [picked, setPicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
   const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState('');
   const candidates = allUsers.filter(u => u.id !== currentUserId);
   const memberIds = resolveMemberIds(picked, candidates, []);
 
   const handleStart = async () => {
     if (memberIds.length === 0) return;
     setStarting(true);
-    await onStart(memberIds);
+    setStartError('');
+    const ok = await onStart(memberIds);
     setStarting(false);
+    if (!ok) setStartError('Could not start the chat. Please try again.');
   };
 
   return (
@@ -467,6 +479,9 @@ function StartDirectChatModal({
           value={picked}
           onChange={setPicked}
         />
+        {startError && (
+          <p className="text-[11px] text-rose-600 font-medium mt-2">{startError}</p>
+        )}
         <div className="flex gap-2 mt-4">
           <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
           <button
@@ -593,7 +608,7 @@ function MessageList({
 function ThreadPanel({
   rootMessage, replies, currentUser, allUsers, isManager,
   onSendReply, onSendVoiceReply, onClose, onConvertToTask, onDelete, onPin, onNotify,
-  canPin, canModerate, onActivateThread, onRenameThread, onCloseThread, threadTitle,
+  canPin, canModerate, onActivateThread, onRenameThread, onCloseThread, threadTitle, highlightReplyId,
 }: {
   rootMessage: TeamTalkMessage;
   replies: TeamTalkMessage[];
@@ -613,9 +628,15 @@ function ThreadPanel({
   onRenameThread?: (threadId: string, title: string) => void;
   onCloseThread?: (threadId: string) => void;
   threadTitle?: string;
+  highlightReplyId?: string;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [replies.length]);
+  useEffect(() => {
+    if (!highlightReplyId) return;
+    highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightReplyId, replies]);
 
   const isActive = rootMessage.threadStatus === 'active';
   const isClosed = rootMessage.threadStatus === 'resolved';
@@ -744,20 +765,22 @@ function ThreadPanel({
         ) : replies.map((reply, i) => {
           const showAvatar = i === 0 || replies[i - 1].senderId !== reply.senderId;
           return (
-            <TeamTalkMessageBubble
-              key={reply.id}
-              message={reply}
-              currentUser={currentUser}
-              replyCount={0}
-              onReplyInThread={() => {}}
-              onConvertToTask={onConvertToTask}
-              onDelete={onDelete}
-              onPin={canPin ? onPin : undefined}
-              onNotify={onNotify}
-              canModerate={canModerate}
-              showAvatar={showAvatar}
-              isThreadView
-            />
+            <div key={reply.id} ref={reply.id === highlightReplyId ? highlightRef : undefined}>
+              <TeamTalkMessageBubble
+                message={reply}
+                currentUser={currentUser}
+                replyCount={0}
+                onReplyInThread={() => {}}
+                onConvertToTask={onConvertToTask}
+                onDelete={onDelete}
+                onPin={canPin ? onPin : undefined}
+                onNotify={onNotify}
+                canModerate={canModerate}
+                showAvatar={showAvatar}
+                isThreadView
+                isHighlighted={reply.id === highlightReplyId}
+              />
+            </div>
           );
         })}
         <div ref={bottomRef} />
@@ -1149,12 +1172,6 @@ export default function TeamTalk({
       setReplyCounts(counts);
 
       await chatService.markChannelRead(channel.id, activeUser.id);
-      await chatService.markMentionsRead(activeUser.id, channel.id);
-      setMentionMessages(prev => {
-        const remaining = prev.filter(m => m.channelId !== channel.id);
-        setMentionCount(remaining.length);
-        return remaining;
-      });
 
       // Load pinned message
       const pinned = await chatService.getPinnedMessage(channel.id);
@@ -1235,13 +1252,16 @@ export default function TeamTalk({
 
   const handleSendVoice = useCallback(async (blob: Blob, durationSec: number, escalationRole?: string) => {
     if (!activeChannel) return;
-    
-    await chatService.sendVoiceMessage({
+
+    const sent = await chatService.sendVoiceMessage({
       channelId: activeChannel.id, tenantId,
       senderId: activeUser.id, senderName: activeUser.name,
       senderRole: activeUser.role, senderAvatar: activeUser.avatar,
       audioBlob: blob, durationSec,
     } as any);
+    if (!sent) {
+      alert('Could not send the voice note. Please check your connection and try again.');
+    }
   }, [activeChannel, tenantId, activeUser]);
 
   const handleOpenThread = useCallback(async (msg: TeamTalkMessage) => {
@@ -1284,32 +1304,37 @@ export default function TeamTalk({
 
   const handleNavigateToMention = useCallback(async (msg: TeamTalkMessage) => {
     const ch = channels.find(c => c.id === msg.channelId);
-    if (ch) {
-      const isSameChannel = activeChannel?.id === ch.id;
-      setActiveChannel(ch);
-      setShowGlobalInbox(false);
-      setShowMobileSidebar(false);
-      
-      const doHighlight = () => {
-        setHighlightMsgId(undefined);
-        setTimeout(() => setHighlightMsgId(msg.id), 50);
-      };
+    if (!ch) return;
 
-      if (isSameChannel) {
-        doHighlight();
-      } else {
-        setTimeout(doHighlight, 500);
-      }
-      
-      // If it's a thread reply, try to open the parent thread sidebar as well
+    chatService.markMentionRead(activeUser.id, msg.id);
+    setMentionMessages(prev => {
+      const remaining = prev.filter(m => m.id !== msg.id);
+      setMentionCount(remaining.length);
+      return remaining;
+    });
+
+    const isSameChannel = activeChannel?.id === ch.id;
+    setActiveChannel(ch);
+    setShowGlobalInbox(false);
+    setShowMobileSidebar(false);
+    pushTeamTalkState('channel');
+
+    const openAndHighlight = async () => {
       if (msg.threadId) {
-        import('../services/chatService').then(({ getPinnedMessage }) => {
-          // Just a hacky way to fetch the root message using supabase directly or chatService
-          // We don't have a direct getMessage in chatService, so we'll just let it highlight in main view.
-        });
+        // It's a reply inside a thread — open the thread panel and highlight the reply
+        const root = await chatService.getMessageById(msg.threadId);
+        if (root) await handleOpenThread(root);
       }
+      setHighlightMsgId(undefined);
+      setTimeout(() => setHighlightMsgId(msg.id), 50);
+    };
+
+    if (isSameChannel) {
+      openAndHighlight();
+    } else {
+      setTimeout(openAndHighlight, 500);
     }
-  }, [channels, activeChannel]);
+  }, [channels, activeChannel, activeUser.id, handleOpenThread, pushTeamTalkState]);
 
   const handleStartTemporaryThread = useCallback(async () => {
     if (!activeChannel) return;
@@ -1330,12 +1355,15 @@ export default function TeamTalk({
   /** Make thread active — appears in sidebar */
   const handleActivateThread = useCallback(async (threadId: string, title: string) => {
     await chatService.updateThreadStatus(threadId, 'active', title);
+    // Make every channel member a thread participant so future replies show up
+    // as unread for the whole channel, not just users who were @mentioned.
+    await chatService.registerChannelAsThreadParticipants(threadId, channelMembers.map(u => u.id), activeUser.id);
     setThreadRoot(prev => prev ? { ...prev, threadStatus: 'active', threadTitle: title } : null);
     setMessages(prev => prev.map(m => m.id === threadId ? { ...m, threadStatus: 'active', threadTitle: title } : m));
     // Refresh active threads in sidebar
     const updated = await chatService.getActiveThreads(tenantId, activeUser.id, userIsManager);
     setActiveThreads(updated);
-  }, [tenantId, activeUser.id, userIsManager]);
+  }, [tenantId, activeUser.id, userIsManager, channelMembers]);
 
   /** Rename thread inline */
   const handleRenameThread = useCallback(async (threadId: string, title: string) => {
@@ -1453,14 +1481,15 @@ export default function TeamTalk({
 
   const handleCreateChannel = useCallback(async (
     displayName: string, type: ChatChannel['type'], description: string, memberIds: string[]
-  ) => {
+  ): Promise<boolean> => {
     const ch = await chatService.createChannel(tenantId, displayName, type, activeUser.id, description);
-    if (ch) {
-      await chatService.addMembers(ch.id, memberIds);
-      await loadChannels();
-      setActiveChannel(ch);
-    }
-  }, [tenantId, activeUser.id, loadChannels]);
+    if (!ch) return false;
+    await chatService.addMembers(ch.id, memberIds);
+    await loadChannels();
+    setActiveChannel(ch);
+    pushTeamTalkState('channel');
+    return true;
+  }, [tenantId, activeUser.id, loadChannels, pushTeamTalkState]);
 
   const handleDeleteChannel = useCallback(async () => {
     if (!deletingChannel) return;
@@ -1470,20 +1499,22 @@ export default function TeamTalk({
     setActiveChannel(null);
   }, [deletingChannel, loadChannels]);
 
-  const handleDMUser = useCallback(async (user: AppUser) => {
+  const handleDMUser = useCallback(async (user: AppUser): Promise<boolean> => {
     const dmName = [activeUser.name, user.name].sort().join('-');
     const existing = channels.find(c => c.type === 'dm' && (c.name.includes(user.id) || c.description?.includes(user.id)));
     if (existing) {
       setActiveChannel(existing);
-      return;
+      pushTeamTalkState('channel');
+      return true;
     }
     const ch = await chatService.createChannel(tenantId, dmName, 'dm', activeUser.id, `DM: ${activeUser.name} & ${user.name}`);
-    if (ch) {
-      await chatService.addMembers(ch.id, [activeUser.id, user.id]);
-      await loadChannels();
-      setActiveChannel(ch);
-    }
-  }, [channels, activeUser, tenantId, userIsManager, loadChannels]);
+    if (!ch) return false;
+    await chatService.addMembers(ch.id, [activeUser.id, user.id]);
+    await loadChannels();
+    setActiveChannel(ch);
+    pushTeamTalkState('channel');
+    return true;
+  }, [channels, activeUser, tenantId, userIsManager, loadChannels, pushTeamTalkState]);
 
   /** Close a DM — persist to localStorage and hide from sidebar (moves to Inbox) */
   const handleCloseDM = useCallback((channelId: string) => {
@@ -1514,11 +1545,12 @@ export default function TeamTalk({
   }, [activeUser.id, channels]);
 
   /** Start a direct chat with one or more chosen teammates (single -> 1:1 DM, multiple -> group DM) */
-  const handleStartDirectChat = useCallback(async (userIds: string[]) => {
-    if (userIds.length === 0) return;
+  const handleStartDirectChat = useCallback(async (userIds: string[]): Promise<boolean> => {
+    if (userIds.length === 0) return false;
+    let ok = false;
     if (userIds.length === 1) {
       const target = allTenantUsers.find(u => u.id === userIds[0]);
-      if (target) await handleDMUser(target);
+      ok = target ? await handleDMUser(target) : false;
     } else {
       const names = userIds.map(id => allTenantUsers.find(u => u.id === id)?.name).filter(Boolean) as string[];
       const dmName = [activeUser.name, ...names].sort().join('-');
@@ -1527,12 +1559,17 @@ export default function TeamTalk({
         await chatService.addMembers(ch.id, [activeUser.id, ...userIds]);
         await loadChannels();
         setActiveChannel(ch);
+        pushTeamTalkState('channel');
+        ok = true;
       }
     }
-    setShowGlobalInbox(false);
-    setShowMobileSidebar(false);
-    setShowStartDirectChat(false);
-  }, [allTenantUsers, activeUser, tenantId, loadChannels, handleDMUser]);
+    if (ok) {
+      setShowGlobalInbox(false);
+      setShowMobileSidebar(false);
+      setShowStartDirectChat(false);
+    }
+    return ok;
+  }, [allTenantUsers, activeUser, tenantId, loadChannels, handleDMUser, pushTeamTalkState]);
 
   const handleRenameChannel = useCallback(async () => {
     if (!activeChannel || !newChannelName.trim()) return;
@@ -1649,10 +1686,18 @@ export default function TeamTalk({
               channels={channels}
               currentUser={activeUser}
               activeChannelId={activeChannel?.id ?? null}
-              onSelectChannel={ch => {
-                setActiveChannel(ch);  setThreadRoot(null); setShowGlobalInbox(false);
+              onSelectChannel={async ch => {
+                const isSameChannel = activeChannel?.id === ch.id;
+                const firstUnreadId = (!isSameChannel && ch.unreadCount > 0)
+                  ? await chatService.getFirstUnreadMessageId(ch.id, activeUser.id)
+                  : null;
+                setActiveChannel(ch); setThreadRoot(null); setShowGlobalInbox(false);
                 pushTeamTalkState('channel');
                 setShowMobileSidebar(false);
+                if (firstUnreadId) {
+                  setHighlightMsgId(undefined);
+                  setTimeout(() => setHighlightMsgId(firstUnreadId), 400);
+                }
               }}
               onCreateChannel={() => { setShowCreateChannel(true); setShowMobileSidebar(false); }}
               onSearch={() => {}}
@@ -1979,6 +2024,7 @@ export default function TeamTalk({
                 onActivateThread={handleActivateThread}
                 onRenameThread={handleRenameThread}
                 onCloseThread={handleCloseThread}
+                highlightReplyId={highlightMsgId}
               />
             </motion.div>
           )}
