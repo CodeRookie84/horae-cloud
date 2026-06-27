@@ -26,7 +26,6 @@ import TeamTalkMessageBubble from './TeamTalkMessageBubble';
 import TeamTalkInput from './TeamTalkInput';
 import TeamTalkPinnedBanner from './TeamTalkPinnedBanner';
 import TeamTalkQuickReport from './TeamTalkQuickReport';
-import TeamTalkInbox from './TeamTalkInbox';
 
 // ─── Types ────────────────────────────────────────────────────
 type TalkTab = 'my-day' | 'my-outlet' | 'directory';
@@ -988,7 +987,6 @@ export default function TeamTalk({
 
   // Active & Unread threads
   const [activeThreads, setActiveThreads] = useState<TeamTalkMessage[]>([]);
-  const [allThreads, setAllThreads] = useState<TeamTalkMessage[]>([]);
   const [unreadThreads, setUnreadThreads] = useState<TeamTalkMessage[]>([]);
 
   // ── Tabs (staff view) ──────────────────────────────────────
@@ -1001,7 +999,6 @@ export default function TeamTalk({
   const [convertingMessage, setConvertingMessage] = useState<TeamTalkMessage | null>(null);
   const [showQuickReport, setShowQuickReport] = useState(false);
   const [deletingChannel, setDeletingChannel] = useState<ChatChannel | null>(null);
-  const [showGlobalInbox, setShowGlobalInbox] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
@@ -1035,32 +1032,15 @@ export default function TeamTalk({
          setThreadRoot(null);
          return;
       }
-      if (showGlobalInbox) {
-         setShowGlobalInbox(false);
-         if (window.innerWidth < 768) {
-           setShowMobileSidebar(true);
-         }
-         return;
-      }
       if (window.innerWidth < 768 && !showMobileSidebar) {
         setShowMobileSidebar(true);
-        setShowGlobalInbox(false);
         setTimeout(() => setActiveChannel(null), 300);
       }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [showMobileSidebar, showGlobalInbox, threadRoot]);
+  }, [showMobileSidebar, threadRoot]);
 
-  useEffect(() => {
-    const handleOpenQuickView = () => {
-      setShowGlobalInbox(true);
-      setShowMobileSidebar(false);
-      pushTeamTalkState('quickview');
-    };
-    window.addEventListener('openQuickView', handleOpenQuickView);
-    return () => window.removeEventListener('openQuickView', handleOpenQuickView);
-  }, [pushTeamTalkState]);
 
   // ── Load channels ──────────────────────────────────────────
   const handleSaveMembers = async (userIds: string[]) => {
@@ -1143,14 +1123,12 @@ export default function TeamTalk({
 
   // ── Load Active Threads ────────────────────────────────────
   const loadActiveThreads = useCallback(async () => {
-    const [threads, unread, allT] = await Promise.all([
+    const [threads, unread] = await Promise.all([
       chatService.getActiveThreads(tenantId, activeUser.id, userIsManager),
       chatService.getUnreadThreads(tenantId, activeUser.id),
-      chatService.getAllThreads(tenantId, 50)
     ]);
     setActiveThreads(threads);
     setUnreadThreads(unread);
-    setAllThreads(allT);
   }, [tenantId, activeUser.id, userIsManager]);
 
   useEffect(() => {
@@ -1284,9 +1262,8 @@ export default function TeamTalk({
     if (ch) {
       const isSameChannel = activeChannel?.id === ch.id;
       setActiveChannel(ch);
-      setShowGlobalInbox(false);
       setShowMobileSidebar(false);
-      
+
       if (isSameChannel) {
         handleOpenThread(msg);
         setHighlightMsgId(undefined);
@@ -1315,7 +1292,6 @@ export default function TeamTalk({
 
     const isSameChannel = activeChannel?.id === ch.id;
     setActiveChannel(ch);
-    setShowGlobalInbox(false);
     setShowMobileSidebar(false);
     pushTeamTalkState('channel');
 
@@ -1526,7 +1502,6 @@ export default function TeamTalk({
     // If it was the active channel, deselect
     if (activeChannel?.id === channelId) {
       setActiveChannel(null);
-      setShowGlobalInbox(true);
     }
   }, [activeUser.id, activeChannel]);
 
@@ -1540,7 +1515,6 @@ export default function TeamTalk({
     const ch = channels.find(c => c.id === channelId);
     if (ch) {
       setActiveChannel(ch);
-      setShowGlobalInbox(false);
     }
   }, [activeUser.id, channels]);
 
@@ -1564,7 +1538,6 @@ export default function TeamTalk({
       }
     }
     if (ok) {
-      setShowGlobalInbox(false);
       setShowMobileSidebar(false);
       setShowStartDirectChat(false);
     }
@@ -1634,7 +1607,7 @@ export default function TeamTalk({
     <div className="h-full flex flex-col bg-white overflow-hidden" id="team-talk-container">
       {/* Top bar */}
       <div className="flex items-center gap-2 px-4 py-2 bg-white/80 backdrop-blur-md border-b border-slate-100 shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0">
-        {(!activeChannel && !showGlobalInbox) && (
+        {!activeChannel && (
           <button onClick={onBack} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors cursor-pointer">
             <ArrowLeft className="w-4 h-4" />
           </button>
@@ -1691,7 +1664,7 @@ export default function TeamTalk({
                 const firstUnreadId = (!isSameChannel && ch.unreadCount > 0)
                   ? await chatService.getFirstUnreadMessageId(ch.id, activeUser.id)
                   : null;
-                setActiveChannel(ch); setThreadRoot(null); setShowGlobalInbox(false);
+                setActiveChannel(ch); setThreadRoot(null);
                 pushTeamTalkState('channel');
                 setShowMobileSidebar(false);
                 if (firstUnreadId) {
@@ -1704,13 +1677,8 @@ export default function TeamTalk({
               onDeleteChannel={ch => setDeletingChannel(ch)}
               activeThreads={activeThreads}
               unreadThreads={unreadThreads}
-              onOpenInbox={() => {
-                setShowGlobalInbox(true);
-                setShowMobileSidebar(false);
-                pushTeamTalkState('quickview');
-              }}
-              unreadMentionCount={mentionCount}
-              isInboxActive={showGlobalInbox}
+              mentionMessages={mentionMessages}
+              onOpenMention={handleNavigateToMention}
               closedDMChannelIds={closedDMChannelIds}
               onCloseDM={handleCloseDM}
               onReopenDM={handleReopenClosedDM}
@@ -1726,26 +1694,7 @@ export default function TeamTalk({
         {/* ── CENTER: message area ──────────────────────── */}
         <div className="flex-1 flex-col min-w-0 bg-white flex">
           {/* Main Content Area */}
-          {showGlobalInbox ? (
-            <TeamTalkInbox
-              mentionMessages={mentionMessages}
-              activeThreads={allThreads}
-              unreadThreads={unreadThreads}
-              currentUserId={activeUser.id}
-              onMenuClick={() => setShowMobileSidebar(true)}
-              onBack={() => {
-                if (window.innerWidth < 768) {
-                  window.history.back();
-                } else {
-                  setShowGlobalInbox(false);
-                }
-              }}
-              onOpenThread={handleNavigateToThread}
-              onOpenMention={handleNavigateToMention}
-              closedDMChannels={channels.filter(c => c.type === 'dm' && closedDMChannelIds.includes(c.id))}
-              onReopenDM={handleReopenClosedDM}
-            />
-          ) : !activeChannel ? (
+          {!activeChannel ? (
             <div className="flex-1 flex items-center justify-center bg-white/50 backdrop-blur-sm">
               <div className="text-center">
                 <Hash className="w-12 h-12 text-slate-300 mx-auto mb-3" />

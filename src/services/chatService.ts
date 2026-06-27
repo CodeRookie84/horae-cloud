@@ -25,7 +25,7 @@ export function isManagerRole(role: string): boolean {
 // DEFAULT CHANNEL SEEDING  (smart dept-based membership)
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-interface BasicUser { id: string; department: string; role: string; }
+interface BasicUser { id: string; department: string; role: string; tenantId?: string; }
 
 /**
  * Seed default channels on first Team Talk use.
@@ -80,7 +80,10 @@ export async function ensureOutletChannelsForClient(
   creatorId: string
 ): Promise<void> {
   for (const tenantId of outletTenantIds) {
-    const usersInOutlet = allClientUsers; // outlet channel membership seeds with the full roster like before
+    // Seed each outlet's room with only the staff who actually belong to
+    // that outlet — NOT the full client roster, or every staff member ends
+    // up a member of every outlet's room regardless of assignment.
+    const usersInOutlet = allClientUsers.filter(u => u.tenantId === tenantId);
     await seedDefaultChannels(tenantId, creatorId, usersInOutlet);
   }
 

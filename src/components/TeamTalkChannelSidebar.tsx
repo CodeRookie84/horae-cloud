@@ -8,17 +8,11 @@
 
 import React, { useState } from 'react';
 import {
-  MessageCircle, Hash, ChevronDown, ChevronRight, Search, Plus, Trash2, Megaphone, Building2, Users, BellRing, Inbox, MessageSquarePlus, X, UserPlus, CheckCircle2
+  MessageCircle, Hash, ChevronDown, ChevronRight, Search, Plus, Trash2, Megaphone, Building2, Users, BellRing, AtSign, MessageSquarePlus, X, UserPlus, CheckCircle2
 } from 'lucide-react';
 import type { ChatChannel } from '../types';
-import type { User as AppUser } from '../types';
+import type { User as AppUser, TeamTalkMessage } from '../types';
 import { Role } from '../types';
-
-interface ChannelGroup {
-  label: string;
-  icon: React.ElementType;
-  channels: ChatChannel[];
-}
 
 interface ChannelSidebarProps {
   channels: ChatChannel[];
@@ -28,14 +22,15 @@ interface ChannelSidebarProps {
   currentUser: AppUser;
   onSearch: () => void;
   onDeleteChannel?: (channel: ChatChannel) => void;
-  activeThreads?: import('../types').TeamTalkMessage[];
-  unreadThreads?: import('../types').TeamTalkMessage[];
-  onOpenThread?: (msg: import('../types').TeamTalkMessage) => void;
+  activeThreads?: TeamTalkMessage[];
+  unreadThreads?: TeamTalkMessage[];
+  onOpenThread?: (msg: TeamTalkMessage) => void;
   onDeleteThread?: (threadId: string) => void;
   onCloseThread?: (threadId: string) => void;
-  onOpenInbox?: () => void;
-  unreadMentionCount?: number;
-  isInboxActive?: boolean;
+  /** Unread @mentions across all channels — used for per-row badges and the summary popover */
+  mentionMessages?: TeamTalkMessage[];
+  /** Called when a specific mention is clicked (from a row badge or the summary popover) */
+  onOpenMention?: (msg: TeamTalkMessage) => void;
   /** IDs of DM channels that the user has "closed" — hidden from sidebar */
   closedDMChannelIds?: string[];
   /** Called when user clicks × on a DM channel to close it */
@@ -48,8 +43,6 @@ interface ChannelSidebarProps {
   onReopenDM?: (channelId: string) => void;
 }
 
-const TYPE_ORDER: ChatChannel['type'][] = ['announcement', 'outlet', 'department', 'channel', 'dm', 'context'];
-
 function getChannelIcon(type: ChatChannel['type']) {
   switch (type) {
     case 'announcement': return Megaphone;
@@ -60,29 +53,6 @@ function getChannelIcon(type: ChatChannel['type']) {
     case 'context': return Hash;
     default: return Hash;
   }
-}
-
-function groupChannels(channels: ChatChannel[], closedDMChannelIds: string[]): ChannelGroup[] {
-  const sortByActivity = (a: ChatChannel, b: ChatChannel) => {
-    const timeA = a.lastMessage?.createdAt || a.createdAt;
-    const timeB = b.lastMessage?.createdAt || b.createdAt;
-    return new Date(timeB).getTime() - new Date(timeA).getTime();
-  };
-
-  const visibleChannels = channels.filter(c => !(c.type === 'dm' && closedDMChannelIds.includes(c.id)));
-  
-  // Combine unread and read, but sort unread first, then by activity
-  const sortUnreadFirst = (list: ChatChannel[]) => {
-    const unread = list.filter(c => (c.unreadCount ?? 0) > 0).sort(sortByActivity);
-    const read = list.filter(c => (c.unreadCount ?? 0) === 0).sort(sortByActivity);
-    return [...unread, ...read];
-  };
-
-  const groups: ChannelGroup[] = [
-    { label: 'Channels', icon: Users, channels: sortUnreadFirst(visibleChannels.filter(c => c.type === 'channel' || c.type === 'department')) },
-    { label: 'Rooms', icon: Hash, channels: sortUnreadFirst(visibleChannels.filter(c => c.type !== 'dm' && c.type !== 'channel' && c.type !== 'department')) },
-  ];
-  return groups.filter(g => g.channels.length > 0);
 }
 
 function ChannelItem({
@@ -97,6 +67,8 @@ function ChannelItem({
   onDeleteThread,
   onCloseThread,
   canDeleteThread,
+  mentionCount = 0,
+  onMentionClick,
 }: {
   channel: ChatChannel;
   isActive: boolean;
@@ -104,11 +76,15 @@ function ChannelItem({
   onDelete?: () => void;
   onClose?: () => void;
   onReopen?: () => void;
-  activeThreads?: import('../types').TeamTalkMessage[];
-  onOpenThread?: (msg: import('../types').TeamTalkMessage) => void;
+  activeThreads?: TeamTalkMessage[];
+  onOpenThread?: (msg: TeamTalkMessage) => void;
   onDeleteThread?: (threadId: string) => void;
   onCloseThread?: (threadId: string) => void;
   canDeleteThread?: boolean;
+  /** Count of unread @mentions for this channel — shown as a separate badge from the unread count */
+  mentionCount?: number;
+  /** Called when the mention badge itself is clicked, to jump straight to that mention */
+  onMentionClick?: () => void;
 }) {
   const Icon = getChannelIcon(channel.type);
   const unread = channel.unreadCount ?? 0;
@@ -135,6 +111,17 @@ function ChannelItem({
         <span className="flex-1 truncate text-left">
           {channel.name}
         </span>
+        {/* Mention badge — distinct color/shape from the unread count so the two never get confused */}
+        {mentionCount > 0 && !hovered && (
+          <span
+            onClick={e => { e.stopPropagation(); onMentionClick?.(); }}
+            className="shrink-0 flex items-center gap-0.5 bg-amber-100 text-amber-700 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full min-w-[18px] text-center cursor-pointer hover:bg-amber-200"
+            title={`${mentionCount} unread mention${mentionCount > 1 ? 's' : ''} — click to view`}
+          >
+            <AtSign className="w-2.5 h-2.5" />
+            {mentionCount > 9 ? '9+' : mentionCount}
+          </span>
+        )}
         {/* Unread badge */}
         {unread > 0 && !hovered && (
           <span className="shrink-0 bg-rose-500 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
@@ -190,6 +177,12 @@ function ChannelItem({
               <span className="flex-1 truncate text-left">
                 {thread.threadTitle || "Active Thread"}
               </span>
+              {/* Unread-reply badge — distinct from the channel-level unread pill so threads read as their own thing */}
+              {!!thread.unreadReplyCount && (
+                <span className="shrink-0 border border-indigo-300 text-indigo-600 text-[8px] font-extrabold px-1 py-0.5 rounded-full min-w-[16px] text-center">
+                  {thread.unreadReplyCount > 99 ? '99+' : thread.unreadReplyCount}
+                </span>
+              )}
             </button>
             <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center opacity-0 group-hover/thread-wrapper:opacity-100 transition-all">
               {onCloseThread && (
@@ -219,103 +212,6 @@ function ChannelItem({
   );
 }
 
-function ChannelGroupSection({
-  group,
-  activeChannelId,
-  onSelectChannel,
-  canCreate,
-  onCreateChannel,
-  onDeleteChannel,
-  activeThreads,
-  unreadThreads,
-  onOpenThread,
-  onDeleteThread,
-  onCloseThread,
-}: {
-  group: ChannelGroup;
-  activeChannelId: string | null;
-  onSelectChannel: (ch: ChatChannel) => void;
-  canCreate?: boolean;
-  onCreateChannel?: () => void;
-  onDeleteChannel?: (ch: ChatChannel) => void;
-  activeThreads?: import('../types').TeamTalkMessage[];
-  unreadThreads?: import('../types').TeamTalkMessage[];
-  onOpenThread?: (msg: import('../types').TeamTalkMessage) => void;
-  onDeleteThread?: (id: string) => void;
-  onCloseThread?: (id: string) => void;
-}) {
-  const Icon = group.icon;
-  const [collapsed, setCollapsed] = useState(false);
-  const unreadCount = group.channels.reduce((sum, ch) => sum + (ch.unreadCount || 0), 0);
-  
-  const bgClass = group.label === 'Groups' ? 'bg-emerald-50 text-emerald-800' : 'bg-violet-50 text-violet-800';
-  const iconClass = group.label === 'Groups' ? 'text-emerald-500' : 'text-violet-500';
-  const badgeClass = group.label === 'Groups' ? 'bg-emerald-200 text-emerald-900' : 'bg-violet-200 text-violet-900';
-
-  return (
-    <div className="mb-4 space-y-1">
-      <div className={`flex items-center justify-between px-3 py-1.5 rounded-lg ${bgClass}`}>
-        <button
-          onClick={() => setCollapsed(v => !v)}
-          className="flex-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors cursor-pointer text-left"
-        >
-          {collapsed ? <ChevronRight className={`w-3.5 h-3.5 ${iconClass}`} /> : <ChevronDown className={`w-3.5 h-3.5 ${iconClass}`} />}
-          <span className="flex-1">{group.label}</span>
-          {unreadCount > 0 && (
-            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold shadow-sm ${badgeClass}`}>
-              {unreadCount}
-            </span>
-          )}
-        </button>
-        <div className="flex items-center gap-1 shrink-0">
-          {group.label === 'Groups' && canCreate && (
-            <button
-              onClick={onCreateChannel}
-              className={`p-1 rounded-md hover:bg-white/50 transition-colors cursor-pointer ${iconClass}`}
-              title="Add member"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {canCreate && onCreateChannel && group.label !== 'Groups' && (
-            <button
-              onClick={onCreateChannel}
-              className={`p-1 rounded-md hover:bg-white/50 transition-colors cursor-pointer ${iconClass}`}
-              title="Create channel"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      </div>
-      {!collapsed && (
-        <div className="space-y-0.5 pl-1">
-          {group.channels.map(ch => {
-            const channelThreadsMap = new Map<string, import('../types').TeamTalkMessage>();
-            activeThreads?.filter(t => t.channelId === ch.id).forEach(t => channelThreadsMap.set(t.id, t));
-            unreadThreads?.filter(t => t.channelId === ch.id).forEach(t => channelThreadsMap.set(t.id, t));
-            const channelThreads = Array.from(channelThreadsMap.values());
-
-            return (
-              <ChannelItem
-                key={ch.id}
-                channel={ch}
-                isActive={ch.id === activeChannelId}
-                onClick={() => onSelectChannel(ch)}
-                onDelete={onDeleteChannel ? () => onDeleteChannel(ch) : undefined}
-                activeThreads={channelThreads}
-                onOpenThread={onOpenThread}
-                onDeleteThread={onDeleteThread}
-                onCloseThread={onCloseThread}
-              />
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function TeamTalkChannelSidebar({
   channels,
   activeChannelId,
@@ -327,9 +223,8 @@ export default function TeamTalkChannelSidebar({
   activeThreads = [],
   unreadThreads = [],
   onOpenThread,
-  onOpenInbox,
-  unreadMentionCount = 0,
-  isInboxActive = false,
+  mentionMessages = [],
+  onOpenMention,
   closedDMChannelIds = [],
   onCloseDM,
   onStartDirectChat,
@@ -367,7 +262,18 @@ export default function TeamTalkChannelSidebar({
   const hasReadSection = dmRead.length > 0 || groupsRead.length > 0 || channelsRead.length > 0;
   const hasNoChannels = visibleDMChannels.length === 0 && groupChannelsList.length === 0 && otherChannelsList.length === 0;
 
-  const totalUnreadMsgs = unreadMentionCount + unreadThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 1), 0);
+  // Group unread mentions by channel — most recent first — for per-row badges and the summary popover
+  const mentionsByChannel = new Map<string, TeamTalkMessage[]>();
+  mentionMessages.forEach(m => {
+    const list = mentionsByChannel.get(m.channelId) ?? [];
+    list.push(m);
+    mentionsByChannel.set(m.channelId, list);
+  });
+  const channelNameById = new Map(channels.map(c => [c.id, c.name]));
+
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const totalUnreadThreadReplies = unreadThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 1), 0);
+  const totalSummaryCount = mentionMessages.length + totalUnreadThreadReplies;
 
   // Reusable sub-section: a collapsible mini-header + list
   function SubSection({
@@ -410,11 +316,12 @@ export default function TeamTalkChannelSidebar({
               </div>
             )}
             {items.map(ch => {
-              const chThreadsMap = new Map<string, import('../types').TeamTalkMessage>();
+              const chThreadsMap = new Map<string, TeamTalkMessage>();
               activeThreads?.filter(t => t.channelId === ch.id).forEach(t => chThreadsMap.set(t.id, t));
               unreadThreads?.filter(t => t.channelId === ch.id).forEach(t => chThreadsMap.set(t.id, t));
               // Closing (hiding) a DM from your own sidebar is personal/local — any participant can do it.
               const canCloseDM = Boolean(onClose);
+              const chMentions = mentionsByChannel.get(ch.id) ?? [];
 
               return (
                 <ChannelItem
@@ -430,6 +337,8 @@ export default function TeamTalkChannelSidebar({
                   onDeleteThread={onDeleteThread}
                   onCloseThread={onCloseThread}
                   canDeleteThread={canManageChannels || ch.createdBy === currentUser.id}
+                  mentionCount={chMentions.length}
+                  onMentionClick={chMentions[0] && onOpenMention ? () => onOpenMention(chMentions[0]) : undefined}
                 />
               );
             })}
@@ -479,36 +388,55 @@ export default function TeamTalkChannelSidebar({
       {/* Channel list */}
       <nav className="flex-1 overflow-y-auto p-3 space-y-3" id="channel-list">
 
-        {/* Quick View — prominent card entry point (mentions + unread threads) */}
-        {onOpenInbox && (
-          <button
-            onClick={onOpenInbox}
-            className={`w-full flex items-center gap-3 p-3 rounded-2xl transition-all cursor-pointer shadow-sm ${
-              isInboxActive
-                ? 'bg-gradient-to-br from-indigo-600 to-indigo-700 text-white ring-2 ring-indigo-300'
-                : 'bg-gradient-to-br from-indigo-50 to-white text-slate-800 border border-indigo-100 hover:shadow-md hover:-translate-y-0.5'
-            }`}
-          >
-            <div className={`relative shrink-0 w-9 h-9 rounded-xl flex items-center justify-center ${
-              isInboxActive ? 'bg-white/15' : 'bg-indigo-600'
-            }`}>
-              <Inbox className={`w-4.5 h-4.5 ${isInboxActive ? 'text-white' : 'text-white'}`} />
-              {totalUnreadMsgs > 0 && (
-                <span className={`absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-extrabold flex items-center justify-center shadow ${
-                  isInboxActive ? 'bg-white text-indigo-700' : 'bg-rose-500 text-white'
-                }`}>
-                  {totalUnreadMsgs > 99 ? '99+' : totalUnreadMsgs}
-                </span>
-              )}
-            </div>
-            <div className="flex-1 text-left min-w-0">
-              <p className="text-[13px] font-bold leading-tight">Quick View</p>
-              <p className={`text-[10px] mt-0.5 truncate ${isInboxActive ? 'text-indigo-100' : 'text-slate-400'}`}>
-                {totalUnreadMsgs > 0 ? `${totalUnreadMsgs} unread · mentions & threads` : 'Mentions & unread threads'}
-              </p>
-            </div>
-            <ChevronRight className={`w-4 h-4 shrink-0 ${isInboxActive ? 'text-indigo-200' : 'text-slate-300'}`} />
-          </button>
+        {/* Global summary — a jump shortcut into the same rows below, not a separate inbox */}
+        {(mentionMessages.length > 0 || unreadThreads.length > 0) && (
+          <div className="relative">
+            <button
+              onClick={() => setSummaryOpen(v => !v)}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                summaryOpen ? 'bg-amber-100 text-amber-800' : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+              }`}
+            >
+              <BellRing className="w-3.5 h-3.5 shrink-0" />
+              <span className="flex-1 text-left truncate">
+                {mentionMessages.length > 0 && `${mentionMessages.length} mention${mentionMessages.length > 1 ? 's' : ''}`}
+                {mentionMessages.length > 0 && unreadThreads.length > 0 && ' · '}
+                {unreadThreads.length > 0 && `${unreadThreads.length} unread thread${unreadThreads.length > 1 ? 's' : ''}`}
+              </span>
+              {summaryOpen ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
+            </button>
+
+            {summaryOpen && (
+              <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 max-h-72 overflow-y-auto py-1">
+                {mentionMessages.map(m => (
+                  <button
+                    key={`mention-${m.id}`}
+                    onClick={() => { onOpenMention?.(m); setSummaryOpen(false); }}
+                    className="w-full flex items-start gap-2 px-3 py-2 hover:bg-amber-50 text-left cursor-pointer"
+                  >
+                    <AtSign className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-bold text-slate-700 truncate">{channelNameById.get(m.channelId) || 'Chat'}</p>
+                      <p className="text-[10px] text-slate-500 truncate">{m.senderName}: {m.content || 'Voice message'}</p>
+                    </div>
+                  </button>
+                ))}
+                {unreadThreads.map(t => (
+                  <button
+                    key={`thread-${t.id}`}
+                    onClick={() => { onOpenThread?.(t); setSummaryOpen(false); }}
+                    className="w-full flex items-start gap-2 px-3 py-2 hover:bg-indigo-50 text-left cursor-pointer"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-bold text-slate-700 truncate">{t.threadTitle || 'Thread'} <span className="text-slate-400 font-medium">in {channelNameById.get(t.channelId) || 'chat'}</span></p>
+                      <p className="text-[10px] text-slate-500 truncate">{t.unreadReplyCount ?? 1} new repl{(t.unreadReplyCount ?? 1) > 1 ? 'ies' : 'y'}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {hasNoChannels && (
