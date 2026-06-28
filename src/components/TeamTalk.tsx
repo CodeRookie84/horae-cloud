@@ -497,9 +497,44 @@ function StartDirectChatModal({
   );
 }
 
+/**
+ * Wraps a single message row so it can report when it has genuinely been
+ * visible on screen — not just rendered — for long enough to count as "read".
+ * This is what drives incremental, per-message read receipts instead of a
+ * single bulk "mark everything read" on chat open.
+ */
+function UnreadObserver({ onSeen, children }: { onSeen: () => void; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const seenRef = useRef(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        timer = setTimeout(() => {
+          if (!seenRef.current) {
+            seenRef.current = true;
+            onSeen();
+          }
+        }, 600);
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    }, { threshold: 0.6 });
+    observer.observe(el);
+    return () => { observer.disconnect(); if (timer) clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return <div ref={ref}>{children}</div>;
+}
+
 // ─── Message List ─────────────────────────────────────────────
 function MessageList({
-  messages, currentUser, replyCounts, onReplyInThread, onStartThread, onConvertToTask, onDelete, onPin, onNotify, isLoading, canPin, canModerate, highlightId, threadParticipantMap, currentUserId,
+  messages, currentUser, replyCounts, onReplyInThread, onStartThread, onConvertToTask, onDelete, onPin, onNotify, isLoading, canPin, canModerate, highlightId, threadParticipantMap, currentUserId, unreadIds, onMessageRead,
 }: {
   messages: TeamTalkMessage[];
   currentUser: AppUser;
@@ -517,12 +552,21 @@ function MessageList({
   /** Map of messageId -> participantUserIds for thread privacy filtering */
   threadParticipantMap?: Record<string, string[]>;
   currentUserId?: string;
+  /** IDs of messages still unread — drives the "N new messages" divider and read-tracking */
+  unreadIds?: string[];
+  /** Called once a given unread message has actually been visible long enough to count as read */
+  onMessageRead?: (messageId: string, createdAt: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
   const scrolledHighlightRef = useRef<string | null>(null);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
+  useEffect(() => {
+    // Don't yank the view to the bottom when there's an unread item to land on instead —
+    // the highlight effect below takes care of scrolling to it.
+    if (highlightId) return;
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length, highlightId]);
   
   useEffect(() => {
     if (!highlightId) {
@@ -550,6 +594,8 @@ function MessageList({
   );
 
   let lastDate = '';
+  const unreadIdSet = new Set(unreadIds ?? []);
+  const firstUnreadId = unreadIds?.[0];
   return (
     <div className="flex-1 overflow-y-auto px-3 py-3 pb-32 space-y-0.5" id="message-list">
       {messages.map((msg, i) => {
@@ -568,6 +614,25 @@ function MessageList({
           return null; // hide thread reply from non-participant
         }
 
+        const bubble = (
+          <TeamTalkMessageBubble
+            message={msg}
+            currentUser={currentUser}
+            replyCount={replyCounts[msg.id] ?? 0}
+            onReplyInThread={onReplyInThread}
+            onStartThread={onStartThread}
+            onConvertToTask={onConvertToTask}
+            onDelete={onDelete}
+            onPin={canPin ? onPin : undefined}
+            onNotify={onNotify}
+            canModerate={canModerate}
+            showAvatar={showAvatar}
+            isHighlighted={msg.id === highlightId}
+            threadParticipantIds={threadParticipantMap?.[msg.id]}
+            currentUserId={currentUserId}
+          />
+        );
+
         return (
           <React.Fragment key={msg.id}>
             {showDateSep && (
@@ -577,23 +642,21 @@ function MessageList({
                 <div className="flex-1 h-px bg-slate-100" />
               </div>
             )}
+            {msg.id === firstUnreadId && (
+              <div className="flex items-center gap-3 my-3">
+                <div className="flex-1 h-px bg-amber-300" />
+                <span className="text-[11px] font-bold text-amber-600 uppercase tracking-wide px-2">
+                  {unreadIdSet.size} new message{unreadIdSet.size > 1 ? 's' : ''}
+                </span>
+                <div className="flex-1 h-px bg-amber-300" />
+              </div>
+            )}
             <div ref={msg.id === highlightId ? highlightRef : undefined}>
-              <TeamTalkMessageBubble
-                message={msg}
-                currentUser={currentUser}
-                replyCount={replyCounts[msg.id] ?? 0}
-                onReplyInThread={onReplyInThread}
-                onStartThread={onStartThread}
-                onConvertToTask={onConvertToTask}
-                onDelete={onDelete}
-                onPin={canPin ? onPin : undefined}
-                onNotify={onNotify}
-                canModerate={canModerate}
-                showAvatar={showAvatar}
-                isHighlighted={msg.id === highlightId}
-                threadParticipantIds={threadParticipantMap?.[msg.id]}
-                currentUserId={currentUserId}
-              />
+              {unreadIdSet.has(msg.id) && onMessageRead ? (
+                <UnreadObserver onSeen={() => onMessageRead(msg.id, msg.createdAt)}>
+                  {bubble}
+                </UnreadObserver>
+              ) : bubble}
             </div>
           </React.Fragment>
         );
@@ -981,6 +1044,14 @@ export default function TeamTalk({
   const [pinnedDismissed, setPinnedDismissed] = useState(false);
   const [highlightMsgId, setHighlightMsgId] = useState<string | undefined>();
 
+  /**
+   * Unread main-window message IDs for the open channel, oldest first — used
+   * only to position the "N new messages" divider and the initial scroll
+   * target. Actual read-state is advanced incrementally as messages scroll
+   * into view (see handleMessageRead), never by a single bulk wipe.
+   */
+  const [pendingUnreadIds, setPendingUnreadIds] = useState<string[]>([]);
+
   // ── Mentions ───────────────────────────────────────────────
   const [mentionMessages, setMentionMessages] = useState<TeamTalkMessage[]>([]);
   const [mentionCount, setMentionCount] = useState(0);
@@ -1093,6 +1164,19 @@ export default function TeamTalk({
     finally { setLoadingChannels(false); }
   }, [tenantId, activeUser.id, activeUser.department, userIsManager, allTenantUsers, tenants, clientOutletIds]);
 
+  /** Cheap unread-count-only refresh — skips the manager outlet-sync work loadChannels does, for periodic polling */
+  const refreshUnreadCounts = useCallback(async () => {
+    try {
+      const raw = userIsManager
+        ? await chatService.getAllChannels(clientOutletIds, activeUser.id)
+        : await chatService.getChannels(tenantId, activeUser.id);
+      setChannels(prev => prev.map(c => {
+        const fresh = raw.find(r => r.id === c.id);
+        return fresh ? { ...c, unreadCount: fresh.unreadCount } : c;
+      }));
+    } catch (e) { console.error('refreshUnreadCounts:', e); }
+  }, [tenantId, activeUser.id, userIsManager, clientOutletIds]);
+
 
 
   useEffect(() => {
@@ -1133,7 +1217,16 @@ export default function TeamTalk({
 
   useEffect(() => {
     loadActiveThreads();
-  }, [loadActiveThreads]);
+    // Threads and channel unread counts don't have a realtime subscription like
+    // mentions do (one subscribe-per-channel would be heavy across the whole
+    // sidebar), so poll instead — keeps the per-channel badges from going stale
+    // while Team Talk is open and someone else is posting in another channel/thread.
+    const interval = setInterval(() => {
+      loadActiveThreads();
+      refreshUnreadCounts();
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [loadActiveThreads, refreshUnreadCounts]);
 
   // ── Load messages for the current tab's channel ────────────
   const loadMessages = useCallback(async (channel: ChatChannel) => {
@@ -1149,7 +1242,16 @@ export default function TeamTalk({
       const counts = await chatService.getReplyCountsBatch(rootIds);
       setReplyCounts(counts);
 
-      await chatService.markChannelRead(channel.id, activeUser.id);
+      // Capture which messages are unread for the "N new messages" divider and
+      // initial scroll target. Read state itself is advanced incrementally as
+      // messages actually scroll into view (see handleMessageRead) — opening
+      // the chat does not, by itself, mark anything read.
+      const unreadIds = await chatService.getUnreadMessageIds(channel.id, activeUser.id);
+      setPendingUnreadIds(unreadIds);
+      if (unreadIds.length > 0) {
+        setHighlightMsgId(undefined);
+        setTimeout(() => setHighlightMsgId(unreadIds[0]), 300);
+      }
 
       // Load pinned message
       const pinned = await chatService.getPinnedMessage(channel.id);
@@ -1185,12 +1287,30 @@ export default function TeamTalk({
     finally { setLoadingMessages(false); }
   }, [activeUser.id]);
 
+  // Highlight + scroll to the first unread item once it's known for the open channel
   // Reload messages when activeChannel changes
   useEffect(() => {
     if (activeChannel) {
       loadMessages(activeChannel);
     }
   }, [activeChannel?.id]);
+
+  /**
+   * Called by MessageList as messages actually scroll into view. Advances
+   * last_read_at to that message's timestamp (never "now", never a bulk
+   * wipe) so anything still unseen — further down, or in a thread — stays
+   * unread regardless of whether the user later navigates away.
+   */
+  const handleMessageRead = useCallback((messageId: string, createdAt: string) => {
+    if (!activeChannel) return;
+    chatService.markChannelReadUpTo(activeChannel.id, activeUser.id, createdAt);
+    setPendingUnreadIds(prev => prev.filter(id => id !== messageId));
+    setChannels(prev => prev.map(c => {
+      if (c.id !== activeChannel.id) return c;
+      const nextCount = Math.max(0, (c.unreadCount ?? 0) - 1);
+      return { ...c, unreadCount: nextCount };
+    }));
+  }, [activeChannel, activeUser.id]);
 
   const loadEscalated = useCallback(async () => {
     if (!userIsManager) return;
@@ -1659,33 +1779,16 @@ export default function TeamTalk({
               channels={channels}
               currentUser={activeUser}
               activeChannelId={activeChannel?.id ?? null}
-              onSelectChannel={async ch => {
-                // If this channel has a pending mention or unread thread reply, opening the
-                // row should land on that exact spot — not just the generic first unread message.
-                const channelMention = mentionMessages.find(m => m.channelId === ch.id);
-                if (channelMention) {
-                  await handleNavigateToMention(channelMention);
-                  setShowMobileSidebar(false);
-                  return;
-                }
-                const channelUnreadThread = unreadThreads.find(t => t.channelId === ch.id);
-                if (channelUnreadThread) {
-                  await handleNavigateToThread(channelUnreadThread);
-                  setShowMobileSidebar(false);
-                  return;
-                }
-
-                const isSameChannel = activeChannel?.id === ch.id;
-                const firstUnreadId = (!isSameChannel && ch.unreadCount > 0)
-                  ? await chatService.getFirstUnreadMessageId(ch.id, activeUser.id)
-                  : null;
+              onSelectChannel={ch => {
+                // Clicking the channel/DM row always opens the plain chat window —
+                // never auto-routes into a thread or mention. Those have their own
+                // dedicated rows/badges in the sidebar (onOpenThread / onOpenMention
+                // below) so navigation is predictable: you land where you clicked.
+                // loadMessages (triggered by setActiveChannel) computes the unread
+                // divider and highlights the first unread main-window message.
                 setActiveChannel(ch); setThreadRoot(null);
                 pushTeamTalkState('channel');
                 setShowMobileSidebar(false);
-                if (firstUnreadId) {
-                  setHighlightMsgId(undefined);
-                  setTimeout(() => setHighlightMsgId(firstUnreadId), 400);
-                }
               }}
               onCreateChannel={() => { setShowCreateChannel(true); setShowMobileSidebar(false); }}
               onSearch={() => {}}
@@ -1917,6 +2020,15 @@ export default function TeamTalk({
             />
           )}
 
+          {/* Unread indicator — informational only; the divider inside the list marks where they start */}
+          {pendingUnreadIds.length > 0 && (
+            <div className="flex justify-center py-1 bg-amber-50/80 border-b border-amber-100">
+              <span className="flex items-center gap-1.5 px-3 py-0.5 text-amber-700 text-[12px] font-bold">
+                {pendingUnreadIds.length} new message{pendingUnreadIds.length > 1 ? 's' : ''}
+              </span>
+            </div>
+          )}
+
           {/* ── MESSAGE AREA ── */}
           <MessageList
                 messages={visibleMessages}
@@ -1931,6 +2043,8 @@ export default function TeamTalk({
                 isLoading={loadingMessages}
                 canPin={userIsManager}
                 canModerate={userIsClientAdmin}
+                unreadIds={pendingUnreadIds}
+                onMessageRead={handleMessageRead}
                 highlightId={searchResults.length > 0 ? searchResults[Math.min(currentSearchIndex, searchResults.length - 1)] : highlightMsgId}
                 threadParticipantMap={threadParticipantIds.reduce((acc, uid) => {
                   if (threadRoot) acc[threadRoot.id] = threadParticipantIds;

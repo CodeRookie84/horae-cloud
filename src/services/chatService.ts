@@ -801,7 +801,36 @@ export async function markChannelRead(channelId: string, userId: string): Promis
     .eq('user_id', userId);
 }
 
-/** Count unread messages in a channel for a user since last_read_at */
+/**
+ * Advance last_read_at to a specific message's timestamp rather than "now".
+ * Used for incremental read receipts: as messages actually scroll into view,
+ * the read marker moves up to that message only — messages further down that
+ * haven't been seen yet stay unread, even if the user navigates away.
+ * Never moves last_read_at backwards (e.g. from a stale/out-of-order call).
+ */
+export async function markChannelReadUpTo(channelId: string, userId: string, upToTimestamp: string): Promise<void> {
+  const { data: member } = await supabase
+    .from('chat_members')
+    .select('last_read_at')
+    .eq('channel_id', channelId)
+    .eq('user_id', userId)
+    .single();
+
+  if (member?.last_read_at && member.last_read_at >= upToTimestamp) return;
+
+  await supabase
+    .from('chat_members')
+    .update({ last_read_at: upToTimestamp })
+    .eq('channel_id', channelId)
+    .eq('user_id', userId);
+}
+
+/**
+ * Count unread messages in a channel for a user since last_read_at.
+ * Excludes thread replies (thread_id IS NULL) — those are tracked per-thread via
+ * chat_thread_participants so they don't get silently wiped when the main
+ * channel is marked read, and don't get double-counted across both badges.
+ */
 export async function getUnreadCount(channelId: string, userId: string): Promise<number> {
   const { data: member } = await supabase
     .from('chat_members')
@@ -819,14 +848,19 @@ export async function getUnreadCount(channelId: string, userId: string): Promise
     .select('*', { count: 'exact', head: true })
     .eq('channel_id', channelId)
     .eq('is_deleted', false)
+    .is('thread_id', null)
     .neq('sender_id', userId)
     .gt('created_at', lastRead);
 
   return count ?? 0;
 }
 
-/** ID of the oldest unread message in a channel for a user, for scroll-to-unread navigation */
-export async function getFirstUnreadMessageId(channelId: string, userId: string): Promise<string | null> {
+/**
+ * All unread main-window message IDs in a channel for a user, oldest first.
+ * Used to let the UI surface every unread item (not just the first) and step
+ * through them, instead of silently collapsing them the moment the chat opens.
+ */
+export async function getUnreadMessageIds(channelId: string, userId: string): Promise<string[]> {
   const { data: member } = await supabase
     .from('chat_members')
     .select('last_read_at')
@@ -834,7 +868,7 @@ export async function getFirstUnreadMessageId(channelId: string, userId: string)
     .eq('user_id', userId)
     .single();
 
-  if (!member) return null;
+  if (!member) return [];
 
   const lastRead = member.last_read_at ?? '1970-01-01T00:00:00Z';
 
@@ -843,13 +877,12 @@ export async function getFirstUnreadMessageId(channelId: string, userId: string)
     .select('id')
     .eq('channel_id', channelId)
     .eq('is_deleted', false)
+    .is('thread_id', null)
     .neq('sender_id', userId)
     .gt('created_at', lastRead)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .single();
+    .order('created_at', { ascending: true });
 
-  return data?.id ?? null;
+  return (data ?? []).map((r: any) => r.id);
 }
 
 /** Fetch a single message by ID (e.g. to resolve a thread's root from a reply) */

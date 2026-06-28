@@ -353,9 +353,9 @@ export default function TeamTalkInput({
           </div>
         ) : (
           /* ── TYPING STATE ── */
-          <div className="flex-1 flex flex-col gap-1">
+          <div className="flex-1 min-w-0 flex flex-col gap-1">
             {/* Text area, with the dictation mic docked inside it */}
-            <div className="flex-1 bg-slate-100 rounded-2xl flex items-end gap-2 px-3 py-2 min-h-[40px]">
+            <div className="flex-1 min-w-0 bg-slate-100 rounded-2xl flex items-end gap-2 px-3 py-2 min-h-[40px]">
               <textarea
                 ref={textareaRef}
                 value={text}
@@ -447,12 +447,12 @@ export default function TeamTalkInput({
               animate={{ scale: 1, opacity: 1 }}
               onClick={handleSend}
               disabled={disabled}
-              className="h-10 px-4 rounded-full bg-[#162D4E] hover:bg-[#1E3A5F] flex items-center gap-1.5 transition-all cursor-pointer shadow-md disabled:opacity-50"
+              className="h-10 px-3 sm:px-4 rounded-full bg-[#162D4E] hover:bg-[#1E3A5F] flex items-center gap-1.5 transition-all cursor-pointer shadow-md disabled:opacity-50 shrink-0"
               title="Send message"
               id="send-text-btn"
             >
               <Send className="w-4 h-4 text-[#C5A880]" />
-              <span className="text-[14px] font-bold text-white">Send</span>
+              <span className="hidden sm:inline text-[14px] font-bold text-white">Send</span>
             </motion.button>
           ) : (
             /* BIG Voice record button — WhatsApp style, dominant CTA */

@@ -318,8 +318,9 @@ export default function TeamTalkMessageBubble({
       {/* Hover action buttons (always visible on mobile, hover on desktop) */}
       {!message.isDeleted && (
         <div className={`flex items-center gap-0.5 self-center transition-opacity relative z-30 ${showActions ? 'opacity-100' : 'opacity-0 pointer-events-none'} lg:group-hover:opacity-100 lg:group-hover:pointer-events-auto ${isMine ? 'flex-row-reverse' : ''}`}>
-          {/* Quick reactions */}
-          <div className="relative">
+          {/* Quick reactions — hidden on mobile (kept in the "More" sheet) to avoid pushing off-screen,
+              but stays visible once opened from that sheet so the popover can render */}
+          <div className={`relative ${showReactions ? '' : 'hidden sm:block'}`}>
             <button
               onClick={(e) => {
                 e.preventDefault();
@@ -346,7 +347,7 @@ export default function TeamTalkMessageBubble({
             )}
           </div>
 
-          {/* Translate */}
+          {/* Translate — hidden on mobile (kept in the "More" sheet) to avoid pushing off-screen */}
           {(message.content || message.voiceTranscript) && (
             <button
               onClick={(e) => {
@@ -354,7 +355,7 @@ export default function TeamTalkMessageBubble({
                 e.stopPropagation();
                 setShowLangPicker(v => !v);
               }}
-              className={`p-1.5 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer ${showLangPicker ? 'text-blue-700 bg-blue-50' : 'text-blue-500'}`}
+              className={`hidden sm:inline-flex p-1.5 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer ${showLangPicker ? 'text-blue-700 bg-blue-50' : 'text-blue-500'}`}
               title="Translate"
             >
               <Globe className="w-3.5 h-3.5" />
@@ -362,7 +363,7 @@ export default function TeamTalkMessageBubble({
           )}
 
 
-          {/* Notify on WhatsApp */}
+          {/* Notify on WhatsApp — hidden on mobile (kept in the "More" sheet) to avoid pushing off-screen */}
           {onNotify && (
             <button
               onClick={(e) => {
@@ -370,14 +371,14 @@ export default function TeamTalkMessageBubble({
                 e.stopPropagation();
                 onNotify(message);
               }}
-              className="p-1.5 hover:bg-emerald-50 rounded-lg text-slate-400 hover:text-emerald-600 transition-colors cursor-pointer"
+              className="hidden sm:inline-flex p-1.5 hover:bg-emerald-50 rounded-lg text-slate-400 hover:text-emerald-600 transition-colors cursor-pointer"
               title="Notify on WhatsApp"
             >
               <NotifyIcon className="w-3.5 h-3.5" />
             </button>
           )}
 
-          {/* Pin Action */}
+          {/* Pin Action — hidden on mobile (kept in the "More" sheet) to avoid pushing off-screen */}
           {onPin && (
             <button
               onClick={(e) => {
@@ -385,7 +386,7 @@ export default function TeamTalkMessageBubble({
                 e.stopPropagation();
                 onPin(message.id);
               }}
-              className="p-1.5 hover:bg-amber-50 rounded-lg text-slate-400 hover:text-amber-600 transition-colors cursor-pointer"
+              className="hidden sm:inline-flex p-1.5 hover:bg-amber-50 rounded-lg text-slate-400 hover:text-amber-600 transition-colors cursor-pointer"
               title="Pin for everyone"
             >
               <Pin className="w-3.5 h-3.5" />
@@ -408,10 +409,27 @@ export default function TeamTalkMessageBubble({
             {showMenu && (
               <>
                 <div className="fixed inset-0 z-[190] sm:hidden" onClick={(e) => { e.stopPropagation(); setShowMenu(false); }} />
-                <div className={`fixed sm:absolute sm:top-full bottom-4 left-4 right-4 sm:bottom-auto sm:left-auto sm:right-auto sm:mt-1 ${isMine ? 'sm:right-0' : 'sm:left-0'} bg-white border border-slate-200 rounded-xl shadow-2xl sm:shadow-xl z-[200] py-1 min-w-[160px]`}>
+                <div className={`fixed sm:absolute sm:top-full bottom-4 left-4 right-4 sm:bottom-auto sm:left-auto sm:right-auto sm:mt-1 ${isMine ? 'sm:right-0' : 'sm:left-0'} bg-white border border-slate-200 rounded-xl shadow-2xl sm:shadow-xl z-[200] py-1 min-w-[160px] max-w-[calc(100vw-2rem)]`}>
+                  {/* React + Translate — desktop already has dedicated inline icons; mobile only gets them here */}
+                  <button
+                    onClick={() => { setShowMenu(false); setShowReactions(true); }}
+                    className="sm:hidden flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium"
+                  >
+                    <span className="text-base leading-none">😊</span>
+                    React
+                  </button>
+                  {(message.content || message.voiceTranscript) && (
+                    <button
+                      onClick={() => { setShowMenu(false); setShowLangPicker(true); }}
+                      className="sm:hidden flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium border-t border-slate-100"
+                    >
+                      <Globe className="w-3.5 h-3.5 text-blue-500" />
+                      Translate
+                    </button>
+                  )}
                   <button
                     onClick={() => { onConvertToTask(message); setShowMenu(false); }}
-                    className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium"
+                    className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium border-t border-slate-100 sm:border-t-0"
                   >
                     <CheckSquare className="w-3.5 h-3.5 text-emerald-500" />
                     Convert to Task
