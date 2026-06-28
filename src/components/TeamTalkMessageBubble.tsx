@@ -5,7 +5,7 @@
  * TeamTalkMessageBubble.tsx — Single message renderer with reactions, actions, thread badge
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   MoreHorizontal, MessageSquare, Trash2, Edit3,
   CheckSquare, Link, Globe, GitBranch, ChevronRight, Check, Pin, GitPullRequest, Send as NotifyIcon
@@ -69,6 +69,17 @@ export default function TeamTalkMessageBubble({
   const [langCache, setLangCache] = useState<Record<string, string>>(message.translations || {});
   const [isTranslating, setIsTranslating] = useState(false);
   const [reacted, setReacted] = useState<Record<string, string[]>>(message.reactions || {});
+
+  // Briefly flash (pulse) when first landing on a highlighted message from a
+  // notification/mention/thread jump, then settle into a steadier highlight
+  // so it's obvious at a glance which message you were sent here to see.
+  const [flashing, setFlashing] = useState(isHighlighted);
+  useEffect(() => {
+    if (!isHighlighted) { setFlashing(false); return; }
+    setFlashing(true);
+    const t = setTimeout(() => setFlashing(false), 1800);
+    return () => clearTimeout(t);
+  }, [isHighlighted, message.id]);
 
   // System messages — centered pill
   if (isSystem) {
@@ -141,7 +152,13 @@ export default function TeamTalkMessageBubble({
   return (
     <div
       id={`msg-${message.id}`}
-      className={`flex gap-2.5 mb-1 group ${isMine ? 'flex-row-reverse' : 'flex-row'} ${isHighlighted ? 'ring-2 ring-amber-300 ring-offset-1 rounded-2xl bg-amber-50/60 px-1 py-0.5 -mx-1' : ''}`}
+      className={`flex gap-2.5 mb-1 group ${isMine ? 'flex-row-reverse' : 'flex-row'} ${
+        flashing
+          ? 'ring-2 ring-amber-400 ring-offset-2 rounded-2xl bg-amber-100 px-1 py-0.5 -mx-1 animate-pulse'
+          : isHighlighted
+            ? 'ring-2 ring-amber-300 ring-offset-1 rounded-2xl bg-amber-50/60 px-1 py-0.5 -mx-1 transition-colors duration-700'
+            : ''
+      }`}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => { setShowActions(false); setShowMenu(false); setShowReactions(false); }}
     >
