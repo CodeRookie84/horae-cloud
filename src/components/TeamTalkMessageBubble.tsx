@@ -37,6 +37,12 @@ interface MessageBubbleProps {
   /** IDs of users who are participants of this message's thread (for privacy filtering) */
   threadParticipantIds?: string[];
   currentUserId?: string;
+  /** WhatsApp-style multi-select: when true, tapping the bubble toggles selection instead of actions */
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (msgId: string) => void;
+  /** Enters selection mode starting with this message selected — from the "More" menu */
+  onStartSelection?: (msgId: string) => void;
 }
 
 export default function TeamTalkMessageBubble({
@@ -55,6 +61,10 @@ export default function TeamTalkMessageBubble({
   isHighlighted = false,
   threadParticipantIds,
   currentUserId,
+  selectionMode = false,
+  isSelected = false,
+  onToggleSelect,
+  onStartSelection,
 }: MessageBubbleProps) {
   const isMine = message.senderId === currentUser.id;
   const isSystem = message.messageType === 'system';
@@ -153,15 +163,30 @@ export default function TeamTalkMessageBubble({
     <div
       id={`msg-${message.id}`}
       className={`flex gap-2.5 mb-1 group ${isMine ? 'flex-row-reverse' : 'flex-row'} ${
-        flashing
-          ? 'ring-2 ring-amber-400 ring-offset-2 rounded-2xl bg-amber-100 px-1 py-0.5 -mx-1 animate-pulse'
-          : isHighlighted
-            ? 'ring-2 ring-amber-300 ring-offset-1 rounded-2xl bg-amber-50/60 px-1 py-0.5 -mx-1 transition-colors duration-700'
-            : ''
+        isSelected
+          ? 'bg-indigo-50 rounded-2xl px-1 py-0.5 -mx-1'
+          : flashing
+            ? 'ring-2 ring-amber-400 ring-offset-2 rounded-2xl bg-amber-100 px-1 py-0.5 -mx-1 animate-pulse'
+            : isHighlighted
+              ? 'ring-2 ring-amber-300 ring-offset-1 rounded-2xl bg-amber-50/60 px-1 py-0.5 -mx-1 transition-colors duration-700'
+              : ''
       }`}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => { setShowActions(false); setShowMenu(false); setShowReactions(false); }}
+      onClick={selectionMode ? () => onToggleSelect?.(message.id) : undefined}
     >
+      {/* Selection checkbox — WhatsApp-style multi-select */}
+      {selectionMode && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleSelect?.(message.id); }}
+          className={`shrink-0 self-center w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors cursor-pointer ${
+            isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 bg-white'
+          }`}
+        >
+          {isSelected && <Check className="w-3 h-3 text-white" />}
+        </button>
+      )}
+
       {/* Avatar */}
       {showAvatar && !isMine && (
         <div className="shrink-0 pt-0.5">
@@ -196,7 +221,11 @@ export default function TeamTalkMessageBubble({
             <div className="fixed inset-0 z-20 lg:hidden" onClick={() => setShowActions(false)} />
           )}
           <div
-            onClick={(e) => { e.stopPropagation(); setShowActions(v => !v); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (selectionMode) { onToggleSelect?.(message.id); return; }
+              setShowActions(v => !v);
+            }}
             className={`relative rounded-2xl px-3.5 py-2.5 shadow-xs cursor-pointer ${
               isMine
                 ? 'bg-[#162D4E] text-white rounded-br-sm'
@@ -316,7 +345,7 @@ export default function TeamTalkMessageBubble({
       </div>
 
       {/* Hover action buttons (always visible on mobile, hover on desktop) */}
-      {!message.isDeleted && (
+      {!message.isDeleted && !selectionMode && (
         <div className={`flex items-center gap-0.5 self-center transition-opacity relative z-30 ${showActions ? 'opacity-100' : 'opacity-0 pointer-events-none'} lg:group-hover:opacity-100 lg:group-hover:pointer-events-auto ${isMine ? 'flex-row-reverse' : ''}`}>
           {/* Quick reactions — hidden on mobile (kept in the "More" sheet) to avoid pushing off-screen,
               but stays visible once opened from that sheet so the popover can render */}
@@ -410,10 +439,20 @@ export default function TeamTalkMessageBubble({
               <>
                 <div className="fixed inset-0 z-[190] sm:hidden" onClick={(e) => { e.stopPropagation(); setShowMenu(false); }} />
                 <div className={`fixed sm:absolute sm:top-full bottom-4 left-4 right-4 sm:bottom-auto sm:left-auto sm:right-auto sm:mt-1 ${isMine ? 'sm:right-0' : 'sm:left-0'} bg-white border border-slate-200 rounded-xl shadow-2xl sm:shadow-xl z-[200] py-1 min-w-[160px] max-w-[calc(100vw-2rem)]`}>
+                  {/* WhatsApp-style multi-select entry point */}
+                  {onStartSelection && (
+                    <button
+                      onClick={() => { setShowMenu(false); onStartSelection(message.id); }}
+                      className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium"
+                    >
+                      <CheckSquare className="w-3.5 h-3.5 text-indigo-500" />
+                      Select
+                    </button>
+                  )}
                   {/* React + Translate — desktop already has dedicated inline icons; mobile only gets them here */}
                   <button
                     onClick={() => { setShowMenu(false); setShowReactions(true); }}
-                    className="sm:hidden flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium"
+                    className={`sm:hidden flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium ${onStartSelection ? 'border-t border-slate-100' : ''}`}
                   >
                     <span className="text-base leading-none">😊</span>
                     React
@@ -429,7 +468,7 @@ export default function TeamTalkMessageBubble({
                   )}
                   <button
                     onClick={() => { onConvertToTask(message); setShowMenu(false); }}
-                    className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium border-t border-slate-100 sm:border-t-0"
+                    className={`flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium border-t border-slate-100 ${onStartSelection ? '' : 'sm:border-t-0'}`}
                   >
                     <CheckSquare className="w-3.5 h-3.5 text-emerald-500" />
                     Convert to Task

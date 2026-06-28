@@ -535,6 +535,7 @@ function UnreadObserver({ onSeen, children }: { onSeen: () => void; children: Re
 // ─── Message List ─────────────────────────────────────────────
 function MessageList({
   messages, currentUser, replyCounts, onReplyInThread, onStartThread, onConvertToTask, onDelete, onPin, onNotify, isLoading, canPin, canModerate, highlightId, threadParticipantMap, currentUserId, unreadIds, onMessageRead,
+  selectionMode, selectedIds, onToggleSelect, onStartSelection,
 }: {
   messages: TeamTalkMessage[];
   currentUser: AppUser;
@@ -556,6 +557,11 @@ function MessageList({
   unreadIds?: string[];
   /** Called once a given unread message has actually been visible long enough to count as read */
   onMessageRead?: (messageId: string, createdAt: string) => void;
+  /** WhatsApp-style multi-select for bulk delete */
+  selectionMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (msgId: string) => void;
+  onStartSelection?: (msgId: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -630,6 +636,10 @@ function MessageList({
             isHighlighted={msg.id === highlightId}
             threadParticipantIds={threadParticipantMap?.[msg.id]}
             currentUserId={currentUserId}
+            selectionMode={selectionMode}
+            isSelected={selectedIds?.has(msg.id)}
+            onToggleSelect={onToggleSelect}
+            onStartSelection={onStartSelection}
           />
         );
 
@@ -671,6 +681,7 @@ function ThreadPanel({
   rootMessage, replies, currentUser, allUsers, isManager,
   onSendReply, onSendVoiceReply, onClose, onConvertToTask, onDelete, onPin, onNotify,
   canPin, canModerate, onActivateThread, onRenameThread, onCloseThread, threadTitle, highlightReplyId,
+  selectionMode, selectedIds, onToggleSelect, onStartSelection,
 }: {
   rootMessage: TeamTalkMessage;
   replies: TeamTalkMessage[];
@@ -691,6 +702,10 @@ function ThreadPanel({
   onCloseThread?: (threadId: string) => void;
   threadTitle?: string;
   highlightReplyId?: string;
+  selectionMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (msgId: string) => void;
+  onStartSelection?: (msgId: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -841,6 +856,10 @@ function ThreadPanel({
                 showAvatar={showAvatar}
                 isThreadView
                 isHighlighted={reply.id === highlightReplyId}
+                selectionMode={selectionMode}
+                isSelected={selectedIds?.has(reply.id)}
+                onToggleSelect={onToggleSelect}
+                onStartSelection={onStartSelection}
               />
             </div>
           );
@@ -1024,6 +1043,10 @@ export default function TeamTalk({
 
 
   const [messages, setMessages] = useState<TeamTalkMessage[]>([]);
+
+  // ── Multi-select (WhatsApp-style bulk delete) ───────────────
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const [replyCounts, setReplyCounts] = useState<Record<string, number>>({});
   const [loadingChannels, setLoadingChannels] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -1291,6 +1314,8 @@ export default function TeamTalk({
     if (activeChannel) {
       loadMessages(activeChannel);
     }
+    setSelectionMode(false);
+    setSelectedMessageIds(new Set());
   }, [activeChannel?.id]);
 
   /**
@@ -1519,6 +1544,38 @@ export default function TeamTalk({
       setReplyCounts(prev => ({ ...prev, [msg.threadId]: Math.max(0, (prev[msg.threadId] || 0) - 1) }));
     }
   }, [messages]);
+
+  /** Enter selection mode starting with one message pre-selected, from a message's "More" menu */
+  const handleStartSelection = useCallback((msgId: string) => {
+    setSelectionMode(true);
+    setSelectedMessageIds(new Set([msgId]));
+  }, []);
+
+  const handleToggleSelect = useCallback((msgId: string) => {
+    setSelectedMessageIds(prev => {
+      const next = new Set(prev);
+      if (next.has(msgId)) next.delete(msgId); else next.add(msgId);
+      return next;
+    });
+  }, []);
+
+  const handleCancelSelection = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedMessageIds(new Set());
+  }, []);
+
+  /** Bulk-delete every selected message — own messages, or any if moderator */
+  const handleDeleteSelected = useCallback(async () => {
+    const all = [...messages, ...threadReplies];
+    const ids = Array.from(selectedMessageIds).filter(id => {
+      const msg = all.find(m => m.id === id);
+      return msg && (msg.senderId === activeUser.id || userIsClientAdmin);
+    });
+    if (ids.length === 0) { handleCancelSelection(); return; }
+    if (!window.confirm(`Delete ${ids.length} message${ids.length > 1 ? 's' : ''}? This can't be undone.`)) return;
+    await Promise.all(ids.map(id => handleDelete(id)));
+    handleCancelSelection();
+  }, [messages, threadReplies, selectedMessageIds, activeUser.id, userIsClientAdmin, handleDelete, handleCancelSelection]);
 
   const handlePin = useCallback(async (msgId: string) => {
     if (!activeChannel || !userIsManager) return;
@@ -2007,8 +2064,23 @@ export default function TeamTalk({
             />
           )}
 
-          {/* Unread indicator — informational only; the divider inside the list marks where they start */}
-          {pendingUnreadIds.length > 0 && (
+          {/* Selection toolbar — WhatsApp-style bulk delete */}
+          {selectionMode ? (
+            <div className="flex items-center justify-between px-4 py-2 bg-indigo-50 border-b border-indigo-100">
+              <button onClick={handleCancelSelection} className="p-1 hover:bg-indigo-100 rounded-lg text-indigo-700 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+              <span className="text-[13px] font-bold text-indigo-800">{selectedMessageIds.size} selected</span>
+              <button
+                onClick={handleDeleteSelected}
+                disabled={selectedMessageIds.size === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-lg text-[12px] font-bold cursor-pointer transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete
+              </button>
+            </div>
+          ) : pendingUnreadIds.length > 0 && (
             <div className="flex justify-center py-1 bg-amber-50/80 border-b border-amber-100">
               <span className="flex items-center gap-1.5 px-3 py-0.5 text-amber-700 text-[12px] font-bold">
                 {pendingUnreadIds.length} new message{pendingUnreadIds.length > 1 ? 's' : ''}
@@ -2038,6 +2110,10 @@ export default function TeamTalk({
                   return acc;
                 }, {} as Record<string, string[]>)}
                 currentUserId={activeUser.id}
+                selectionMode={selectionMode}
+                selectedIds={selectedMessageIds}
+                onToggleSelect={handleToggleSelect}
+                onStartSelection={handleStartSelection}
               />
 
             {/* Input */}
@@ -2090,6 +2166,10 @@ export default function TeamTalk({
                 onRenameThread={handleRenameThread}
                 onCloseThread={handleCloseThread}
                 highlightReplyId={highlightMsgId}
+                selectionMode={selectionMode}
+                selectedIds={selectedMessageIds}
+                onToggleSelect={handleToggleSelect}
+                onStartSelection={handleStartSelection}
               />
             </motion.div>
           )}

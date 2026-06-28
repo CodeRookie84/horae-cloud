@@ -524,8 +524,8 @@ export default function TaskManagerWorkflows({
     const unreadCount = t.chat.length - readCount;
     if (unreadCount > 0 && t.id !== selectedTaskId) {
       return (
-        <span 
-          className="bg-slate-800 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-full flex items-center justify-center shadow-xs shrink-0 animate-pulse font-sans" 
+        <span
+          className="bg-orange-500 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-full flex items-center justify-center shadow-xs shrink-0 animate-pulse font-sans"
           title={`${unreadCount} new comment${unreadCount > 1 ? "s" : ""}`}
         >
           {unreadCount} NEW
@@ -1313,7 +1313,7 @@ export default function TaskManagerWorkflows({
 
           {/* 4a. Task Creation Form */}
           {showCreateForm && (
-            <form onSubmit={handleCreateTask} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3.5 text-left" id="task-creator-subform">
+            <form onSubmit={handleCreateTask} className="bg-cyan-50 rounded-2xl border border-cyan-200 p-5 shadow-sm space-y-3.5 text-left" id="task-creator-subform">
               <div className="border-b border-slate-100 pb-2">
                 <h4 className="text-sm font-medium text-slate-850">Assign Operational Shift Task</h4>
               </div>
@@ -1682,7 +1682,7 @@ export default function TaskManagerWorkflows({
                     <MessageSquare className="w-3 h-3" /> 
                     Shift Task Audits (Task {getTaskNumber(activeTask)})
                     {activeTask.chat.length - selectedTaskInitialReadCount > 0 && (
-                      <span className="ml-1.5 bg-slate-800 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-full flex items-center justify-center shadow-xs animate-pulse font-sans">
+                      <span className="ml-1.5 bg-orange-500 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-full flex items-center justify-center shadow-xs animate-pulse font-sans">
                         {activeTask.chat.length - selectedTaskInitialReadCount} NEW
                       </span>
                     )}
@@ -1708,7 +1708,7 @@ export default function TaskManagerWorkflows({
                           {showNewMessagesBanner && (
                             <div className="flex items-center justify-center my-4 select-none">
                               <div className="flex-1 border-t-2 border-dashed border-emerald-300" />
-                              <span className="bg-slate-800 text-white font-semibold text-[10px] tracking-wide px-2 py-0.5 rounded-full mx-3 shadow-xs">
+                              <span className="bg-orange-500 text-white font-semibold text-[10px] tracking-wide px-2 py-0.5 rounded-full mx-3 shadow-xs">
                                 💬 New Messages
                               </span>
                               <div className="flex-1 border-t-2 border-dashed border-emerald-300" />
@@ -2091,7 +2091,7 @@ export default function TaskManagerWorkflows({
                   </span>
                 )}
                 {activeTask.chat.length - selectedTaskInitialReadCount > 0 && mobileDetailTab !== "chat" && (
-                  <span className="bg-slate-800 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-full flex items-center justify-center shadow-xs animate-pulse font-sans">
+                  <span className="bg-orange-500 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-full flex items-center justify-center shadow-xs animate-pulse font-sans">
                     {activeTask.chat.length - selectedTaskInitialReadCount} NEW
                   </span>
                 )}
@@ -2399,7 +2399,7 @@ export default function TaskManagerWorkflows({
                     <MessageSquare className="w-3.5 h-3.5 text-slate-400" /> 
                     Shift Task Audits
                     {activeTask.chat.length - selectedTaskInitialReadCount > 0 && (
-                      <span className="ml-1.5 bg-slate-800 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-full flex items-center justify-center shadow-xs animate-pulse font-sans">
+                      <span className="ml-1.5 bg-orange-500 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-full flex items-center justify-center shadow-xs animate-pulse font-sans">
                         {activeTask.chat.length - selectedTaskInitialReadCount} NEW
                       </span>
                     )}

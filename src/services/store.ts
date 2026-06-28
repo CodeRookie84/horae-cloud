@@ -1598,11 +1598,15 @@ export class StoreService {
     });
 
     return combined.filter(t => {
-      if (curUser.role === Role.ADMIN || curUser.role === Role.MANAGER || curUser.role === Role.SUPER_ADMIN || curUser.role === Role.SUPERVISOR) {
+      // Only Admin/Super Admin get full oversight here — Managers and Supervisors
+      // have their own outlets' staff to track but should still only see tasks
+      // actually assigned to or created by them, same as everyone else. Org-wide
+      // oversight for those roles lives in the Admin Panel, not Task Manager.
+      if (curUser.role === Role.ADMIN || curUser.role === Role.SUPER_ADMIN) {
         return true;
       }
-      return t.assignedUserId === curUser.id || 
-             t.assignedUserIds?.includes(curUser.id) || 
+      return t.assignedUserId === curUser.id ||
+             t.assignedUserIds?.includes(curUser.id) ||
              t.createdByUserId === curUser.id;
     }).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
