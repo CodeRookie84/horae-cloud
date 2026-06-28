@@ -1035,7 +1035,21 @@ export async function insertMentions(
   mentionedByUserId: string
 ): Promise<void> {
   if (!mentionedUserIds.length) return;
-  const rows = mentionedUserIds.map(uid => ({
+
+  // Defensive idempotency: chat_mentions has no unique constraint on
+  // (message_id, mentioned_user_id), so a retried/duplicated call (e.g. a
+  // network retry or an accidental double-send) would otherwise insert a
+  // second row for the same mention and inflate the unread count. Skip any
+  // user who already has a mention row for this exact message.
+  const { data: existing } = await supabase
+    .from('chat_mentions')
+    .select('mentioned_user_id')
+    .eq('message_id', messageId);
+  const alreadyMentioned = new Set((existing ?? []).map((r: any) => r.mentioned_user_id));
+  const newUserIds = mentionedUserIds.filter(uid => !alreadyMentioned.has(uid));
+  if (!newUserIds.length) return;
+
+  const rows = newUserIds.map(uid => ({
     message_id: messageId,
     channel_id: channelId,
     tenant_id: tenantId,
@@ -1071,7 +1085,10 @@ export async function getMentions(
 
   if (error || !mentionRows || mentionRows.length === 0) return [];
 
-  const messageIds = mentionRows.map((r: any) => r.message_id);
+  // Dedupe message IDs defensively — a message can only be unread-mentioned
+  // once for this user in practice, but guards against any stray duplicate
+  // chat_mentions rows from inflating the count.
+  const messageIds = Array.from(new Set(mentionRows.map((r: any) => r.message_id)));
   const { data: messages } = await supabase
     .from('chat_messages')
     .select('*')
@@ -1100,15 +1117,15 @@ export async function markMentionRead(userId: string, messageId: string): Promis
     .eq('message_id', messageId);
 }
 
-/** Count unread @mentions for a user in a tenant */
+/** Count unread @mentions for a user in a tenant — deduped by message, not raw row count */
 export async function getMentionCount(userId: string, tenantId: string): Promise<number> {
-  const { count } = await supabase
+  const { data } = await supabase
     .from('chat_mentions')
-    .select('*', { count: 'exact', head: true })
+    .select('message_id')
     .eq('mentioned_user_id', userId)
     // .eq('tenant_id', tenantId)
     .eq('is_read', false);
-  return count ?? 0;
+  return new Set((data ?? []).map((r: any) => r.message_id)).size;
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

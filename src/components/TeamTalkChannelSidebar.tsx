@@ -89,6 +89,11 @@ function ChannelItem({
   const Icon = getChannelIcon(channel.type);
   const unread = channel.unreadCount ?? 0;
   const [hovered, setHovered] = useState(false);
+  // Threads live nested under their chat, closed by default — the chat row only
+  // shows a total count; the arrow expands to the per-thread breakdown already
+  // shown below (each thread keeps its own separate unread badge).
+  const [threadsExpanded, setThreadsExpanded] = useState(false);
+  const totalThreadUnread = activeThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 0), 0);
   const hasTrailingAction = Boolean(onClose || onReopen || (onDelete && channel.type !== 'dm' && channel.name !== 'general' && channel.name !== 'announcements'));
 
   return (
@@ -101,7 +106,7 @@ function ChannelItem({
       <button
         id={`channel-btn-${channel.id}`}
         onClick={onClick}
-        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-[15px] font-medium transition-all cursor-pointer group ${hasTrailingAction ? 'pr-8' : ''} ${
+        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-[15px] font-medium transition-all cursor-pointer group ${hasTrailingAction && activeThreads.length > 0 ? 'pr-14' : hasTrailingAction ? 'pr-8' : activeThreads.length > 0 ? 'pr-8' : ''} ${
           isActive
             ? 'bg-indigo-50 text-indigo-900 shadow-sm ring-1 ring-indigo-500/30 font-bold'
             : 'text-slate-600 hover:text-[#162D4E] hover:bg-white/50'
@@ -129,6 +134,23 @@ function ChannelItem({
           </span>
         )}
       </button>
+
+      {/* Threads toggle — closed by default; shows the total, expands to the per-thread breakdown below */}
+      {activeThreads.length > 0 && onOpenThread && (
+        <button
+          onClick={e => { e.stopPropagation(); setThreadsExpanded(v => !v); }}
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 px-1 py-0.5 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer z-10"
+          title={`${activeThreads.length} thread${activeThreads.length > 1 ? 's' : ''}${totalThreadUnread > 0 ? ` — ${totalThreadUnread} unread repl${totalThreadUnread > 1 ? 'ies' : 'y'}` : ''}`}
+          style={hasTrailingAction ? { right: '1.75rem' } : undefined}
+        >
+          {totalThreadUnread > 0 && (
+            <span className="bg-indigo-100 text-indigo-700 text-[10px] font-extrabold px-1 py-0.5 rounded-full min-w-[16px] text-center">
+              {totalThreadUnread > 99 ? '99+' : totalThreadUnread}
+            </span>
+          )}
+          {threadsExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+        </button>
+      )}
 
       {/* Close DM button — always visible alongside the chat name, not just on hover */}
       {onClose && (
@@ -164,8 +186,8 @@ function ChannelItem({
       )}
     </div>
 
-    {/* Active Threads Nested */}
-    {activeThreads.length > 0 && onOpenThread && (
+    {/* Active Threads Nested — closed by default, toggled via the arrow in the row above */}
+    {activeThreads.length > 0 && onOpenThread && threadsExpanded && (
       <div className="pl-6 pr-2 py-1 space-y-1 relative before:content-[''] before:absolute before:left-4 before:top-0 before:bottom-3 before:w-px before:bg-slate-200">
         {activeThreads.map(thread => (
           <div key={thread.id} className="relative group/thread-wrapper">
@@ -272,8 +294,6 @@ export default function TeamTalkChannelSidebar({
   const channelNameById = new Map(channels.map(c => [c.id, c.name]));
 
   const [summaryOpen, setSummaryOpen] = useState(false);
-  const totalUnreadThreadReplies = unreadThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 1), 0);
-  const totalSummaryCount = mentionMessages.length + totalUnreadThreadReplies;
 
   // Reusable sub-section: a collapsible mini-header + list
   function SubSection({
@@ -388,8 +408,11 @@ export default function TeamTalkChannelSidebar({
       {/* Channel list */}
       <nav className="flex-1 overflow-y-auto p-3 space-y-3" id="channel-list">
 
-        {/* Global summary — a jump shortcut into the same rows below, not a separate inbox */}
-        {(mentionMessages.length > 0 || unreadThreads.length > 0) && (
+        {/* Mentions summary — a jump shortcut into the same rows below, not a separate inbox.
+            Threads are intentionally excluded: they already live under their own chat row
+            (collapsed by default, with a total + per-thread counts), so listing them here too
+            would just be the same numbers shown twice. */}
+        {mentionMessages.length > 0 && (
           <div className="relative">
             <button
               onClick={() => setSummaryOpen(v => !v)}
@@ -399,9 +422,7 @@ export default function TeamTalkChannelSidebar({
             >
               <BellRing className="w-3.5 h-3.5 shrink-0" />
               <span className="flex-1 text-left truncate">
-                {mentionMessages.length > 0 && `${mentionMessages.length} mention${mentionMessages.length > 1 ? 's' : ''}`}
-                {mentionMessages.length > 0 && unreadThreads.length > 0 && ' · '}
-                {unreadThreads.length > 0 && `${unreadThreads.length} unread thread${unreadThreads.length > 1 ? 's' : ''}`}
+                {mentionMessages.length} mention{mentionMessages.length > 1 ? 's' : ''}
               </span>
               {summaryOpen ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
             </button>
@@ -418,19 +439,6 @@ export default function TeamTalkChannelSidebar({
                     <div className="min-w-0 flex-1">
                       <p className="text-[13px] font-bold text-slate-700 truncate">{channelNameById.get(m.channelId) || 'Chat'}</p>
                       <p className="text-[12px] text-slate-500 truncate">{m.senderName}: {m.content || 'Voice message'}</p>
-                    </div>
-                  </button>
-                ))}
-                {unreadThreads.map(t => (
-                  <button
-                    key={`thread-${t.id}`}
-                    onClick={() => { onOpenThread?.(t); setSummaryOpen(false); }}
-                    className="w-full flex items-start gap-2 px-3 py-2 hover:bg-indigo-50 text-left cursor-pointer"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[13px] font-bold text-slate-700 truncate">{t.threadTitle || 'Thread'} <span className="text-slate-400 font-medium">in {channelNameById.get(t.channelId) || 'chat'}</span></p>
-                      <p className="text-[12px] text-slate-500 truncate">{t.unreadReplyCount ?? 1} new repl{(t.unreadReplyCount ?? 1) > 1 ? 'ies' : 'y'}</p>
                     </div>
                   </button>
                 ))}

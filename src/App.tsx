@@ -300,18 +300,21 @@ function AppInner() {
       const sopsList = await store.getSOPs();
       const readStatusesList = await store.getSOPReadStatuses();
       
-      // Fetch unread channels and threads
-      const { getChannels, getAllChannels, getUnreadThreads } = await import('./services/chatService');
+      // Fetch unread channels, threads & mentions — the dashboard total is the sum of all three:
+      // plain unread messages in DMs/channels/rooms, unread thread replies, and unread @mentions.
+      const { getChannels, getAllChannels, getUnreadThreads, getMentionCount } = await import('./services/chatService');
       const isManager = [Role.ADMIN, Role.MANAGER, Role.SUPER_ADMIN, 'Admin', 'Manager', 'Super Admin'].includes(userObj.role as any);
-      
+
       const clientOutletIds = filteredTenants.map(t => t.id);
-      const [channels, unreadThreads] = await Promise.all([
+      const [channels, unreadThreads, mentionCount] = await Promise.all([
         isManager ? getAllChannels(clientOutletIds, userObj.id) : getChannels(tenantObj.id, userObj.id),
-        getUnreadThreads(tenantObj.id, userObj.id)
+        getUnreadThreads(tenantObj.id, userObj.id),
+        getMentionCount(userObj.id, tenantObj.id),
       ]);
-      
-      const unreadCount = channels.reduce((acc, ch) => acc + (ch.unreadCount ?? 0), 0) + 
-                          unreadThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 1), 0);
+
+      const unreadCount = channels.reduce((acc, ch) => acc + (ch.unreadCount ?? 0), 0) +
+                          unreadThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 1), 0) +
+                          mentionCount;
       setChatUnreadCount(unreadCount);
 
       setQuizzes(quizzesList);
@@ -356,18 +359,20 @@ function AppInner() {
   useEffect(() => {
     if (!activeUser || !activeTenant) return;
     const fetchUnread = () => {
-      import('./services/chatService').then(({ getChannels, getAllChannels, getUnreadThreads }) => {
+      import('./services/chatService').then(({ getChannels, getAllChannels, getUnreadThreads, getMentionCount }) => {
         const isManager = [Role.ADMIN, Role.MANAGER, Role.SUPER_ADMIN, 'Admin', 'Manager', 'Super Admin'].includes(activeUser.role as any);
         const channelsPromise = isManager
           ? getAllChannels(tenants.map(t => t.id), activeUser.id)
           : getChannels(activeUser.tenantId, activeUser.id);
-          
+
         Promise.all([
           channelsPromise,
-          getUnreadThreads(activeUser.tenantId, activeUser.id)
-        ]).then(([channels, unreadThreads]) => {
-          const count = channels.reduce((acc, ch) => acc + (ch.unreadCount ?? 0), 0) + 
-            unreadThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 1), 0);
+          getUnreadThreads(activeUser.tenantId, activeUser.id),
+          getMentionCount(activeUser.id, activeUser.tenantId),
+        ]).then(([channels, unreadThreads, mentionCount]) => {
+          const count = channels.reduce((acc, ch) => acc + (ch.unreadCount ?? 0), 0) +
+            unreadThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 1), 0) +
+            mentionCount;
           setChatUnreadCount(count);
         }).catch(() => {});
       });

@@ -1054,7 +1054,6 @@ export default function TeamTalk({
 
   // ── Mentions ───────────────────────────────────────────────
   const [mentionMessages, setMentionMessages] = useState<TeamTalkMessage[]>([]);
-  const [mentionCount, setMentionCount] = useState(0);
 
   // Active & Unread threads
   const [activeThreads, setActiveThreads] = useState<TeamTalkMessage[]>([]);
@@ -1194,7 +1193,6 @@ export default function TeamTalk({
   const loadMentions = useCallback(async () => {
     const msgs = await chatService.getMentions(activeUser.id, tenantId);
     setMentionMessages(msgs);
-    setMentionCount(msgs.length);
   }, [activeUser.id, tenantId]);
 
   useEffect(() => {
@@ -1404,11 +1402,7 @@ export default function TeamTalk({
     if (!ch) return;
 
     chatService.markMentionRead(activeUser.id, msg.id);
-    setMentionMessages(prev => {
-      const remaining = prev.filter(m => m.id !== msg.id);
-      setMentionCount(remaining.length);
-      return remaining;
-    });
+    setMentionMessages(prev => prev.filter(m => m.id !== msg.id));
 
     const isSameChannel = activeChannel?.id === ch.id;
     setActiveChannel(ch);
@@ -1742,13 +1736,6 @@ export default function TeamTalk({
           </div>
         </div>
         <div className="flex-1" />
-        {/* Unread mention badge */}
-        {mentionCount > 0 && (
-          <div className="flex items-center gap-1 bg-rose-500 text-white text-[12px] font-bold px-2 py-0.5 rounded-full">
-            <Bell className="w-3 h-3" />
-            {mentionCount} mention{mentionCount > 1 ? 's' : ''}
-          </div>
-        )}
       </div>
 
       {/* Body */}
