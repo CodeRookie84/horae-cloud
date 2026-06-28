@@ -90,7 +90,7 @@ export default function TeamTalkMessageBubble({
       <div className="flex justify-center my-3" id={`msg-${message.id}`}>
         <div 
           onClick={isClickable ? () => onReplyInThread(message) : undefined}
-          className={`inline-flex items-center gap-2 bg-slate-100 border border-slate-200/80 text-slate-500 text-[10px] font-semibold px-3 py-1.5 rounded-full shadow-xs ${isClickable ? 'cursor-pointer hover:bg-slate-200' : ''}`}
+          className={`inline-flex items-center gap-2 bg-slate-100 border border-slate-200/80 text-slate-500 text-[12px] font-semibold px-3 py-1.5 rounded-full shadow-xs ${isClickable ? 'cursor-pointer hover:bg-slate-200' : ''}`}
         >
           <GitBranch className="w-3 h-3 text-indigo-400" />
           {isTaskSystem ? (
@@ -172,7 +172,7 @@ export default function TeamTalkMessageBubble({
               className="w-7 h-7 rounded-full object-cover border border-slate-200"
             />
           ) : (
-            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#162D4E] to-slate-700 flex items-center justify-center text-white text-[10px] font-bold">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#162D4E] to-slate-700 flex items-center justify-center text-white text-[12px] font-bold">
               {message.senderName.charAt(0).toUpperCase()}
             </div>
           )}
@@ -185,8 +185,8 @@ export default function TeamTalkMessageBubble({
         {/* Sender name + time (only for others' messages) */}
         {!isMine && showAvatar && (
           <div className="flex items-baseline gap-1.5 mb-0.5 px-1">
-            <span className="text-[11px] font-bold text-slate-700">{message.senderName.split(' - ')[0]}</span>
-            <span className="text-[9px] text-slate-400 font-mono">{timestamp}</span>
+            <span className="text-[13px] font-bold text-slate-700">{message.senderName.split(' - ')[0]}</span>
+            <span className="text-[11px] text-slate-400 font-mono">{timestamp}</span>
           </div>
         )}
 
@@ -205,7 +205,7 @@ export default function TeamTalkMessageBubble({
           >
             {/* Branched badge */}
             {message.isBranched && (
-              <div className={`flex items-center gap-1.5 mb-1.5 text-[10px] font-bold uppercase tracking-wide p-1.5 rounded bg-amber-500/10 ${isMine ? 'text-amber-300' : 'text-amber-600'}`}>
+              <div className={`flex items-center gap-1.5 mb-1.5 text-[12px] font-bold uppercase tracking-wide p-1.5 rounded bg-amber-500/10 ${isMine ? 'text-amber-300' : 'text-amber-600'}`}>
                 <GitBranch className="w-3 h-3" />
                 <span>Task created</span>
                 {message.branchTaskId && (
@@ -225,9 +225,9 @@ export default function TeamTalkMessageBubble({
                 isMine={isMine}
               />
             ) : (
-              <p className="text-[13px] leading-relaxed break-words whitespace-pre-wrap">
+              <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">
                 {message.isDeleted ? (
-                  <span className="italic opacity-50 text-[12px]">Message deleted</span>
+                  <span className="italic opacity-50 text-[14px]">Message deleted</span>
                 ) : selectedLang !== "original" && langCache[selectedLang] ? (
                   langCache[selectedLang]
                 ) : (
@@ -248,7 +248,7 @@ export default function TeamTalkMessageBubble({
                       key={lang}
                       onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleLanguageToggle(lang); }}
                       disabled={isTranslating}
-                      className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition-all cursor-pointer disabled:opacity-50 ${
+                      className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-all cursor-pointer disabled:opacity-50 ${
                         isSelected
                           ? (isMine ? 'bg-white/20 text-white' : 'bg-slate-800 text-white')
                           : (isMine ? 'text-white/60 hover:text-white' : 'text-slate-500 hover:text-slate-800')
@@ -258,15 +258,15 @@ export default function TeamTalkMessageBubble({
                     </button>
                   );
                 })}
-                {isTranslating && <span className="text-[9px] animate-spin">⟳</span>}
+                {isTranslating && <span className="text-[11px] animate-spin">⟳</span>}
               </div>
             )}
 
             {/* Timestamp for own messages */}
             {isMine && (
               <div className="flex items-center justify-end gap-1 mt-0.5">
-                <span className="text-[9px] text-white/50 font-mono">{timestamp}</span>
-                {message.isEdited && <span className="text-[8px] text-white/40">edited</span>}
+                <span className="text-[11px] text-white/50 font-mono">{timestamp}</span>
+                {message.isEdited && <span className="text-[10px] text-white/40">edited</span>}
                 <Check className="w-3 h-3 text-white/40" />
               </div>
             )}
@@ -279,14 +279,14 @@ export default function TeamTalkMessageBubble({
                 <button
                   key={emoji}
                   onClick={() => handleReaction(emoji)}
-                  className={`flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full border transition-all cursor-pointer ${
+                  className={`flex items-center gap-0.5 text-[13px] px-1.5 py-0.5 rounded-full border transition-all cursor-pointer ${
                     users.includes(currentUser.id)
                       ? 'bg-[#162D4E]/10 border-[#162D4E]/30 font-bold'
                       : 'bg-white border-slate-200 hover:bg-slate-50'
                   }`}
                 >
                   <span>{emoji}</span>
-                  <span className="text-[10px] text-slate-600 font-semibold">{users.length}</span>
+                  <span className="text-[12px] text-slate-600 font-semibold">{users.length}</span>
                 </button>
               ))}
             </div>
@@ -297,7 +297,7 @@ export default function TeamTalkMessageBubble({
         {!isThreadView && hasThread && isThreadParticipant && !message.isDeleted && (
           <button
             onClick={(e) => { e.stopPropagation(); onReplyInThread(message); }}
-            className={`flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:text-indigo-700 mt-0.5 px-1 transition-colors cursor-pointer relative z-20 touch-manipulation ${isMine ? 'flex-row-reverse' : ''}`}
+            className={`flex items-center gap-1 text-[12px] font-semibold text-indigo-600 hover:text-indigo-700 mt-0.5 px-1 transition-colors cursor-pointer relative z-20 touch-manipulation ${isMine ? 'flex-row-reverse' : ''}`}
           >
             <MessageSquare className="w-3.5 h-3.5" />
             <span>{replyCount} {replyCount === 1 ? 'reply' : 'replies'}</span>
@@ -307,7 +307,7 @@ export default function TeamTalkMessageBubble({
         {!isThreadView && !hasThread && onStartThread && !message.isDeleted && (
           <button
             onClick={(e) => { e.stopPropagation(); onStartThread(message); }}
-            className={`flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:text-indigo-700 mt-0.5 px-1 transition-colors cursor-pointer relative z-20 touch-manipulation ${isMine ? 'flex-row-reverse' : ''}`}
+            className={`flex items-center gap-1 text-[12px] font-semibold text-indigo-600 hover:text-indigo-700 mt-0.5 px-1 transition-colors cursor-pointer relative z-20 touch-manipulation ${isMine ? 'flex-row-reverse' : ''}`}
           >
             <MessageSquare className="w-3.5 h-3.5" />
             <span>Reply</span>
@@ -326,7 +326,7 @@ export default function TeamTalkMessageBubble({
                 e.stopPropagation();
                 setShowReactions(v => !v);
               }}
-              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors text-sm cursor-pointer"
+              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors text-base cursor-pointer"
               title="React"
             >
               😊
@@ -337,7 +337,7 @@ export default function TeamTalkMessageBubble({
                   <button
                     key={emoji}
                     onClick={() => handleReaction(emoji)}
-                    className="text-base hover:scale-125 transition-transform p-0.5 cursor-pointer"
+                    className="text-lg hover:scale-125 transition-transform p-0.5 cursor-pointer"
                   >
                     {emoji}
                   </button>
@@ -411,7 +411,7 @@ export default function TeamTalkMessageBubble({
                 <div className={`fixed sm:absolute sm:top-full bottom-4 left-4 right-4 sm:bottom-auto sm:left-auto sm:right-auto sm:mt-1 ${isMine ? 'sm:right-0' : 'sm:left-0'} bg-white border border-slate-200 rounded-xl shadow-2xl sm:shadow-xl z-[200] py-1 min-w-[160px]`}>
                   <button
                     onClick={() => { onConvertToTask(message); setShowMenu(false); }}
-                    className="flex items-center gap-2.5 w-full px-3 py-2 text-[11px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium"
+                    className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium"
                   >
                     <CheckSquare className="w-3.5 h-3.5 text-emerald-500" />
                     Convert to Task
@@ -420,7 +420,7 @@ export default function TeamTalkMessageBubble({
                   {onNotify && (
                     <button
                       onClick={() => { onNotify(message); setShowMenu(false); }}
-                      className="flex items-center gap-2.5 w-full px-3 py-2 text-[11px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium border-t border-slate-100"
+                      className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium border-t border-slate-100"
                     >
                       <NotifyIcon className="w-3.5 h-3.5 text-emerald-500" />
                       Notify on WhatsApp
@@ -430,7 +430,7 @@ export default function TeamTalkMessageBubble({
                   {onPin && (
                     <button
                       onClick={() => { onPin(message.id); setShowMenu(false); }}
-                      className="flex items-center gap-2.5 w-full px-3 py-2 text-[11px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium border-t border-slate-100"
+                      className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer font-medium border-t border-slate-100"
                     >
                       <Pin className="w-3.5 h-3.5 text-amber-500" />
                       Pin for everyone
@@ -440,7 +440,7 @@ export default function TeamTalkMessageBubble({
                   {(isMine || canModerate) && (
                     <button
                       onClick={() => { onDelete(message.id); setShowMenu(false); }}
-                      className="flex items-center gap-2.5 w-full px-3 py-2 text-[11px] text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer font-medium border-t border-slate-100"
+                      className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer font-medium border-t border-slate-100"
                     >
                       <Trash2 className="w-3.5 h-3.5 text-rose-500" />
                       Delete Message

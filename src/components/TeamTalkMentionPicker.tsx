@@ -93,14 +93,14 @@ export default function TeamTalkMentionPicker({
       className="absolute bottom-full left-0 mb-2 w-72 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden max-h-80 flex flex-col"
     >
       <div className="px-3 py-1.5 border-b border-slate-100 bg-slate-50">
-        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Mention someone</p>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Mention someone</p>
       </div>
 
       <div className="overflow-y-auto flex-1">
         {/* Role / Team Groups */}
         {filteredGroups.length > 0 && (
           <div>
-            <p className="px-3 pt-2 pb-1 text-[9px] font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1">
+            <p className="px-3 pt-2 pb-1 text-[11px] font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1">
               <Users className="w-2.5 h-2.5" /> Teams & Roles
             </p>
             {filteredGroups.slice(0, 4).map(group => (
@@ -110,14 +110,14 @@ export default function TeamTalkMentionPicker({
                 onMouseDown={e => { e.preventDefault(); onSelectGroup(group); }}
                 className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-indigo-50 transition-colors cursor-pointer text-left"
               >
-                <div className="w-7 h-7 rounded-xl bg-indigo-100 flex items-center justify-center text-sm shrink-0">
+                <div className="w-7 h-7 rounded-xl bg-indigo-100 flex items-center justify-center text-base shrink-0">
                   {group.emoji}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-bold text-slate-800 leading-tight">{group.name}</p>
-                  <p className="text-[10px] text-indigo-400">{group.count} people will be notified</p>
+                  <p className="text-[14px] font-bold text-slate-800 leading-tight">{group.name}</p>
+                  <p className="text-[12px] text-indigo-400">{group.count} people will be notified</p>
                 </div>
-                <span className="text-[9px] bg-indigo-100 text-indigo-600 font-bold px-1.5 py-0.5 rounded-full shrink-0">
+                <span className="text-[11px] bg-indigo-100 text-indigo-600 font-bold px-1.5 py-0.5 rounded-full shrink-0">
                   group
                 </span>
               </button>
@@ -128,7 +128,7 @@ export default function TeamTalkMentionPicker({
         {/* Individual users */}
         {filteredUsers.length > 0 && (
           <div>
-            <p className="px-3 pt-2 pb-1 text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+            <p className="px-3 pt-2 pb-1 text-[11px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
               <User className="w-2.5 h-2.5" /> People
             </p>
             {filteredUsers.map(user => (
@@ -145,13 +145,13 @@ export default function TeamTalkMentionPicker({
                     className="w-7 h-7 rounded-full object-cover shrink-0 border border-slate-100"
                   />
                 ) : (
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#162D4E] to-slate-700 flex items-center justify-center text-white text-[10px] font-bold shrink-0">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#162D4E] to-slate-700 flex items-center justify-center text-white text-[12px] font-bold shrink-0">
                     {user.name.charAt(0).toUpperCase()}
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-semibold text-slate-800 truncate leading-tight">{user.name}</p>
-                  <p className="text-[10px] text-slate-400 truncate">{user.role} · {user.department}</p>
+                  <p className="text-[14px] font-semibold text-slate-800 truncate leading-tight">{user.name}</p>
+                  <p className="text-[12px] text-slate-400 truncate">{user.role} · {user.department}</p>
                 </div>
                 {user.isOnline && <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />}
               </button>

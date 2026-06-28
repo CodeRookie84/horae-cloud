@@ -101,7 +101,7 @@ export default function TeamTalkVoicePlayer({ url, durationSec = 0, transcript, 
         </div>
 
         {/* Timer */}
-        <span className={`text-[10px] font-mono tabular-nums shrink-0 ${timeColor}`}>
+        <span className={`text-[12px] font-mono tabular-nums shrink-0 ${timeColor}`}>
           {isPlaying ? formatTime(currentTime) : formatTime(duration)}
         </span>
 
@@ -113,12 +113,12 @@ export default function TeamTalkVoicePlayer({ url, durationSec = 0, transcript, 
         <div>
           <button
             onClick={() => setShowTranscript(v => !v)}
-            className={`text-[10px] font-medium transition-colors ${transcriptColor}`}
+            className={`text-[12px] font-medium transition-colors ${transcriptColor}`}
           >
             {showTranscript ? '▲ Hide transcript' : '▼ Show transcript'}
           </button>
           {showTranscript && (
-            <p className={`text-[11px] mt-1 leading-relaxed italic ${isMine ? 'text-white/80' : 'text-slate-600'}`}>
+            <p className={`text-[13px] mt-1 leading-relaxed italic ${isMine ? 'text-white/80' : 'text-slate-600'}`}>
               "{transcript}"
             </p>
           )}

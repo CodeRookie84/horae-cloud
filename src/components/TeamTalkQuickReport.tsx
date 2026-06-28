@@ -104,8 +104,8 @@ export default function TeamTalkQuickReport({ currentUser, teammates, onClose, o
             <AlertTriangle className="w-5 h-5 text-rose-600" />
           </div>
           <div className="flex-1">
-            <h3 className="text-[13px] font-bold text-slate-800">Report an Issue</h3>
-            <p className="text-[10px] text-slate-500">The right person will be auto-suggested based on the issue type</p>
+            <h3 className="text-[15px] font-bold text-slate-800">Report an Issue</h3>
+            <p className="text-[12px] text-slate-500">The right person will be auto-suggested based on the issue type</p>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-rose-100 rounded-lg cursor-pointer">
             <X className="w-4 h-4 text-slate-500" />
@@ -117,8 +117,8 @@ export default function TeamTalkQuickReport({ currentUser, teammates, onClose, o
             <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mb-3">
               <CheckSquare className="w-7 h-7 text-emerald-600" />
             </div>
-            <h4 className="text-sm font-bold text-slate-800 mb-1">Issue Reported ✅</h4>
-            <p className="text-[12px] text-slate-500">
+            <h4 className="text-base font-bold text-slate-800 mb-1">Issue Reported ✅</h4>
+            <p className="text-[14px] text-slate-500">
               A task was created and {selectedAssignee?.name} has been notified immediately.
             </p>
           </div>
@@ -126,7 +126,7 @@ export default function TeamTalkQuickReport({ currentUser, teammates, onClose, o
           <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto flex-1">
             {/* Category */}
             <div>
-              <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-2">
+              <label className="text-[13px] font-bold text-slate-600 uppercase tracking-wider block mb-2">
                 What's the issue? <span className="text-rose-500">*</span>
               </label>
               <div className="grid grid-cols-2 gap-2">
@@ -139,8 +139,8 @@ export default function TeamTalkQuickReport({ currentUser, teammates, onClose, o
                       category === cat.id ? 'border-rose-400 bg-rose-50' : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    <span className="text-base shrink-0">{cat.emoji}</span>
-                    <span className={`text-[11px] font-semibold leading-tight ${category === cat.id ? 'text-rose-700' : 'text-slate-700'}`}>
+                    <span className="text-lg shrink-0">{cat.emoji}</span>
+                    <span className={`text-[13px] font-semibold leading-tight ${category === cat.id ? 'text-rose-700' : 'text-slate-700'}`}>
                       {cat.label}
                     </span>
                   </button>
@@ -150,7 +150,7 @@ export default function TeamTalkQuickReport({ currentUser, teammates, onClose, o
 
             {/* Description */}
             <div>
-              <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
+              <label className="text-[13px] font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
                 Describe the issue <span className="text-rose-500">*</span>
               </label>
               <textarea
@@ -158,14 +158,14 @@ export default function TeamTalkQuickReport({ currentUser, teammates, onClose, o
                 onChange={e => setDescription(e.target.value)}
                 placeholder={selectedCat?.example || 'Describe what happened...'}
                 rows={3}
-                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-300/50 resize-none"
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-300/50 resize-none"
                 required
               />
             </div>
 
             {/* Smart Assignee Picker */}
             <div>
-              <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-2">
+              <label className="text-[13px] font-bold text-slate-600 uppercase tracking-wider block mb-2">
                 Assign to <span className="text-rose-500">*</span>
               </label>
 
@@ -174,7 +174,7 @@ export default function TeamTalkQuickReport({ currentUser, teammates, onClose, o
                 <div className="mb-2">
                   <div className="flex items-center gap-1 mb-1.5">
                     <Star className="w-3 h-3 text-amber-500 fill-amber-400" />
-                    <p className="text-[9px] font-bold text-amber-600 uppercase tracking-wider">
+                    <p className="text-[11px] font-bold text-amber-600 uppercase tracking-wider">
                       Suggested for {selectedCat?.label || 'this issue'}
                     </p>
                   </div>
@@ -191,13 +191,13 @@ export default function TeamTalkQuickReport({ currentUser, teammates, onClose, o
                         {u.avatar ? (
                           <img src={u.avatar.split('#')[0]} alt="" className="w-7 h-7 rounded-full object-cover shrink-0 border border-slate-100" />
                         ) : (
-                          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#162D4E] to-slate-700 flex items-center justify-center text-white text-[10px] font-bold shrink-0">
+                          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#162D4E] to-slate-700 flex items-center justify-center text-white text-[12px] font-bold shrink-0">
                             {u.name.charAt(0)}
                           </div>
                         )}
                         <div className="min-w-0 flex-1">
-                          <p className={`text-[12px] font-bold truncate ${assigneeId === u.id ? 'text-emerald-800' : 'text-slate-800'}`}>{u.name}</p>
-                          <p className="text-[10px] text-slate-400 truncate">{u.role}</p>
+                          <p className={`text-[14px] font-bold truncate ${assigneeId === u.id ? 'text-emerald-800' : 'text-slate-800'}`}>{u.name}</p>
+                          <p className="text-[12px] text-slate-400 truncate">{u.role}</p>
                         </div>
                         {assigneeId === u.id && (
                           <CheckSquare className="w-4 h-4 text-emerald-500 shrink-0" />
@@ -212,13 +212,13 @@ export default function TeamTalkQuickReport({ currentUser, teammates, onClose, o
               {others.length > 0 && (
                 <div>
                   {suggested.length > 0 && (
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Or choose someone else</p>
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Or choose someone else</p>
                   )}
                   <div className="relative">
                     <select
                       value={!suggested.find(u => u.id === assigneeId) ? assigneeId : ''}
                       onChange={e => setAssigneeId(e.target.value)}
-                      className="w-full appearance-none px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[12px] text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-300/50 cursor-pointer"
+                      className="w-full appearance-none px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[14px] text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-300/50 cursor-pointer"
                     >
                       <option value="">Select from all staff...</option>
                       {others.map(u => (
@@ -231,20 +231,20 @@ export default function TeamTalkQuickReport({ currentUser, teammates, onClose, o
               )}
 
               {selectedAssignee && (
-                <p className="text-[10px] text-emerald-600 font-semibold mt-1.5 flex items-center gap-1">
+                <p className="text-[12px] text-emerald-600 font-semibold mt-1.5 flex items-center gap-1">
                   ✓ {selectedAssignee.name} will be notified immediately
                 </p>
               )}
             </div>
 
             <div className="flex gap-2 pt-1">
-              <button type="button" onClick={onClose} className="flex-1 py-3 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">
+              <button type="button" onClick={onClose} className="flex-1 py-3 border border-slate-200 rounded-xl text-[14px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={submitting || !category || !description.trim() || !assigneeId}
-                className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300 text-white rounded-xl text-[12px] font-bold cursor-pointer disabled:cursor-not-allowed transition-colors"
+                className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300 text-white rounded-xl text-[14px] font-bold cursor-pointer disabled:cursor-not-allowed transition-colors"
               >
                 {submitting ? 'Reporting...' : '🚨 Report Issue'}
               </button>

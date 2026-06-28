@@ -71,7 +71,7 @@ export default function TeamTalkCommandPicker({ query, isManager, onSelect, onCl
       id="command-picker"
     >
       <div className="px-3 py-2 border-b border-slate-100">
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Quick Commands</span>
+        <span className="text-[12px] font-bold text-slate-400 uppercase tracking-wider">Quick Commands</span>
       </div>
       {filtered.map(cmd => {
         const Icon = cmd.icon;
@@ -86,11 +86,11 @@ export default function TeamTalkCommandPicker({ query, isManager, onSelect, onCl
               <Icon className={`w-3.5 h-3.5 ${cmd.iconColor}`} />
             </div>
             <div>
-              <p className="text-[12px] font-bold text-slate-800 font-mono">{cmd.label}</p>
-              <p className="text-[10px] text-slate-400">{cmd.description}</p>
+              <p className="text-[14px] font-bold text-slate-800 font-mono">{cmd.label}</p>
+              <p className="text-[12px] text-slate-400">{cmd.description}</p>
             </div>
             {cmd.managerOnly && (
-              <span className="ml-auto text-[8px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full shrink-0">Admin</span>
+              <span className="ml-auto text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full shrink-0">Admin</span>
             )}
           </button>
         );

@@ -274,8 +274,8 @@ export default function TeamTalkInput({
           >
             <div className="w-0.5 h-8 bg-[#162D4E] rounded-full shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] font-bold text-[#162D4E]">Replying to {replyingTo.senderName}</p>
-              <p className="text-[11px] text-slate-500 truncate">{replyingTo.content || '🎤 Voice message'}</p>
+              <p className="text-[12px] font-bold text-[#162D4E]">Replying to {replyingTo.senderName}</p>
+              <p className="text-[13px] text-slate-500 truncate">{replyingTo.content || '🎤 Voice message'}</p>
             </div>
             <button onClick={onCancelReply} className="p-1 hover:bg-slate-200 rounded cursor-pointer">
               <X className="w-3.5 h-3.5 text-slate-500" />
@@ -332,7 +332,7 @@ export default function TeamTalkInput({
             {mode === 'recording' ? (
               <>
                 <div className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse shrink-0" />
-                <span className="text-[13px] font-bold text-rose-600 tabular-nums flex-1">{fmtTime(recordingSeconds)}</span>
+                <span className="text-[15px] font-bold text-rose-600 tabular-nums flex-1">{fmtTime(recordingSeconds)}</span>
                 {/* Waveform bars */}
                 <div className="flex items-center gap-0.5">
                   {Array.from({ length: 8 }).map((_, i) => (
@@ -347,7 +347,7 @@ export default function TeamTalkInput({
             ) : (
               <>
                 <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
-                <span className="text-[13px] font-bold text-emerald-700 flex-1">Ready to send ({fmtTime(recordingSeconds)})</span>
+                <span className="text-[15px] font-bold text-emerald-700 flex-1">Ready to send ({fmtTime(recordingSeconds)})</span>
               </>
             )}
           </div>
@@ -364,14 +364,14 @@ export default function TeamTalkInput({
                 disabled={disabled}
                 placeholder={disabled ? placeholder : placeholder}
                 rows={1}
-                className="flex-1 bg-transparent text-[13px] text-slate-800 placeholder-slate-400 resize-none focus:outline-none leading-5 max-h-[120px] overflow-y-auto disabled:opacity-50"
+                className="flex-1 bg-transparent text-[15px] text-slate-800 placeholder-slate-400 resize-none focus:outline-none leading-5 max-h-[120px] overflow-y-auto disabled:opacity-50"
                 id="team-talk-input"
               />
               <select
                 value={speechLanguage}
                 onChange={(e) => setSpeechLanguage(e.target.value as any)}
                 title="Dictation language"
-                className="bg-transparent text-slate-400 text-[9px] font-medium pr-0.5 focus:outline-none cursor-pointer shrink-0"
+                className="bg-transparent text-slate-400 text-[11px] font-medium pr-0.5 focus:outline-none cursor-pointer shrink-0"
               >
                 <option value="en-US">EN</option>
                 <option value="hi-IN">हिं</option>
@@ -393,7 +393,7 @@ export default function TeamTalkInput({
               </button>
             </div>
             {isListening && (
-              <span className="text-[9px] text-red-500 font-medium uppercase tracking-wide animate-pulse px-1">
+              <span className="text-[11px] text-red-500 font-medium uppercase tracking-wide animate-pulse px-1">
                 Listening...
               </span>
             )}
@@ -452,7 +452,7 @@ export default function TeamTalkInput({
               id="send-text-btn"
             >
               <Send className="w-4 h-4 text-[#C5A880]" />
-              <span className="text-[12px] font-bold text-white">Send</span>
+              <span className="text-[14px] font-bold text-white">Send</span>
             </motion.button>
           ) : (
             /* BIG Voice record button — WhatsApp style, dominant CTA */
@@ -476,7 +476,7 @@ export default function TeamTalkInput({
           {mentionedUsers.map(u => (
             <span
               key={u.id}
-              className="inline-flex items-center gap-1 bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded-full"
+              className="inline-flex items-center gap-1 bg-indigo-100 text-indigo-700 text-[12px] font-bold px-2 py-0.5 rounded-full"
             >
               @{u.name.split(' ')[0]}
               <button

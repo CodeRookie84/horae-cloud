@@ -35,10 +35,10 @@ export default function TeamTalkPinnedBanner({ message, onDismiss, onJump, canUn
         onClick={onJump}
         className="flex-1 min-w-0 text-left cursor-pointer"
       >
-        <p className="text-[9px] font-bold text-amber-700 uppercase tracking-wide leading-none mb-0.5">
+        <p className="text-[11px] font-bold text-amber-700 uppercase tracking-wide leading-none mb-0.5">
           📌 Pinned by {message.senderName}
         </p>
-        <p className="text-[11px] text-slate-700 truncate leading-tight">
+        <p className="text-[13px] text-slate-700 truncate leading-tight">
           {preview}
           {(message.content || '').length > 100 ? '...' : ''}
         </p>

@@ -121,45 +121,45 @@ function ConvertToTaskModal({
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <CheckSquare className="w-5 h-5 text-emerald-500" />
-            <h3 className="text-base font-bold text-slate-800">Convert to Task</h3>
+            <h3 className="text-lg font-bold text-slate-800">Convert to Task</h3>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg cursor-pointer">
             <X className="w-4 h-4 text-slate-500" />
           </button>
         </div>
-        <p className="text-[11px] text-slate-500 mb-4">
+        <p className="text-[13px] text-slate-500 mb-4">
           The original thread stays in the channel. A system message will link to the new task.
         </p>
         <div className="bg-[#162D4E]/5 border border-[#162D4E]/20 rounded-xl p-3 mb-4">
-          <p className="text-[10px] font-bold text-[#162D4E] uppercase tracking-wide mb-1 flex items-center gap-1">
+          <p className="text-[12px] font-bold text-[#162D4E] uppercase tracking-wide mb-1 flex items-center gap-1">
             <MessageCircle className="w-3 h-3" /> Original message
           </p>
-          <p className="text-[12px] text-slate-600 leading-relaxed line-clamp-3">
+          <p className="text-[14px] text-slate-600 leading-relaxed line-clamp-3">
             {message.messageType === 'voice' ? '🎤 Voice message' : message.content}
           </p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
-            <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1">Task Title</label>
+            <label className="text-[13px] font-bold text-slate-600 uppercase tracking-wider block mb-1">Task Title</label>
             <input
               type="text"
               value={title}
               onChange={e => setTitle(e.target.value)}
-              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20"
+              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20"
               required
             />
           </div>
           <div>
-            <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1">Context / Description</label>
+            <label className="text-[13px] font-bold text-slate-600 uppercase tracking-wider block mb-1">Context / Description</label>
             <textarea
               value={description}
               onChange={e => setDescription(e.target.value)}
               rows={3}
-              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20 resize-none"
+              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20 resize-none"
             />
           </div>
           <div>
-            <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-2">Assign To (Multiple allowed)</label>
+            <label className="text-[13px] font-bold text-slate-600 uppercase tracking-wider block mb-2">Assign To (Multiple allowed)</label>
             <div className="max-h-32 overflow-y-auto bg-slate-50 border border-slate-200 rounded-xl p-2 space-y-1">
               {[...allUsers].sort((a, b) => a.id === currentUserId ? -1 : 1).map(u => (
                 <label key={u.id} className="flex items-center gap-2 p-1.5 hover:bg-white rounded-lg cursor-pointer">
@@ -172,7 +172,7 @@ function ConvertToTaskModal({
                     }}
                     className="w-3.5 h-3.5 text-[#162D4E] rounded border-slate-300"
                   />
-                  <span className="text-[12px] text-slate-700">
+                  <span className="text-[14px] text-slate-700">
                     {u.id === currentUserId ? 'Me (Self-assign)' : `${u.name} ${u.role ? `(${u.role})` : ''}`}
                   </span>
                 </label>
@@ -180,11 +180,11 @@ function ConvertToTaskModal({
             </div>
           </div>
           <div className="flex gap-2 pt-1">
-            <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[14px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
             <button
               type="submit"
               disabled={converting || assigneeIds.length === 0 || !title.trim()}
-              className={`flex-1 py-2.5 rounded-xl text-[12px] font-bold text-white shadow-xs transition-all ${converting || assigneeIds.length === 0 ? 'bg-slate-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer'}`}
+              className={`flex-1 py-2.5 rounded-xl text-[14px] font-bold text-white shadow-xs transition-all ${converting || assigneeIds.length === 0 ? 'bg-slate-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer'}`}
             >
               {converting ? 'Creating...' : 'Create Task ✅'}
             </button>
@@ -241,10 +241,10 @@ function ManageChannelMembersModal({
       >
         <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
           <div>
-            <h3 className="text-[15px] font-bold text-slate-800">
+            <h3 className="text-[17px] font-bold text-slate-800">
               {viewMode === 'view' ? 'Chat Members' : 'Add Members'}
             </h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">{channel.name ? `#${channel.name}` : 'Direct Message'}</p>
+            <p className="text-[13px] text-slate-500 mt-0.5">{channel.name ? `#${channel.name}` : 'Direct Message'}</p>
           </div>
           <button type="button" onClick={onClose} className="p-1.5 hover:bg-slate-200 rounded-full text-slate-400 transition-colors cursor-pointer">
             <X className="w-4 h-4" />
@@ -257,7 +257,7 @@ function ManageChannelMembersModal({
               {canManage && (
                 <button
                   onClick={() => setViewMode('add')}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[12px] font-bold transition-colors cursor-pointer border border-indigo-200"
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[14px] font-bold transition-colors cursor-pointer border border-indigo-200"
                 >
                   <UserPlus className="w-4 h-4" />
                   Add New Members
@@ -268,8 +268,8 @@ function ManageChannelMembersModal({
                   <div key={u.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 border border-transparent">
                     <img src={u.avatar} alt="" className="w-8 h-8 rounded-full object-cover shadow-sm" />
                     <div>
-                      <span className="text-[13px] font-semibold text-slate-800 block">{u.name}</span>
-                      <span className="text-[11px] text-slate-500 block">{u.role}</span>
+                      <span className="text-[15px] font-semibold text-slate-800 block">{u.name}</span>
+                      <span className="text-[13px] text-slate-500 block">{u.role}</span>
                     </div>
                     {canManage && u.id !== currentUser.id && (
                       <button
@@ -297,13 +297,13 @@ function ManageChannelMembersModal({
                 onChange={setPicked}
               />
               {previewMembers.length > 0 && (
-                <p className="text-[10px] text-emerald-600 -mt-2">
+                <p className="text-[12px] text-emerald-600 -mt-2">
                   {previewMembers.slice(0, 4).map(u => u.name.split(' ')[0]).join(', ')}{previewMembers.length > 4 ? ` +${previewMembers.length - 4} more` : ''}
                 </p>
               )}
               <div className="flex gap-2">
-                <button type="button" onClick={() => setViewMode('view')} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">← Back</button>
-                <button type="button" onClick={handleSave} disabled={saving || previewMembers.length === 0} className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[12px] font-bold cursor-pointer disabled:opacity-50">
+                <button type="button" onClick={() => setViewMode('view')} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[14px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">← Back</button>
+                <button type="button" onClick={handleSave} disabled={saving || previewMembers.length === 0} className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[14px] font-bold cursor-pointer disabled:opacity-50">
                   {saving ? 'Saving...' : `Add Members ✓`}
                 </button>
               </div>
@@ -359,8 +359,8 @@ function CreateChannelModal({
       >
         <div className="flex items-center justify-between px-6 pt-5 pb-3 border-b border-slate-100">
           <div>
-            <h3 className="text-sm font-bold text-slate-800">Create Channel</h3>
-            <p className="text-[10px] text-slate-400 mt-0.5">Step {step} of 2</p>
+            <h3 className="text-base font-bold text-slate-800">Create Channel</h3>
+            <p className="text-[12px] text-slate-400 mt-0.5">Step {step} of 2</p>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg cursor-pointer">
             <X className="w-4 h-4 text-slate-500" />
@@ -376,7 +376,7 @@ function CreateChannelModal({
             <form onSubmit={e => { e.preventDefault(); setStep(2); }} className="space-y-4">
 
               <div>
-                <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1">Channel Name *</label>
+                <label className="text-[13px] font-bold text-slate-600 uppercase tracking-wider block mb-1">Channel Name *</label>
                 <input
                   type="text"
                   value={displayName}
@@ -385,24 +385,24 @@ function CreateChannelModal({
                     setSlug(e.target.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''));
                   }}
                   placeholder="e.g. Summer Promo Planning"
-                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20"
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20"
                   required
                 />
-                {slug && <p className="text-[10px] text-slate-400 mt-1">ID: <span className="font-mono text-slate-600">#{slug}</span></p>}
+                {slug && <p className="text-[12px] text-slate-400 mt-1">ID: <span className="font-mono text-slate-600">#{slug}</span></p>}
               </div>
               <div>
-                <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1">Purpose</label>
+                <label className="text-[13px] font-bold text-slate-600 uppercase tracking-wider block mb-1">Purpose</label>
                 <input
                   type="text"
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                   placeholder="What is this channel for?"
-                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20"
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20"
                 />
               </div>
               <div className="flex gap-2">
-                <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
-                <button type="submit" disabled={!slug} className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[12px] font-bold cursor-pointer disabled:opacity-50">Next →</button>
+                <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[14px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
+                <button type="submit" disabled={!slug} className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[14px] font-bold cursor-pointer disabled:opacity-50">Next →</button>
               </div>
             </form>
           )}
@@ -416,11 +416,11 @@ function CreateChannelModal({
                 onChange={setPicked}
               />
               {createError && (
-                <p className="text-[11px] text-rose-600 font-medium">{createError}</p>
+                <p className="text-[13px] text-rose-600 font-medium">{createError}</p>
               )}
               <div className="flex gap-2">
-                <button type="button" onClick={() => setStep(1)} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">← Back</button>
-                <button type="button" onClick={handleCreate} disabled={creating || previewMembers.length === 0} className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[12px] font-bold cursor-pointer disabled:opacity-50">
+                <button type="button" onClick={() => setStep(1)} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[14px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">← Back</button>
+                <button type="button" onClick={handleCreate} disabled={creating || previewMembers.length === 0} className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[14px] font-bold cursor-pointer disabled:opacity-50">
                   {creating ? 'Creating...' : `Create #${slug} ✓`}
                 </button>
               </div>
@@ -467,7 +467,7 @@ function StartDirectChatModal({
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <MessageCircle className="w-5 h-5 text-[#162D4E]" />
-            <h3 className="text-base font-bold text-slate-800">Start Direct Chat</h3>
+            <h3 className="text-lg font-bold text-slate-800">Start Direct Chat</h3>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg cursor-pointer">
             <X className="w-4 h-4 text-slate-500" />
@@ -479,15 +479,15 @@ function StartDirectChatModal({
           onChange={setPicked}
         />
         {startError && (
-          <p className="text-[11px] text-rose-600 font-medium mt-2">{startError}</p>
+          <p className="text-[13px] text-rose-600 font-medium mt-2">{startError}</p>
         )}
         <div className="flex gap-2 mt-4">
-          <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
+          <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[14px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
           <button
             type="button"
             onClick={handleStart}
             disabled={starting || memberIds.length === 0}
-            className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[12px] font-bold cursor-pointer disabled:opacity-50"
+            className="flex-1 py-2.5 bg-[#162D4E] text-white rounded-xl text-[14px] font-bold cursor-pointer disabled:opacity-50"
           >
             {starting ? 'Starting...' : 'Start Chat ✓'}
           </button>
@@ -544,8 +544,8 @@ function MessageList({
   if (messages.length === 0) return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <MessageSquare className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-      <h3 className="text-sm font-bold text-slate-600 mb-1">No messages yet</h3>
-      <p className="text-[12px] text-slate-400">Be the first to say something!</p>
+      <h3 className="text-base font-bold text-slate-600 mb-1">No messages yet</h3>
+      <p className="text-[14px] text-slate-400">Be the first to say something!</p>
     </div>
   );
 
@@ -573,7 +573,7 @@ function MessageList({
             {showDateSep && (
               <div className="flex items-center gap-3 my-4">
                 <div className="flex-1 h-px bg-slate-100" />
-                <span className="text-[10px] font-semibold text-slate-400 px-2">{dateStr}</span>
+                <span className="text-[12px] font-semibold text-slate-400 px-2">{dateStr}</span>
                 <div className="flex-1 h-px bg-slate-100" />
               </div>
             )}
@@ -667,12 +667,12 @@ function ThreadPanel({
                     if (newTitle.trim() && onRenameThread) onRenameThread(rootMessage.id, newTitle.trim());
                     setEditingTitle(false);
                   }}
-                  className="w-full text-[12px] font-bold text-slate-800 bg-white border border-indigo-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="w-full text-[14px] font-bold text-slate-800 bg-white border border-indigo-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
               </form>
             ) : (
               <h3 
-                className={`text-[12px] font-bold text-slate-800 truncate cursor-pointer hover:text-indigo-600 transition-colors ${onRenameThread ? '' : 'pointer-events-none'}`}
+                className={`text-[14px] font-bold text-slate-800 truncate cursor-pointer hover:text-indigo-600 transition-colors ${onRenameThread ? '' : 'pointer-events-none'}`}
                 onClick={() => {
                   if (onRenameThread) {
                     setNewTitle(currentTitle);
@@ -684,7 +684,7 @@ function ThreadPanel({
                 {currentTitle}
               </h3>
             )}
-            <span className="text-[9px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded-full shrink-0">{replies.length}</span>
+            <span className="text-[11px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded-full shrink-0">{replies.length}</span>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 cursor-pointer shrink-0">
             <X className="w-4 h-4" />
@@ -692,13 +692,13 @@ function ThreadPanel({
         </div>
         {/* Thread status badge */}
         {isActive && (
-          <span className="inline-flex items-center gap-1 text-[9px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
             Active Thread
           </span>
         )}
         {isClosed && (
-          <span className="inline-flex items-center gap-1 text-[9px] font-bold text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-full">
+          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-full">
             Closed
           </span>
         )}
@@ -706,7 +706,7 @@ function ThreadPanel({
 
       {/* Original message */}
       <div className="px-3 py-3 border-b border-indigo-100/50 bg-blue-50/50">
-        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">Original</p>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">Original</p>
         <TeamTalkMessageBubble
           message={rootMessage}
           currentUser={currentUser}
@@ -733,7 +733,7 @@ function ThreadPanel({
                   if (entered) onActivateThread(rootMessage.id, entered);
                 }
               }}
-              className="flex-1 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-lg border border-indigo-200 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+              className="flex-1 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[12px] font-bold rounded-lg border border-indigo-200 transition-colors flex items-center justify-center gap-1 cursor-pointer"
             >
               <Bell className="w-3 h-3" />
               Make Active
@@ -745,7 +745,7 @@ function ThreadPanel({
                 onCloseThread(rootMessage.id);
                 onClose();
               }}
-              className="flex-1 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-lg border border-emerald-200 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+              className="flex-1 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[12px] font-bold rounded-lg border border-emerald-200 transition-colors flex items-center justify-center gap-1 cursor-pointer"
               title="Close this thread and move it back into the inline chat"
             >
               <CheckCircle2 className="w-3 h-3" />
@@ -759,7 +759,7 @@ function ThreadPanel({
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5">
         {replies.length === 0 ? (
           <div className="text-center py-6">
-            <p className="text-[11px] text-slate-400">No replies yet — start the conversation!</p>
+            <p className="text-[13px] text-slate-400">No replies yet — start the conversation!</p>
           </div>
         ) : replies.map((reply, i) => {
           const showAvatar = i === 0 || replies[i - 1].senderId !== reply.senderId;
@@ -825,14 +825,14 @@ function DirectoryView({ users, currentUserId, onDM }: {
             value={q}
             onChange={e => setQ(e.target.value)}
             placeholder="Search teammates..."
-            className="w-full pl-9 pr-3 py-2 bg-slate-100 rounded-xl text-[12px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20"
+            className="w-full pl-9 pr-3 py-2 bg-slate-100 rounded-xl text-[14px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#162D4E]/20"
           />
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
           <div className="text-center py-10">
-            <p className="text-[12px] text-slate-400">No teammates found</p>
+            <p className="text-[14px] text-slate-400">No teammates found</p>
           </div>
         ) : (
           <div className="divide-y divide-slate-50">
@@ -846,7 +846,7 @@ function DirectoryView({ users, currentUserId, onDM }: {
                   {user.avatar ? (
                     <img src={user.avatar.split('#')[0]} alt="" className="w-9 h-9 rounded-full object-cover border border-slate-100" />
                   ) : (
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#162D4E] to-slate-700 flex items-center justify-center text-white text-[12px] font-bold">
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#162D4E] to-slate-700 flex items-center justify-center text-white text-[14px] font-bold">
                       {user.name.charAt(0)}
                     </div>
                   )}
@@ -855,8 +855,8 @@ function DirectoryView({ users, currentUserId, onDM }: {
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-semibold text-slate-800 truncate">{user.name}</p>
-                  <p className="text-[10px] text-slate-400 truncate">{user.role} · {user.department}</p>
+                  <p className="text-[15px] font-semibold text-slate-800 truncate">{user.name}</p>
+                  <p className="text-[12px] text-slate-400 truncate">{user.role} · {user.department}</p>
                 </div>
                 <MessageCircle className="w-4 h-4 text-slate-300 shrink-0" />
               </button>
@@ -892,19 +892,19 @@ function DeleteChannelConfirm({
             <Trash2 className="w-5 h-5 text-rose-600" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-slate-800">Delete Channel</h3>
-            <p className="text-[11px] text-slate-500">#{channel.name}</p>
+            <h3 className="text-base font-bold text-slate-800">Delete Channel</h3>
+            <p className="text-[13px] text-slate-500">#{channel.name}</p>
           </div>
         </div>
-        <p className="text-[12px] text-slate-600 mb-5">
+        <p className="text-[14px] text-slate-600 mb-5">
           This will archive the channel and all its messages. Staff won't be able to see or post in it anymore. <strong>This cannot be undone.</strong>
         </p>
         <div className="flex gap-2">
-          <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[14px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
           <button
             onClick={async () => { setDeleting(true); await onConfirm(); setDeleting(false); onClose(); }}
             disabled={deleting}
-            className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[12px] font-bold cursor-pointer disabled:opacity-50"
+            className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[14px] font-bold cursor-pointer disabled:opacity-50"
           >
             {deleting ? 'Deleting...' : 'Yes, Delete'}
           </button>
@@ -1617,14 +1617,14 @@ export default function TeamTalk({
             <MessageCircle className="w-4 h-4 text-white" />
           </div>
           <div>
-            <h1 className="text-[13px] font-extrabold text-[#162D4E] leading-none">Team Talk</h1>
-            <p className="text-[9px] text-slate-500 font-medium">by Horae</p>
+            <h1 className="text-[15px] font-extrabold text-[#162D4E] leading-none">Team Talk</h1>
+            <p className="text-[11px] text-slate-500 font-medium">by Horae</p>
           </div>
         </div>
         <div className="flex-1" />
         {/* Unread mention badge */}
         {mentionCount > 0 && (
-          <div className="flex items-center gap-1 bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+          <div className="flex items-center gap-1 bg-rose-500 text-white text-[12px] font-bold px-2 py-0.5 rounded-full">
             <Bell className="w-3 h-3" />
             {mentionCount} mention{mentionCount > 1 ? 's' : ''}
           </div>
@@ -1713,8 +1713,8 @@ export default function TeamTalk({
             <div className="flex-1 flex items-center justify-center bg-white/50 backdrop-blur-sm">
               <div className="text-center">
                 <Hash className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                <h3 className="text-sm font-bold text-slate-700">No channel selected</h3>
-                <p className="text-[11px] text-slate-500 mt-1 max-w-[200px] mx-auto">Select a channel from the sidebar or create a new one to start chatting.</p>
+                <h3 className="text-base font-bold text-slate-700">No channel selected</h3>
+                <p className="text-[13px] text-slate-500 mt-1 max-w-[200px] mx-auto">Select a channel from the sidebar or create a new one to start chatting.</p>
               </div>
             </div>
           ) : (
@@ -1745,13 +1745,13 @@ export default function TeamTalk({
                       value={newChannelName}
                       onChange={e => setNewChannelName(e.target.value)}
                       onBlur={handleRenameChannel}
-                      className="text-[13px] font-bold text-slate-800 bg-white border border-indigo-200 rounded px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 max-w-[200px]"
+                      className="text-[15px] font-bold text-slate-800 bg-white border border-indigo-200 rounded px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 max-w-[200px]"
                     />
                   </form>
                 ) : (
                   <div className="flex flex-col min-w-0">
                     <h2 
-                      className={`text-[13px] font-bold text-slate-800 truncate ${
+                      className={`text-[15px] font-bold text-slate-800 truncate ${
                         (activeChannel?.type === 'dm' || activeUser.role === Role.ADMIN || activeUser.role === Role.MANAGER || activeUser.role === Role.SUPER_ADMIN || activeChannel?.createdBy === activeUser.id)
                           ? 'cursor-pointer hover:text-indigo-600 transition-colors' 
                           : ''
@@ -1766,7 +1766,7 @@ export default function TeamTalk({
                     >
                       {activeChannel!.name}
                     </h2>
-                    {activeChannel?.description && <p className="text-[10px] text-slate-400 truncate">{activeChannel.description}</p>}
+                    {activeChannel?.description && <p className="text-[12px] text-slate-400 truncate">{activeChannel.description}</p>}
                   </div>
                 )}
               </div>
@@ -1774,7 +1774,7 @@ export default function TeamTalk({
                 {/* View members button */}
                 <button
                   onClick={() => setShowManageMembers(true)}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg text-[11px] font-semibold border border-slate-200 transition-colors cursor-pointer mr-1"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg text-[13px] font-semibold border border-slate-200 transition-colors cursor-pointer mr-1"
                   title="View members"
                 >
                   <Users className="w-3.5 h-3.5" />
@@ -1792,12 +1792,12 @@ export default function TeamTalk({
                       onFocus={() => setShowSearchResults(true)}
                       onBlur={() => setTimeout(() => setShowSearchResults(false), 150)}
                       placeholder="Search messages..."
-                      className="w-48 pl-7 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all focus:w-80"
+                      className="w-48 pl-7 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[13px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all focus:w-80"
                     />
                   </div>
                   {searchResults.length > 0 && (
                     <div className="flex items-center gap-1 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-100 shrink-0">
-                      <span className="text-[10px] font-medium text-indigo-600">
+                      <span className="text-[12px] font-medium text-indigo-600">
                         {Math.min(currentSearchIndex + 1, searchResults.length)}/{searchResults.length}
                       </span>
                       <button
@@ -1817,7 +1817,7 @@ export default function TeamTalk({
                   {showSearchResults && searchQuery && (
                     <div className="absolute top-full left-0 mt-1 w-96 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50">
                       {searchResults.length === 0 ? (
-                        <p className="text-[11px] text-slate-400 px-3 py-3">No messages match "{searchQuery}"</p>
+                        <p className="text-[13px] text-slate-400 px-3 py-3">No messages match "{searchQuery}"</p>
                       ) : (
                         <div className="divide-y divide-slate-50">
                           {searchResults.map((id, idx) => {
@@ -1829,8 +1829,8 @@ export default function TeamTalk({
                                 onClick={() => { setCurrentSearchIndex(idx); setShowSearchResults(false); }}
                                 className="w-full text-left px-3 py-2 hover:bg-slate-50 cursor-pointer"
                               >
-                                <p className="text-[11px] font-semibold text-slate-700">{msg.senderName}</p>
-                                <p className="text-[11px] text-slate-500 truncate">{msg.content}</p>
+                                <p className="text-[13px] font-semibold text-slate-700">{msg.senderName}</p>
+                                <p className="text-[13px] text-slate-500 truncate">{msg.content}</p>
                               </button>
                             );
                           })}
@@ -1875,12 +1875,12 @@ export default function TeamTalk({
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     placeholder="Search messages..."
-                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[12px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[14px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
                   />
                 </div>
                 {searchResults.length > 0 && (
                   <div className="flex items-center gap-1 bg-indigo-50 px-2 py-1.5 rounded-lg border border-indigo-100 shrink-0">
-                    <span className="text-[10px] font-medium text-indigo-600">
+                    <span className="text-[12px] font-medium text-indigo-600">
                       {Math.min(currentSearchIndex + 1, searchResults.length)}/{searchResults.length}
                     </span>
                     <button
