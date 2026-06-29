@@ -76,6 +76,8 @@ serve(async (req) => {
       else if (type === "UPDATE")  await handleTaskUpdated(record, old_record);
     } else if (table === "notices" && type === "INSERT") {
       await handleNoticePosted(record);
+    } else if (table === "chat_messages" && type === "INSERT") {
+      await handleChatMessage(record);
     } else if (type === "DIGEST") {
       await handleDigest(body.userId, body.tenantId, body.items, body.runMode);
     } else if (type === "URGENT_PUSH") {
@@ -178,6 +180,63 @@ async function handleNoticePosted(notice: any) {
       pushBody: notice.content?.slice(0, 80) || "",
       url: deepLink,
     }, notice.tenant_id, "notice", notice.id);
+  }
+}
+
+/**
+ * Team Talk: new chat message. DMs notify every other member on every
+ * message (small, focused audience). Channels/groups only notify users who
+ * were actually @mentioned or are participants of the thread being replied
+ * to — broadcasting every channel message to every member would be noise,
+ * not a notification.
+ */
+async function handleChatMessage(msg: any) {
+  if (msg.message_type === "system") return;
+
+  const { data: channel } = await supabase
+    .from("chat_channels")
+    .select("*")
+    .eq("id", msg.channel_id)
+    .single();
+  if (!channel) return;
+
+  const recipientIds = new Set<string>();
+
+  if (channel.type === "dm") {
+    const { data: members } = await supabase
+      .from("chat_members")
+      .select("user_id")
+      .eq("channel_id", msg.channel_id);
+    (members || []).forEach((m: any) => recipientIds.add(m.user_id));
+  } else {
+    (msg.mentioned_user_ids || []).forEach((uid: string) => recipientIds.add(uid));
+    if (msg.thread_id) {
+      const { data: participants } = await supabase
+        .from("chat_thread_participants")
+        .select("user_id")
+        .eq("thread_id", msg.thread_id);
+      (participants || []).forEach((p: any) => recipientIds.add(p.user_id));
+    }
+  }
+  recipientIds.delete(msg.sender_id);
+  if (recipientIds.size === 0) return;
+
+  const preview = msg.message_type === "voice" ? "🎤 Voice message" : (msg.content || "").slice(0, 80);
+  const deepLink = `${APP_BASE_URL}/team-talk?channel=${msg.channel_id}&msg=${msg.id}`;
+  const isMention = (msg.mentioned_user_ids || []).length > 0;
+
+  for (const userId of recipientIds) {
+    const user = await getUser(userId);
+    if (!user) continue;
+    if (!await checkAntiSpam(userId, channel.tenant_id, "chat_message", msg.id)) continue;
+
+    await sendNotifications(user, {
+      waMessage: buildChatMessage(msg.sender_name || "Someone", channel.name, preview, deepLink),
+      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [msg.sender_name || "Someone", `${preview} ${deepLink}`] },
+      pushTitle: isMention ? `🔔 ${msg.sender_name} mentioned you` : `💬 ${msg.sender_name}`,
+      pushBody: preview,
+      url: deepLink,
+    }, channel.tenant_id, "chat_message", msg.id);
   }
 }
 
