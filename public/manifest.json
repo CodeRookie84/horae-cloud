@@ -5,13 +5,13 @@
   "description": "Multi-tenant Operations and Compliance Platform.",
   "icons": [
     {
-      "src": "/horae-logo.jpg",
+      "src": "/app-icon.jpg",
       "type": "image/jpeg",
       "sizes": "192x192",
       "purpose": "any"
     },
     {
-      "src": "/horae-logo.jpg",
+      "src": "/app-icon.jpg",
       "type": "image/jpeg",
       "sizes": "512x512",
       "purpose": "maskable"

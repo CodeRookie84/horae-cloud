@@ -394,8 +394,8 @@ async function sendWebPush(subscriptionJson: string, payload: {
     title: payload.pushTitle,
     body: payload.pushBody,
     url: payload.url,
-    icon: "/horae-logo.jpg",
-    badge: "/horae-logo.jpg",
+    icon: "/app-icon.jpg",
+    badge: "/app-icon.jpg",
     tag: payload.pushTag || "horae-notif",
   });
 
