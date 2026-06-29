@@ -173,13 +173,14 @@ async function handleNoticePosted(notice: any) {
   for (const user of (users || [])) {
     if (user.id === notice.created_by_user_id) continue;
     if (!await checkAntiSpam(user.id, notice.tenant_id, "notice", notice.id)) continue;
+    // Push/in-app only — WhatsApp for notices stays manual, via the "Notify on WhatsApp" button.
     await sendNotifications(user, {
       waMessage: buildNoticeMessage(user.name, notice.title, notice.content?.slice(0, 100) || "", deepLink),
       waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [notice.title, `${(notice.content || "").slice(0, 80)} ${deepLink}`] },
       pushTitle: `📢 ${notice.title}`,
       pushBody: notice.content?.slice(0, 80) || "",
       url: deepLink,
-    }, notice.tenant_id, "notice", notice.id);
+    }, notice.tenant_id, "notice", notice.id, false, true);
   }
 }
 
@@ -230,13 +231,14 @@ async function handleChatMessage(msg: any) {
     if (!user) continue;
     if (!await checkAntiSpam(userId, channel.tenant_id, "chat_message", msg.id)) continue;
 
+    // Push/in-app only — WhatsApp for Team Talk messages stays manual, via the "Notify on WhatsApp" button.
     await sendNotifications(user, {
       waMessage: buildChatMessage(msg.sender_name || "Someone", channel.name, preview, deepLink),
       waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [msg.sender_name || "Someone", `${preview} ${deepLink}`] },
       pushTitle: isMention ? `🔔 ${msg.sender_name} mentioned you` : `💬 ${msg.sender_name}`,
       pushBody: preview,
       url: deepLink,
-    }, channel.tenant_id, "chat_message", msg.id);
+    }, channel.tenant_id, "chat_message", msg.id, false, true);
   }
 }
 
@@ -377,10 +379,10 @@ async function sendNotifications(user: any, payload: {
   pushBody: string;
   url: string;
   pushTag?: string;
-}, tenantId: string, eventType: string, refId: string, isUrgent: boolean = false) {
+}, tenantId: string, eventType: string, refId: string, isUrgent: boolean = false, pushOnly: boolean = false) {
   const promises: Promise<void>[] = [];
 
-  if (user.phone_number && user.whatsapp_opted_in && !DISABLE_WHATSAPP) {
+  if (!pushOnly && user.phone_number && user.whatsapp_opted_in && !DISABLE_WHATSAPP) {
     const prefix = META_WA_TOKEN.substring(0, 15) + '...';
     await logNotif(user.id, tenantId, "debug", refId, "whatsapp", "sent", "Token prefix in EF: " + prefix);
     promises.push(
