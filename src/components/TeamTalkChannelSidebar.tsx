@@ -299,7 +299,7 @@ export default function TeamTalkChannelSidebar({
   function SubSection({
     label, icon: Icon, channels: items, bgClass, iconClass, badgeClass, onAdd, onAddTitle,
     onClose, onReopen, onDelete, onDeleteThread, onCloseThread,
-    alwaysShow = false
+    alwaysShow = false, defaultCollapsed = false
   }: {
     label: string; icon: React.ElementType; channels: ChatChannel[];
     bgClass: string; iconClass: string; badgeClass: string;
@@ -308,8 +308,10 @@ export default function TeamTalkChannelSidebar({
     onDeleteThread?: (threadId: string) => void;
     onCloseThread?: (threadId: string) => void;
     alwaysShow?: boolean;
+    /** Starts closed and stays closed until the arrow is clicked — used for Closed Direct Chats */
+    defaultCollapsed?: boolean;
   }) {
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(defaultCollapsed);
     const sectionUnread = items.reduce((s, ch) => s + (ch.unreadCount || 0), 0);
     if (items.length === 0 && !alwaysShow) return null;
     return (
@@ -536,6 +538,7 @@ export default function TeamTalkChannelSidebar({
                   bgClass="bg-slate-100 text-slate-600" iconClass="text-slate-400" badgeClass="bg-slate-200 text-slate-700"
                   onReopen={onReopenDM}
                   alwaysShow={true}
+                  defaultCollapsed={true}
                 />
               </div>
             )}

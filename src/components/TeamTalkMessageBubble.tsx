@@ -438,7 +438,7 @@ export default function TeamTalkMessageBubble({
             {showMenu && (
               <>
                 <div className="fixed inset-0 z-[190] sm:hidden" onClick={(e) => { e.stopPropagation(); setShowMenu(false); }} />
-                <div className={`fixed sm:absolute sm:top-full bottom-4 left-4 right-4 sm:bottom-auto sm:left-auto sm:right-auto sm:mt-1 ${isMine ? 'sm:right-0' : 'sm:left-0'} bg-white border border-slate-200 rounded-xl shadow-2xl sm:shadow-xl z-[200] py-1 min-w-[160px] max-w-[calc(100vw-2rem)]`}>
+                <div className={`fixed sm:absolute sm:top-full bottom-[calc(1rem+env(safe-area-inset-bottom))] left-4 right-4 sm:bottom-auto sm:left-auto sm:right-auto sm:mt-1 ${isMine ? 'sm:right-0' : 'sm:left-0'} bg-white border border-slate-200 rounded-xl shadow-2xl sm:shadow-xl z-[200] py-1 min-w-[160px] max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto`}>
                   {/* WhatsApp-style multi-select entry point */}
                   {onStartSelection && (
                     <button
