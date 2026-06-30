@@ -788,7 +788,18 @@ export async function translateMessage(
   return translated;
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/** Cache pre-computed translations for a message (used by free Google Translate path). */
+export async function cacheMessageTranslation(
+  messageId: string,
+  translations: Record<string, string>
+): Promise<void> {
+  await supabase
+    .from('chat_messages')
+    .update({ translations })
+    .eq('id', messageId);
+}
+
+// ─────────────────────────────────────────────────────────────
 // READ RECEIPTS
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

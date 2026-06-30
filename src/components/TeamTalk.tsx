@@ -1394,7 +1394,13 @@ export default function TeamTalk({
     ]);
     setThreadReplies(replies);
     setThreadParticipantIds(participants.length > 0 ? participants : []);
-    
+
+    // Ensure the viewer is a thread participant — needed for unread counts to work
+    // in channels/rooms where the participant list may not include all members yet.
+    if (!participants.includes(activeUser.id)) {
+      chatService.addThreadParticipants(msg.id, [activeUser.id]).catch(() => {});
+    }
+
     // Mark thread as read
     await chatService.markThreadRead(msg.id, activeUser.id);
     setUnreadThreads(prev => prev.filter(t => t.id !== msg.id));
@@ -1524,7 +1530,16 @@ export default function TeamTalk({
         content: text, threadId: threadRoot.id, parentId: threadRoot.id,
       });
     }
-  }, [activeChannel, threadRoot, tenantId, activeUser]);
+    // For non-DM channels, register all channel members as thread participants so
+    // they see unread thread reply badges in the sidebar — same as DM behaviour.
+    if (activeChannel.type !== 'dm' && channelMembers.length > 0) {
+      chatService.registerChannelAsThreadParticipants(
+        threadRoot.id,
+        channelMembers.map(u => u.id),
+        activeUser.id
+      ).catch(() => {});
+    }
+  }, [activeChannel, threadRoot, tenantId, activeUser, channelMembers]);
 
   const handleSendVoiceReply = useCallback(async (blob: Blob, durationSec: number) => {
     if (!activeChannel || !threadRoot) return;

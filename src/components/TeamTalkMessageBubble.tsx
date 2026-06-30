@@ -14,6 +14,7 @@ import type { TeamTalkMessage } from '../types';
 import type { User as AppUser } from '../types';
 import TeamTalkVoicePlayer from './TeamTalkVoicePlayer';
 import * as chatService from '../services/chatService';
+import { translateText } from '../services/store';
 import { renderMentionContent } from './TeamTalk';
 
 const REACTION_EMOJIS = ['👍', '❤️', '🔥', '👀', '✅', '😂', '🙏'];
@@ -139,13 +140,12 @@ export default function TeamTalkMessageBubble({
     if (lang === "original" || langCache[lang]) return;
     setIsTranslating(true);
     try {
-      const result = await chatService.translateMessage(
-        message.id,
-        lang,
-        message.content || message.voiceTranscript || '',
-        langCache
-      );
-      setLangCache(prev => ({ ...prev, [lang]: result }));
+      const content = message.content || message.voiceTranscript || '';
+      const result = await translateText(content, lang as 'en' | 'hi' | 'kn' | 'ta');
+      const updatedCache = { ...langCache, [lang]: result };
+      setLangCache(updatedCache);
+      // Cache in DB so other users benefit without re-translating
+      chatService.cacheMessageTranslation(message.id, updatedCache).catch(() => {});
     } catch (e) {
       console.error('Translation error:', e);
       alert('Translation failed. Please ensure your VITE_GEMINI_API_KEY is properly configured.\n\nError details: ' + (e as Error).message);

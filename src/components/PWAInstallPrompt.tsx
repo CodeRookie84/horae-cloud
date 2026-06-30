@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, X } from 'lucide-react';
+import { Download, X, CheckCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // Extend the window object to include the beforeinstallprompt event
@@ -33,6 +33,7 @@ export default function PWAInstallPrompt({ activeTab }: { activeTab?: string }) 
   const [isIOS, setIsIOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
   const [showIOSTooltip, setShowIOSTooltip] = useState(false);
+  const [installed, setInstalled] = useState(false);
 
   useEffect(() => {
     // Check if already installed
@@ -76,8 +77,10 @@ export default function PWAInstallPrompt({ activeTab }: { activeTab?: string }) 
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
       if (outcome === 'accepted') {
-        setShowPrompt(false);
+        setInstalled(true);
         _capturedPrompt = null;
+        // Auto-hide success toast after 3 seconds
+        setTimeout(() => setShowPrompt(false), 3000);
       }
       setDeferredPrompt(null);
     } else if (isIOS) {
@@ -119,14 +122,21 @@ export default function PWAInstallPrompt({ activeTab }: { activeTab?: string }) 
             )}
           </AnimatePresence>
 
-          <button
-            onClick={handleInstallClick}
-            className="w-auto h-8 px-4 bg-[#1e1e1e] hover:bg-[#333333] text-white rounded-full shadow-lg flex items-center justify-center gap-1.5 transition-transform hover:scale-105 active:scale-95 font-semibold tracking-wide text-[11px] animate-bounce"
-            aria-label="Install App"
-          >
-            <Download className="w-3.5 h-3.5" strokeWidth={2.5} />
-            Install App
-          </button>
+          {installed ? (
+            <div className="w-auto h-8 px-4 bg-emerald-600 text-white rounded-full shadow-lg flex items-center justify-center gap-1.5 font-semibold tracking-wide text-[11px]">
+              <CheckCircle className="w-3.5 h-3.5" strokeWidth={2.5} />
+              Installed! Added to home screen
+            </div>
+          ) : (
+            <button
+              onClick={handleInstallClick}
+              className="w-auto h-8 px-4 bg-[#1e1e1e] hover:bg-[#333333] text-white rounded-full shadow-lg flex items-center justify-center gap-1.5 transition-transform hover:scale-105 active:scale-95 font-semibold tracking-wide text-[11px] animate-bounce"
+              aria-label="Install App"
+            >
+              <Download className="w-3.5 h-3.5" strokeWidth={2.5} />
+              Add to Home Screen
+            </button>
+          )}
         </motion.div>
       )}
     </AnimatePresence>

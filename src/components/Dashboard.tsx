@@ -330,16 +330,16 @@ export default function Dashboard({
             </button>
           </header>
           <div className="px-6 py-5">
-            <div className="flex items-center gap-4">
-              <div className="font-display text-4xl font-semibold text-[var(--color-ink)] leading-none">
-                {teamTalkUnread}
+            {teamTalkUnread === 0 ? (
+              <p className="text-sm text-[var(--color-ink-soft)]">All caught up across your channels.</p>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-tint)] text-[var(--color-brand)] text-sm font-bold rounded-full animate-pulse">
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  New unread messages
+                </span>
               </div>
-              <div className="text-sm text-[var(--color-ink-soft)]">
-                {teamTalkUnread === 0
-                  ? "All caught up across your channels."
-                  : `unread message${teamTalkUnread === 1 ? "" : "s"} waiting for you.`}
-              </div>
-            </div>
+            )}
           </div>
         </div>
 

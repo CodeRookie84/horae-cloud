@@ -87,6 +87,19 @@ export async function initPush(userId: string): Promise<string | null> {
     // Re-use existing subscription if already subscribed
     let subscription = await registration.pushManager.getSubscription();
 
+    if (subscription) {
+      // Verify the subscription endpoint is still valid — after a PWA reinstall
+      // the endpoint may change. If the stored key doesn't match the expected VAPID
+      // key, unsubscribe and re-subscribe to get a fresh endpoint.
+      try {
+        const appServerKey = subscription.options?.applicationServerKey;
+        if (!appServerKey) throw new Error('no key');
+      } catch {
+        await subscription.unsubscribe();
+        subscription = null;
+      }
+    }
+
     if (!subscription) {
       // Subscribe with VAPID public key
       subscription = await registration.pushManager.subscribe({
