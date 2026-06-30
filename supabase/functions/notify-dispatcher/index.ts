@@ -202,15 +202,21 @@ async function handleChatMessage(msg: any) {
   if (!channel) return;
 
   const recipientIds = new Set<string>();
+  // Track which users get a "mention" vs regular notification title
+  const mentionUserIds = new Set<string>(msg.mentioned_user_ids || []);
+
+  // All channel types: always notify @mentioned users
+  (msg.mentioned_user_ids || []).forEach((uid: string) => recipientIds.add(uid));
 
   if (channel.type === "dm") {
+    // DMs: notify all members
     const { data: members } = await supabase
       .from("chat_members")
       .select("user_id")
       .eq("channel_id", msg.channel_id);
     (members || []).forEach((m: any) => recipientIds.add(m.user_id));
   } else {
-    (msg.mentioned_user_ids || []).forEach((uid: string) => recipientIds.add(uid));
+    // Channels & rooms: notify thread participants for replies
     if (msg.thread_id) {
       const { data: participants } = await supabase
         .from("chat_thread_participants")
@@ -218,24 +224,40 @@ async function handleChatMessage(msg: any) {
         .eq("thread_id", msg.thread_id);
       (participants || []).forEach((p: any) => recipientIds.add(p.user_id));
     }
+    // For main-chat messages (not thread replies) AND for ALL channel messages:
+    // also notify all channel members — they need to know activity is happening.
+    // Anti-spam is applied per user below, so high-traffic channels don't spam.
+    const { data: members } = await supabase
+      .from("chat_members")
+      .select("user_id")
+      .eq("channel_id", msg.channel_id);
+    (members || []).forEach((m: any) => recipientIds.add(m.user_id));
   }
+
   recipientIds.delete(msg.sender_id);
   if (recipientIds.size === 0) return;
 
   const preview = msg.message_type === "voice" ? "🎤 Voice message" : (msg.content || "").slice(0, 80);
   const deepLink = `${APP_BASE_URL}/team-talk?channel=${msg.channel_id}&msg=${msg.id}`;
-  const isMention = (msg.mentioned_user_ids || []).length > 0;
+  const channelLabel = channel.type === "dm" ? msg.sender_name || "Someone" : `#${channel.name}`;
 
   for (const userId of recipientIds) {
     const user = await getUser(userId);
     if (!user) continue;
     if (!await checkAntiSpam(userId, channel.tenant_id, "chat_message", msg.id)) continue;
 
+    const isMentionForUser = mentionUserIds.has(userId);
+    const pushTitle = isMentionForUser
+      ? `🔔 ${msg.sender_name} mentioned you in ${channelLabel}`
+      : msg.thread_id
+        ? `💬 ${msg.sender_name} replied in ${channelLabel}`
+        : `💬 ${msg.sender_name} in ${channelLabel}`;
+
     // Push/in-app only — WhatsApp for Team Talk messages stays manual, via the "Notify on WhatsApp" button.
     await sendNotifications(user, {
       waMessage: buildChatMessage(msg.sender_name || "Someone", channel.name, preview, deepLink),
       waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [msg.sender_name || "Someone", `${preview} ${deepLink}`] },
-      pushTitle: isMention ? `🔔 ${msg.sender_name} mentioned you` : `💬 ${msg.sender_name}`,
+      pushTitle,
       pushBody: preview,
       url: deepLink,
     }, channel.tenant_id, "chat_message", msg.id, false, true);

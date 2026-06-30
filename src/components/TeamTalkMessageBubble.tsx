@@ -148,7 +148,7 @@ export default function TeamTalkMessageBubble({
       chatService.cacheMessageTranslation(message.id, updatedCache).catch(() => {});
     } catch (e) {
       console.error('Translation error:', e);
-      alert('Translation failed. Please ensure your VITE_GEMINI_API_KEY is properly configured.\n\nError details: ' + (e as Error).message);
+      alert('Translation failed. Please try again.\n\nError: ' + (e as Error).message);
       setSelectedLang("original");
     } finally {
       setIsTranslating(false);

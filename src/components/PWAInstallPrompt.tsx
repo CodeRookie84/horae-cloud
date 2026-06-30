@@ -125,7 +125,7 @@ export default function PWAInstallPrompt({ activeTab }: { activeTab?: string }) 
           {installed ? (
             <div className="w-auto h-8 px-4 bg-emerald-600 text-white rounded-full shadow-lg flex items-center justify-center gap-1.5 font-semibold tracking-wide text-[11px]">
               <CheckCircle className="w-3.5 h-3.5" strokeWidth={2.5} />
-              Installed! Added to home screen
+              Installed!
             </div>
           ) : (
             <button
@@ -134,7 +134,7 @@ export default function PWAInstallPrompt({ activeTab }: { activeTab?: string }) 
               aria-label="Install App"
             >
               <Download className="w-3.5 h-3.5" strokeWidth={2.5} />
-              Add to Home Screen
+              Install App
             </button>
           )}
         </motion.div>

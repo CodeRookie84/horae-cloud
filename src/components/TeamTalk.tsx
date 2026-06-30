@@ -1439,6 +1439,8 @@ export default function TeamTalk({
     setActiveChannel(ch);
     setShowMobileSidebar(false);
     pushTeamTalkState('channel');
+    // Refresh thread unreads after navigation so sidebar badges stay accurate
+    loadActiveThreads();
 
     const openAndHighlight = async () => {
       if (msg.threadId) {
@@ -1455,7 +1457,7 @@ export default function TeamTalk({
     } else {
       setTimeout(openAndHighlight, 500);
     }
-  }, [channels, activeChannel, activeUser.id, handleOpenThread, pushTeamTalkState]);
+  }, [channels, activeChannel, activeUser.id, handleOpenThread, pushTeamTalkState, loadActiveThreads]);
 
   const handleStartTemporaryThread = useCallback(async () => {
     if (!activeChannel) return;

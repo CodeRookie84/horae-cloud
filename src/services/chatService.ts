@@ -1492,30 +1492,64 @@ export async function markThreadRead(threadId: string, userId: string): Promise<
 
 /** Get Unread Threads for a User */
 export async function getUnreadThreads(tenantId: string, userId: string): Promise<TeamTalkMessage[]> {
-  const { data: partRows } = await supabase.from('chat_thread_participants').select('thread_id, last_read_at').eq('user_id', userId);
-  if (!partRows || partRows.length === 0) return [];
-  
+  // Channel membership gives us the baseline read position for any channel the user is in.
+  // For threads the user explicitly joined, chat_thread_participants gives a more precise per-thread last_read_at.
+  const [{ data: memberRows }, { data: partRows }] = await Promise.all([
+    supabase.from('chat_members').select('channel_id, last_read_at').eq('user_id', userId),
+    supabase.from('chat_thread_participants').select('thread_id, last_read_at').eq('user_id', userId),
+  ]);
+
+  const channelLastRead = new Map<string, string>(
+    (memberRows || []).map((r: any) => [r.channel_id, r.last_read_at ?? '1970-01-01T00:00:00Z'])
+  );
+  const threadLastRead = new Map<string, string>(
+    (partRows || []).map((r: any) => [r.thread_id, r.last_read_at ?? '1970-01-01T00:00:00Z'])
+  );
+
+  if (channelLastRead.size === 0 && threadLastRead.size === 0) return [];
+
+  // Fetch all active threads in channels the user is in
+  const channelIds = Array.from(channelLastRead.keys());
+  const { data: activeThreadData } = channelIds.length
+    ? await supabase
+        .from('chat_messages')
+        .select('*')
+        .in('channel_id', channelIds)
+        .eq('thread_status', 'active')
+        .is('thread_id', null)
+        .eq('is_deleted', false)
+    : { data: [] };
+
+  // Also include threads the user is an explicit participant of (may be in channels not in their list)
+  const explicitThreadIds = Array.from(threadLastRead.keys()).filter(
+    tid => !(activeThreadData || []).some((t: any) => t.id === tid)
+  );
+  const { data: explicitThreadData } = explicitThreadIds.length
+    ? await supabase.from('chat_messages').select('*').in('id', explicitThreadIds).eq('is_deleted', false)
+    : { data: [] };
+
+  const allThreads = [...(activeThreadData || []), ...(explicitThreadData || [])];
+  if (allThreads.length === 0) return [];
+
   const unreadThreads: TeamTalkMessage[] = [];
-  
-  for (const part of partRows) {
-    const lastRead = part.last_read_at ?? '1970-01-01T00:00:00Z';
-    const { count, data: replies } = await supabase
+
+  for (const thread of allThreads) {
+    // Use explicit thread participation timestamp if available, else fall back to channel's last_read_at
+    const lastRead = threadLastRead.get(thread.id) ?? channelLastRead.get(thread.channel_id) ?? '1970-01-01T00:00:00Z';
+    const { count } = await supabase
       .from('chat_messages')
       .select('id', { count: 'exact' })
-      .eq('thread_id', part.thread_id)
+      .eq('thread_id', thread.id)
       .neq('sender_id', userId)
       .gt('created_at', lastRead);
-      
+
     if (count && count > 0) {
-      const { data: thread } = await supabase.from('chat_messages').select('*').eq('id', part.thread_id).single();
-      if (thread) {
-        const mapped = mapMessage(thread);
-        mapped.unreadReplyCount = count;
-        unreadThreads.push(mapped);
-      }
+      const mapped = mapMessage(thread);
+      mapped.unreadReplyCount = count;
+      unreadThreads.push(mapped);
     }
   }
-  
+
   return unreadThreads;
 }
 
