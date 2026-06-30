@@ -67,9 +67,10 @@ export async function initPush(userId: string): Promise<string | null> {
   }
 
   if (pushInitialized) {
-    // Already subscribed this session — get existing subscription
+    // Already subscribed this session — re-save to DB in case it was cleared
     const reg = await navigator.serviceWorker.ready;
     const existing = await reg.pushManager.getSubscription();
+    if (existing) await savePushSubscription(userId, JSON.stringify(existing));
     return existing ? JSON.stringify(existing) : null;
   }
 
