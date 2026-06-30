@@ -1698,10 +1698,46 @@ export class StoreService {
   }
 
   public async updateTaskStatus(taskId: string, status: "Assigned" | "In Progress" | "Pending" | "On Hold" | "Completed" | "Closed"): Promise<Task | null> {
+    // Fetch task before update so we have old_record for edge function
+    const { data: taskRow } = await supabase.from('tasks').select('*').eq('id', taskId).single();
+    const oldStatus = taskRow?.status;
+
     await supabase
       .from('tasks')
       .update({ status })
       .eq('id', taskId);
+
+    if (taskRow) {
+      const me = await this.getActiveUser();
+      const assigneeIds: string[] = taskRow.assigned_user_ids || (taskRow.assigned_user_id ? [taskRow.assigned_user_id] : []);
+
+      // In-app notification for all assignees + task creator (excluding the person who changed status)
+      const recipientIds = [...new Set([...assigneeIds, taskRow.created_by_user_id])].filter(id => id && id !== me.id);
+      await Promise.all(recipientIds.map(async (uId) => {
+        const { data: u } = await supabase.from('users').select('*').eq('id', uId).single();
+        if (u) {
+          await this.addNotification(
+            `Task ${status}: ${taskRow.title}`,
+            `Status changed from ${oldStatus} to ${status}`,
+            "task",
+            u.department as Department,
+            u.role as Role,
+            uId,
+            taskRow.tenant_id
+          );
+        }
+      }));
+
+      // Push via edge function — client-side so webhook config is not required
+      supabase.functions.invoke('notify-dispatcher', {
+        body: {
+          type: 'UPDATE',
+          table: 'tasks',
+          record: { ...taskRow, status, assigned_user_ids: assigneeIds },
+          old_record: { ...taskRow, status: oldStatus, assigned_user_ids: assigneeIds },
+        },
+      }).catch(() => {});
+    }
 
     const tasks = await this.getTasks();
     return tasks.find(t => t.id === taskId) || null;
@@ -1800,6 +1836,43 @@ export class StoreService {
     };
 
     await supabase.from('task_messages').insert([newMessage]);
+
+    // Fetch task to get assignees for notification targeting
+    const { data: taskRow } = await supabase.from('tasks').select('*').eq('id', taskId).single();
+    if (taskRow) {
+      const assigneeIds: string[] = taskRow.assigned_user_ids || (taskRow.assigned_user_id ? [taskRow.assigned_user_id] : []);
+      const recipientIds = [...new Set([...assigneeIds, taskRow.created_by_user_id])].filter(id => id && id !== me.id);
+
+      // In-app notification for all recipients except the sender
+      await Promise.all(recipientIds.map(async (uId) => {
+        const { data: u } = await supabase.from('users').select('*').eq('id', uId).single();
+        if (u) {
+          await this.addNotification(
+            `${me.name} on: ${taskRow.title}`,
+            messageText.slice(0, 120),
+            "task",
+            u.department as Department,
+            u.role as Role,
+            uId,
+            taskRow.tenant_id
+          );
+        }
+      }));
+
+      // Push — TASK_COMMENT type handled by edge function
+      supabase.functions.invoke('notify-dispatcher', {
+        body: {
+          type: 'TASK_COMMENT',
+          taskId,
+          taskTitle: taskRow.title,
+          senderName: me.name,
+          senderId: me.id,
+          message: messageText,
+          recipientIds,
+          tenantId: taskRow.tenant_id,
+        },
+      }).catch(() => {});
+    }
 
     const tasks = await this.getTasks();
     return tasks.find(t => t.id === taskId) || null;

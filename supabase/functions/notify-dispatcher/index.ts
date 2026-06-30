@@ -78,6 +78,8 @@ serve(async (req) => {
       await handleNoticePosted(record);
     } else if (table === "chat_messages" && type === "INSERT") {
       await handleChatMessage(record);
+    } else if (type === "TASK_COMMENT") {
+      await handleTaskComment(body);
     } else if (type === "DIGEST") {
       await handleDigest(body.userId, body.tenantId, body.items, body.runMode);
     } else if (type === "URGENT_PUSH") {
@@ -131,6 +133,7 @@ async function handleTaskAssigned(task: any) {
 async function handleTaskUpdated(task: any, oldTask: any) {
   const deepLink = `${APP_BASE_URL}/tasks/${task.id}`;
 
+  // Only push for meaningful status transitions
   if (task.status !== oldTask?.status) {
     const significantStatuses = ["Completed", "Closed", "On Hold"];
     if (!significantStatuses.includes(task.status)) return;
@@ -147,22 +150,27 @@ async function handleTaskUpdated(task: any, oldTask: any) {
       }, task.tenant_id, "task_status", task.id);
     }
   }
+  // Note: task chat messages are in a separate task_messages table, not in task.chat.
+  // Chat push is handled by the TASK_COMMENT event type dispatched from the client.
+}
 
-  const oldChatLen = (oldTask?.chat || []).length;
-  const newChatLen = (task?.chat || []).length;
-  if (newChatLen > oldChatLen) {
-    const latest = task.chat[newChatLen - 1];
-    const recipients = await getTaskRecipients(task, latest?.userId);
-    for (const user of recipients) {
-      if (!await checkAntiSpam(user.id, task.tenant_id, "task_chat", task.id)) continue;
-      await sendNotifications(user, {
-        waMessage: buildChatMessage(latest?.senderName || "Someone", task.title, latest?.message || "", deepLink),
-        waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [task.title, `${latest?.senderName || "Someone"}: ${(latest?.message || "").slice(0, 80)} ${deepLink}`] },
-        pushTitle: `💬 ${latest?.senderName}: ${task.title}`,
-        pushBody: (latest?.message || "").slice(0, 80),
-        url: deepLink,
-      }, task.tenant_id, "task_chat", task.id);
-    }
+async function handleTaskComment(body: any) {
+  const { taskId, taskTitle, senderName, senderId, message, recipientIds, tenantId } = body;
+  const deepLink = `${APP_BASE_URL}/tasks/${taskId}`;
+  const preview = (message || "").slice(0, 80);
+
+  for (const userId of (recipientIds || [])) {
+    if (userId === senderId) continue;
+    const user = await getUser(userId);
+    if (!user) continue;
+    if (!await checkAntiSpam(userId, tenantId, "task_chat", taskId)) continue;
+    await sendNotifications(user, {
+      waMessage: buildChatMessage(senderName || "Someone", taskTitle, preview, deepLink),
+      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [taskTitle, `${senderName || "Someone"}: ${preview} ${deepLink}`] },
+      pushTitle: `💬 ${senderName}: ${taskTitle}`,
+      pushBody: preview,
+      url: deepLink,
+    }, tenantId, "task_chat", taskId, false, true);
   }
 }
 
