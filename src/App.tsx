@@ -367,6 +367,32 @@ function AppInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Poll notifications every 15s — realtime subscription alone is insufficient
+  // because the 'notifications' table is not in the supabase_realtime publication,
+  // so INSERT events never arrive via postgres_changes.
+  useEffect(() => {
+    if (!activeUser) return;
+    const pollNotifications = async () => {
+      try {
+        const notificationsList = await store.getNotifications();
+        if (seenNotifIdsRef.current === null) {
+          seenNotifIdsRef.current = new Set(notificationsList.map((n: any) => n.id));
+        } else {
+          const newItems = notificationsList.filter((n: any) => !seenNotifIdsRef.current!.has(n.id));
+          if (newItems.length > 0) {
+            const msg = newItems[0].title || "New notification";
+            setNewAlertMessage(msg);
+            setTimeout(() => setNewAlertMessage(""), 4500);
+          }
+          seenNotifIdsRef.current = new Set(notificationsList.map((n: any) => n.id));
+        }
+        setNotifications(notificationsList);
+      } catch { /* silent — next poll will retry */ }
+    };
+    const interval = setInterval(pollNotifications, 15000);
+    return () => clearInterval(interval);
+  }, [activeUser?.id]);
+
   // Poll for chat unread counts to keep sidebar updated
   useEffect(() => {
     if (!activeUser || !activeTenant) return;

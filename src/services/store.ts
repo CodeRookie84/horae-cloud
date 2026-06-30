@@ -1649,7 +1649,7 @@ export class StoreService {
 
     await supabase.from('tasks').insert([newTask]);
 
-    // Send notifications to all assignees
+    // In-app notifications for all assignees
     await Promise.all(assignedUserIds.map(async (uId) => {
       const { data: assignee } = await supabase
         .from('users')
@@ -1669,6 +1669,17 @@ export class StoreService {
         );
       }
     }));
+
+    // Push notification — invoke edge function directly from client so push fires
+    // regardless of whether the Supabase DB webhook is configured.
+    supabase.functions.invoke('notify-dispatcher', {
+      body: {
+        type: 'INSERT',
+        table: 'tasks',
+        record: { ...newTask, assigned_user_ids: assignedUserIds },
+        old_record: null,
+      },
+    }).catch(() => { /* non-fatal — best-effort push */ });
 
     return {
       id: newTask.id,
