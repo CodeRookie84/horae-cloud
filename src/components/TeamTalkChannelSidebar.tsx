@@ -116,17 +116,6 @@ function ChannelItem({
         <span className="flex-1 truncate text-left">
           {channel.name}
         </span>
-        {/* Mention badge — distinct color/shape from the unread count so the two never get confused */}
-        {mentionCount > 0 && !hovered && (
-          <span
-            onClick={e => { e.stopPropagation(); onMentionClick?.(); }}
-            className="shrink-0 flex items-center gap-0.5 bg-amber-100 text-amber-700 text-[11px] font-extrabold px-1.5 py-0.5 rounded-full min-w-[18px] text-center cursor-pointer hover:bg-amber-200"
-            title={`${mentionCount} unread mention${mentionCount > 1 ? 's' : ''} — click to view`}
-          >
-            <AtSign className="w-2.5 h-2.5" />
-            {mentionCount > 9 ? '9+' : mentionCount}
-          </span>
-        )}
         {/* Unread badge */}
         {unread > 0 && !hovered && (
           <span className="shrink-0 bg-rose-500 text-white text-[11px] font-extrabold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
@@ -320,9 +309,6 @@ export default function TeamTalkChannelSidebar({
           <button onClick={() => setCollapsed(v => !v)} className="flex-1 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wider cursor-pointer text-left">
             {collapsed ? <ChevronRight className={`w-3 h-3 ${iconClass}`} /> : <ChevronDown className={`w-3 h-3 ${iconClass}`} />}
             <span className="flex-1">{label}</span>
-            {sectionUnread > 0 && (
-              <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-extrabold ${badgeClass}`}>{sectionUnread}</span>
-            )}
           </button>
           {onAdd && (
             <button onClick={onAdd} className={`p-1.5 rounded-md hover:bg-white/50 transition-colors cursor-pointer ${iconClass}`} title={onAddTitle}>

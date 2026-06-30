@@ -362,8 +362,8 @@ export default function Dashboard({
                 activeUser.role === Role.SUPERVISOR) && (
                 <button
                   onClick={() => {
+                    sessionStorage.setItem('horae_open_assign', '1');
                     onNavigate("tasks");
-                    setTimeout(() => window.dispatchEvent(new CustomEvent("openTaskAssignModal")), 100);
                   }}
                   className="text-white text-sm font-medium bg-[var(--color-brand)] hover:bg-[color-mix(in_srgb,var(--color-brand)_88%,var(--color-ink))] px-3.5 py-2 rounded-xl shadow-warm cursor-pointer flex items-center gap-1.5 transition-all"
                 >

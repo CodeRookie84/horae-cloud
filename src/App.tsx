@@ -227,6 +227,7 @@ function AppInner() {
 
   // Notification alert state
   const [newAlertMessage, setNewAlertMessage] = useState<string>("");
+  const seenNotifIdsRef = useRef<Set<string> | null>(null);
   const [showNotificationDropdown, setShowNotificationDropdown] = useState<boolean>(false);
   const [dismissedNotificationIds, setDismissedNotificationIds] = useState<string[]>(() => {
     try {
@@ -333,6 +334,17 @@ function AppInner() {
       setNotices(noticesList);
       setChecklists(checklistsList);
       setTasks(tasksList);
+      if (seenNotifIdsRef.current === null) {
+        seenNotifIdsRef.current = new Set(notificationsList.map((n: any) => n.id));
+      } else {
+        const newItems = notificationsList.filter((n: any) => !seenNotifIdsRef.current!.has(n.id));
+        if (newItems.length > 0) {
+          const msg = newItems[0].title || "New notification";
+          setNewAlertMessage(msg);
+          setTimeout(() => setNewAlertMessage(""), 4500);
+        }
+        seenNotifIdsRef.current = new Set(notificationsList.map((n: any) => n.id));
+      }
       setNotifications(notificationsList);
     } catch (error) {
       console.error("Failed to refresh state from database:", error);

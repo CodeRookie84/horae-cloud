@@ -114,7 +114,10 @@ export default function TaskManagerWorkflows({
   const [isTaskExpanded, setIsTaskExpanded] = useState<boolean>(false);
   const [speechLanguage, setSpeechLanguage] = useState<"en-US" | "hi-IN" | "kn-IN" | "ta-IN">("en-US");
   const [isListening, setIsListening] = useState(false);
+  const [isCommentListening, setIsCommentListening] = useState(false);
   const [translating, setTranslating] = useState(false);
+  const [showMobileStatusMenu, setShowMobileStatusMenu] = useState(false);
+  const commentRecognitionRef = useRef<any>(null);
   const [selectedDisplayLang, setSelectedDisplayLang] = useState<"en" | "hi" | "kn" | "ta">("en");
   const [translationsCache, setTranslationsCache] = useState<Record<string, Record<string, string>>>({});
   const recognitionRef = useRef<any>(null);
@@ -162,6 +165,12 @@ export default function TaskManagerWorkflows({
     };
     window.addEventListener('popstate', handlePopState);
     
+    // Check sessionStorage flag set by Dashboard "Assign" button
+    if (sessionStorage.getItem('horae_open_assign') === '1') {
+      sessionStorage.removeItem('horae_open_assign');
+      setShowCreateForm(true);
+    }
+
     const handleOpenAssign = () => {
       setShowCreateForm(true);
     };
@@ -298,6 +307,53 @@ export default function TaskManagerWorkflows({
       setDescription(translated);
     } catch (error) {
       alert("Failed to translate description.");
+    } finally {
+      setTranslating(false);
+    }
+  };
+
+  const startCommentListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setIsCommentListening(true);
+      setTimeout(() => {
+        setChatInput(prev => prev ? prev + " comment noted." : "Comment noted.");
+        setIsCommentListening(false);
+      }, 2000);
+      return;
+    }
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = speechLanguage;
+      recognition.onstart = () => setIsCommentListening(true);
+      recognition.onresult = (event: any) => {
+        const text = event.results[0][0].transcript;
+        setChatInput(prev => prev ? prev + " " + text : text);
+      };
+      recognition.onerror = () => setIsCommentListening(false);
+      recognition.onend = () => setIsCommentListening(false);
+      commentRecognitionRef.current = recognition;
+      recognition.start();
+    } catch (e) {
+      setIsCommentListening(false);
+    }
+  };
+
+  const stopCommentListening = () => {
+    if (commentRecognitionRef.current) commentRecognitionRef.current.stop();
+    setIsCommentListening(false);
+  };
+
+  const handleTranslateChatInput = async () => {
+    if (!chatInput.trim()) return;
+    setTranslating(true);
+    try {
+      const translated = await translateText(chatInput, 'en');
+      setChatInput(translated);
+    } catch {
+      alert("Failed to translate comment.");
     } finally {
       setTranslating(false);
     }
@@ -1742,20 +1798,50 @@ export default function TaskManagerWorkflows({
                 </div>
 
                 {/* Chat input */}
-                <form onSubmit={handleSendChatMessage} className="p-2 bg-white border-t border-slate-100 flex gap-1.5 shrink-0">
-                  <input
-                    type="text"
+                <form onSubmit={handleSendChatMessage} className="p-2 bg-white border-t border-slate-100 space-y-1.5 shrink-0">
+                  <textarea
+                    rows={2}
                     placeholder="Type message..."
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:bg-white focus:border-amber-500 transition-all font-semibold"
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:bg-white focus:border-amber-500 transition-all font-semibold resize-none"
                   />
-                  <button
-                    type="submit"
-                    className="bg-slate-905 hover:bg-slate-805 text-white p-2 rounded-xl shrink-0 flex items-center justify-center cursor-pointer transition-colors"
-                  >
-                    <Send className="w-3.5 h-3.5 text-white fill-white" />
-                  </button>
+                  <div className="flex items-center justify-between gap-1.5">
+                    <div className="flex items-center gap-1">
+                      <select
+                        value={speechLanguage}
+                        onChange={(e) => setSpeechLanguage(e.target.value as any)}
+                        className="bg-slate-50 border border-slate-200 text-slate-600 text-[11px] font-medium px-1.5 py-0.5 rounded-lg focus:outline-none cursor-pointer"
+                      >
+                        <option value="en-US">English</option>
+                        <option value="hi-IN">हिन्दी</option>
+                        <option value="kn-IN">ಕನ್ನಡ</option>
+                        <option value="ta-IN">தமிழ்</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={isCommentListening ? stopCommentListening : startCommentListening}
+                        className={`p-1 rounded-lg flex items-center justify-center transition-all border cursor-pointer ${isCommentListening ? "bg-slate-900 text-white border-slate-800 animate-pulse" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}
+                      >
+                        {isCommentListening ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={translating || !chatInput.trim()}
+                        onClick={handleTranslateChatInput}
+                        className="px-2 py-0.5 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-medium rounded-lg hover:bg-amber-100 disabled:opacity-50 flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Languages className="w-2.5 h-2.5" />
+                        {translating ? "..." : "→EN"}
+                      </button>
+                    </div>
+                    <button
+                      type="submit"
+                      className="bg-slate-905 hover:bg-slate-805 text-white p-1.5 rounded-xl shrink-0 flex items-center justify-center cursor-pointer transition-colors"
+                    >
+                      <Send className="w-3.5 h-3.5 text-white fill-white" />
+                    </button>
+                  </div>
                 </form>
               </div>
 
@@ -1774,7 +1860,7 @@ export default function TaskManagerWorkflows({
       {/* Mobile/Tablet Task Creation Form */}
       {showCreateForm && (
         <div className="lg:hidden mb-4 animate-fade-in">
-          <form onSubmit={handleCreateTask} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3 text-left">
+          <form onSubmit={handleCreateTask} className="bg-cyan-50 rounded-2xl border border-cyan-200 p-4 shadow-sm space-y-3 text-left">
             <div className="border-b border-slate-100 pb-1.5 flex justify-between items-center">
               <h4 className="text-sm font-medium text-slate-850">Assign Operational Shift Task</h4>
               <button
@@ -2101,10 +2187,37 @@ export default function TaskManagerWorkflows({
             {/* Tab Contents */}
             {mobileDetailTab === "info" ? (
               <div className="flex-1 overflow-y-auto p-4 space-y-4 text-left">
-                <div className="flex items-center gap-2">
-                  <span className={`text-sm font-semibold px-2 py-0.5 rounded-lg border font-mono ${
-                    activeTask.status === "Completed" ? "bg-slate-800/10 border-emerald-200 text-emerald-800 font-medium" : activeTask.status === "Closed" ? "bg-slate-500/10 border-slate-200 text-slate-500 font-medium" : "bg-slate-1000/10 border-indigo-200 text-indigo-800 font-medium"
-                  }`}>{activeTask.status}</span>
+                <div className="flex items-center gap-2 relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowMobileStatusMenu(v => !v)}
+                    className={`text-sm font-semibold px-2 py-0.5 rounded-lg border font-mono cursor-pointer ${
+                      activeTask.status === "Completed" ? "bg-slate-800/10 border-emerald-200 text-emerald-800 font-medium" : activeTask.status === "Closed" ? "bg-slate-500/10 border-slate-200 text-slate-500 font-medium" : "bg-slate-1000/10 border-indigo-200 text-indigo-800 font-medium"
+                    }`}
+                    title="Tap to change status"
+                  >{activeTask.status} ▾</button>
+                  {showMobileStatusMenu && (
+                    <div className="absolute top-8 left-0 z-20 bg-white border border-slate-200 rounded-xl shadow-lg p-1 flex flex-col gap-0.5 min-w-[140px]">
+                      {(["Assigned", "In Progress", "Pending", "On Hold", "Completed", "Closed"] as const).map(p => {
+                        const isCreator = activeTask.createdByUserId === activeUser.id;
+                        const isAdmin = activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN;
+                        const canClose = (isCreator || isAdmin) && (activeTask.status === "Completed" || activeTask.status === "Closed");
+                        const isDisabled = p === "Closed" && !canClose;
+                        return (
+                          <button
+                            key={p}
+                            type="button"
+                            disabled={isDisabled}
+                            onClick={() => { if (!isDisabled) { onUpdateTaskStatus(activeTask.id, p); setShowMobileStatusMenu(false); } }}
+                            className={`text-left px-3 py-1.5 text-sm rounded-lg font-medium transition-all ${
+                              activeTask.status === p ? "bg-slate-900 text-white" : isDisabled ? "text-slate-300 cursor-not-allowed" : "text-slate-600 hover:bg-slate-100"
+                            }`}
+                          >{p}</button>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   {activeTask.reminderSentAt && (Date.now() - new Date(activeTask.reminderSentAt).getTime() < 24 * 60 * 60 * 1000) && (
                     <span className="flex items-center gap-1 text-[11px] font-mono font-medium text-slate-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
                       <Bell className="w-3 h-3 fill-amber-500 text-amber-600" />
@@ -2185,33 +2298,6 @@ export default function TaskManagerWorkflows({
                   </div>
                 )}
 
-                {/* Status updates for mobile detail */}
-                <div className="space-y-1.5">
-                  <span className="text-[12px] font-medium tracking-wide block text-slate-400">Update Status</span>
-                  <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl">
-                    {(["Assigned", "In Progress", "Pending", "On Hold", "Completed", "Closed"] as const).map(p => {
-                      const active = activeTask.status === p;
-                      const isCreator = activeTask.createdByUserId === activeUser.id;
-                      const isAdmin = activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN;
-                      const canClose = (isCreator || isAdmin) && (activeTask.status === "Completed" || activeTask.status === "Closed");
-                      const isDisabled = p === "Closed" && !canClose;
-
-                      return (
-                        <button
-                          key={p}
-                          type="button"
-                          disabled={isDisabled}
-                          onClick={() => !isDisabled && onUpdateTaskStatus(activeTask.id, p)}
-                          className={`flex-1 py-2 text-[12px] font-semibold rounded-lg transition-all select-none text-center ${
-                            isDisabled ? "opacity-35 cursor-not-allowed text-slate-400" : active ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-200 hover:text-slate-850"
-                          }`}
-                        >
-                          {p}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
               </div>
             ) : (
               <div className="flex-1 flex flex-col bg-slate-50/50 overflow-hidden">
@@ -2234,23 +2320,53 @@ export default function TaskManagerWorkflows({
                   )}
                   <div ref={chatBottomRef} />
                 </div>
-                <form 
+                <form
                   onSubmit={handleSendChatMessage}
-                  className="p-3 bg-white border-t border-slate-100 flex gap-2 shrink-0"
+                  className="p-3 bg-white border-t border-slate-100 space-y-2 shrink-0"
                 >
-                  <input
-                    type="text"
+                  <textarea
+                    rows={2}
                     placeholder="Type a comment..."
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    className="flex-1 px-3 py-2 bg-slate-55 border border-slate-200 rounded-xl text-sm font-semibold focus:outline-none focus:bg-white"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:outline-none focus:bg-white resize-none"
                   />
-                  <button
-                    type="submit"
-                    className="px-4 py-2 bg-slate-900 text-white font-medium text-sm rounded-xl cursor-pointer"
-                  >
-                    Send
-                  </button>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1">
+                      <select
+                        value={speechLanguage}
+                        onChange={(e) => setSpeechLanguage(e.target.value as any)}
+                        className="bg-slate-50 border border-slate-200 text-slate-650 text-[11px] font-medium px-1.5 py-0.5 rounded focus:outline-none cursor-pointer"
+                      >
+                        <option value="en-US">English</option>
+                        <option value="hi-IN">हिन्दी</option>
+                        <option value="kn-IN">ಕನ್ನಡ</option>
+                        <option value="ta-IN">தமிழ்</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={isCommentListening ? stopCommentListening : startCommentListening}
+                        className={`p-1 rounded flex items-center justify-center transition-all border cursor-pointer ${isCommentListening ? "bg-slate-900 text-white border-slate-800 animate-pulse" : "bg-white text-slate-650 border-slate-200 hover:bg-slate-50"}`}
+                      >
+                        {isCommentListening ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={translating || !chatInput.trim()}
+                        onClick={handleTranslateChatInput}
+                        className="px-2 py-0.5 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-medium rounded hover:bg-amber-100 disabled:opacity-50 flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Languages className="w-2.5 h-2.5" />
+                        {translating ? "..." : "→EN"}
+                      </button>
+                    </div>
+                    <button
+                      type="submit"
+                      className="px-4 py-1.5 bg-slate-900 text-white font-medium text-sm rounded-xl cursor-pointer shrink-0"
+                    >
+                      Send
+                    </button>
+                  </div>
                 </form>
               </div>
             )}
