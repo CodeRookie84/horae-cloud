@@ -226,6 +226,11 @@ export interface TeamTalkMessage {
   voiceUrl?: string;
   voiceDurationSec?: number;
   voiceTranscript?: string;
+  // Image
+  imageUrl?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  imageMimeType?: string;
   // Language
   detectedLanguage?: string;
   translations?: Record<string, string>;  // { "en": "...", "ta": "..." }
@@ -281,7 +286,6 @@ export interface Task {
   createdByUserId: string;
   createdAt: string;
   chat: ChatMessage[];
-  reminderSentAt?: string;
   translations?: Record<string, string>;
   photos?: string[];
   linkedChannelId?: string;

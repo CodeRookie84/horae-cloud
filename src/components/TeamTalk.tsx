@@ -679,7 +679,7 @@ function MessageList({
 // ─── Thread Panel ─────────────────────────────────────────────
 function ThreadPanel({
   rootMessage, replies, currentUser, allUsers, isManager,
-  onSendReply, onSendVoiceReply, onClose, onConvertToTask, onDelete, onPin, onNotify,
+  onSendReply, onSendVoiceReply, onSendImageReply, onClose, onConvertToTask, onDelete, onPin, onNotify,
   canPin, canModerate, onActivateThread, onRenameThread, onCloseThread, threadTitle, highlightReplyId,
   selectionMode, selectedIds, onToggleSelect, onStartSelection,
 }: {
@@ -690,6 +690,7 @@ function ThreadPanel({
   isManager: boolean;
   onSendReply: (text: string, mentionedIds?: string[]) => Promise<void>;
   onSendVoiceReply: (blob: Blob, durationSec: number) => Promise<void>;
+  onSendImageReply: (blob: Blob, width: number, height: number, mimeType: string) => Promise<void>;
   onClose: () => void;
   onConvertToTask: (msg: TeamTalkMessage) => void;
   onDelete: (id: string) => void;
@@ -870,6 +871,7 @@ function ThreadPanel({
       <TeamTalkInput
         onSendText={onSendReply}
         onSendVoice={onSendVoiceReply}
+        onSendImage={onSendImageReply}
         allUsers={allUsers}
         currentUser={currentUser}
         isManager={isManager}
@@ -1385,6 +1387,20 @@ export default function TeamTalk({
     }
   }, [activeChannel, tenantId, activeUser]);
 
+  const handleSendImage = useCallback(async (blob: Blob, width: number, height: number) => {
+    if (!activeChannel) return;
+
+    const sent = await chatService.sendImageMessage({
+      channelId: activeChannel.id, tenantId,
+      senderId: activeUser.id, senderName: activeUser.name,
+      senderRole: activeUser.role, senderAvatar: activeUser.avatar,
+      imageBlob: blob, width, height,
+    } as any);
+    if (!sent) {
+      alert('Could not send the photo. Please check your connection and try again.');
+    }
+  }, [activeChannel, tenantId, activeUser]);
+
   const handleOpenThread = useCallback(async (msg: TeamTalkMessage) => {
     setThreadRoot(msg);
     pushTeamTalkState('thread');
@@ -1550,6 +1566,16 @@ export default function TeamTalk({
       senderId: activeUser.id, senderName: activeUser.name,
       senderRole: activeUser.role, senderAvatar: activeUser.avatar,
       audioBlob: blob, durationSec, threadId: threadRoot.id,
+    });
+  }, [activeChannel, threadRoot, tenantId, activeUser]);
+
+  const handleSendImageReply = useCallback(async (blob: Blob, width: number, height: number) => {
+    if (!activeChannel || !threadRoot) return;
+    await chatService.sendImageMessage({
+      channelId: activeChannel.id, tenantId,
+      senderId: activeUser.id, senderName: activeUser.name,
+      senderRole: activeUser.role, senderAvatar: activeUser.avatar,
+      imageBlob: blob, width, height, threadId: threadRoot.id,
     });
   }, [activeChannel, threadRoot, tenantId, activeUser]);
 
@@ -2137,6 +2163,7 @@ export default function TeamTalk({
             <TeamTalkInput
               onSendText={handleSendText}
               onSendVoice={handleSendVoice}
+              onSendImage={handleSendImage}
               onCommand={handleCommand}
               allUsers={allTenantUsers}
               channelMembers={channelMembers}
@@ -2171,6 +2198,7 @@ export default function TeamTalk({
                 isManager={userIsManager}
                 onSendReply={handleSendReply}
                 onSendVoiceReply={handleSendVoiceReply}
+                onSendImageReply={handleSendImageReply}
                 onClose={() => { setThreadRoot(null); setThreadReplies([]); setThreadParticipantIds([]); }}
                 onConvertToTask={setConvertingMessage}
                 onDelete={handleDelete}

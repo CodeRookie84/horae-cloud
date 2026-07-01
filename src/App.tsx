@@ -673,12 +673,6 @@ function AppInner() {
     triggerToast("Task priority updated.");
   };
 
-  const handleSendReminder = async (taskId: string) => {
-    await store.sendTaskReminder(taskId);
-    await refreshLocalState();
-    triggerToast("Task reminder sent successfully!");
-  };
-
   const handleUrgentTaskNotify = async (taskId: string) => {
     try {
       await store.sendUrgentWhatsAppPush("task", taskId);
@@ -1186,7 +1180,6 @@ function AppInner() {
                       onUpdateTaskPriority={handleUpdateTaskPriority}
                       onAddMessage={handleAddMessage}
                       onDeleteTask={handleDeleteTask}
-                      onSendReminder={handleSendReminder}
                       onUrgentNotify={handleUrgentTaskNotify}
                       onBack={handleBack}
                     />
@@ -1247,7 +1240,6 @@ function AppInner() {
                       onUpdateTaskPriority={handleUpdateTaskPriority}
                       onAddMessage={handleAddMessage}
                       onDeleteTask={handleDeleteTask}
-                      onSendReminder={handleSendReminder}
                       quizzes={quizzes}
                       onCreateQuiz={handleCreateQuiz}
                       onDeleteQuiz={handleDeleteQuiz}

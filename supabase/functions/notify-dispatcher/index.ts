@@ -35,8 +35,15 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE);
 
 // ─── Anti-spam constants ──────────────────────────────────────────────────────
 const ONLINE_THRESHOLD_MIN       = 0;   // Skip WA if user seen < 5 min ago (set to 0 for testing)
-const TASK_DEDUP_HOURS           = 0;   // No repeat for same task within 3h
+const TASK_DEDUP_HOURS           = 3;   // No repeat for same task within 3h
 const MAX_MESSAGES_PER_USER_DAY  = 20;   // Daily WhatsApp cap per user
+
+// Event types that are architecturally one-time-per-(user, reference) — a task
+// is assigned once, so this event should never legitimately fire twice for the
+// same user+task. Used to atomically claim a single send even if the underlying
+// event is triggered more than once (e.g. a DB webhook firing alongside a
+// client-side fallback call).
+const SINGLE_FIRE_EVENTS = new Set(["task_assigned"]);
 
 // "horae_task_alert" is used specifically for new task assignments.
 // "horae_alert" is the generic template for every other WhatsApp push
@@ -126,6 +133,7 @@ async function handleTaskAssigned(task: any) {
       pushTitle: `🔔 New Task: ${task.title}`,
       pushBody: `Priority: ${task.priority}`,
       url: deepLink,
+      pushTag: `task-${task.id}`,
     }, task.tenant_id, "task_assigned", task.id);
   }
 }
@@ -147,6 +155,7 @@ async function handleTaskUpdated(task: any, oldTask: any) {
         pushTitle: `🔄 Task ${task.status}: ${task.title}`,
         pushBody: `Status updated`,
         url: deepLink,
+        pushTag: `task-${task.id}`,
       }, task.tenant_id, "task_status", task.id);
     }
   }
@@ -170,6 +179,7 @@ async function handleTaskComment(body: any) {
       pushTitle: `💬 ${senderName}: ${taskTitle}`,
       pushBody: preview,
       url: deepLink,
+      pushTag: `task-${taskId}`,
     }, tenantId, "task_chat", taskId, false, true);
   }
 }
@@ -188,6 +198,7 @@ async function handleNoticePosted(notice: any) {
       pushTitle: `📢 ${notice.title}`,
       pushBody: notice.content?.slice(0, 80) || "",
       url: deepLink,
+      pushTag: `notice-${notice.id}`,
     }, notice.tenant_id, "notice", notice.id, false, true);
   }
 }
@@ -245,7 +256,9 @@ async function handleChatMessage(msg: any) {
   recipientIds.delete(msg.sender_id);
   if (recipientIds.size === 0) return;
 
-  const preview = msg.message_type === "voice" ? "🎤 Voice message" : (msg.content || "").slice(0, 80);
+  const preview = msg.message_type === "voice" ? "🎤 Voice message"
+    : msg.message_type === "image" ? "📷 Photo"
+    : (msg.content || "").slice(0, 80);
   const deepLink = `${APP_BASE_URL}/team-talk?channel=${msg.channel_id}&msg=${msg.id}`;
   const channelLabel = channel.type === "dm" ? msg.sender_name || "Someone" : `#${channel.name}`;
 
@@ -268,6 +281,7 @@ async function handleChatMessage(msg: any) {
       pushTitle,
       pushBody: preview,
       url: deepLink,
+      pushTag: `chat-${msg.channel_id}`,
     }, channel.tenant_id, "chat_message", msg.id, false, true);
   }
 }
@@ -318,17 +332,18 @@ async function handleUrgentPush(kind: "task" | "notice" | "message", record: any
     if (!await checkAntiSpam(userId, tenantId, "urgent_push", record.id)) continue;
 
     const waMessage = kind === "task"
-      ? `🔴 *Urgent task — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\nPlease action within the hour.\n\n👉 ${deepLink}`
+      ? `🔴 *Urgent task — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\nImmediate action required.\n\n👉 ${deepLink}`
       : kind === "notice"
       ? `🔴 *Urgent notice — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\n\n👉 ${deepLink}`
       : `🔴 *Urgent message — Horae*\n\nHi ${user.name.split(" ")[0]},\n${record.senderName ? `${record.senderName}: ` : ""}"${record.title}"\n\n👉 ${deepLink}`;
 
     await sendNotifications(user, {
       waMessage,
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [record.title, `Urgent — action within the hour. ${deepLink}`] },
+      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [record.title, `Urgent — Immediate action required. ${deepLink}`] },
       pushTitle: kind === "task" ? `🔴 Urgent task: ${record.title}` : `🔴 Urgent notice: ${record.title}`,
-      pushBody: "Needs attention within the hour",
+      pushBody: "Immediate action required",
       url: deepLink,
+      pushTag: `urgent-${kind}-${record.id}`,
     }, tenantId, "urgent_push", record.id, true);
   }
 }
@@ -369,6 +384,19 @@ async function checkAntiSpam(userId: string, tenantId: string, eventType: string
   }
 
   console.log(`[checkAntiSpam] User ${userId} passed all checks for ${eventType}!`);
+
+  // Single-fire events (e.g. task_assigned) can be triggered more than once by
+  // the app (DB webhook + client-side fallback). Atomically claim the send so
+  // only the first caller ever actually proceeds, regardless of how many times
+  // the event fires or how close together the calls arrive.
+  if (SINGLE_FIRE_EVENTS.has(eventType) && refId) {
+    const claimed = await claimEventOnce(userId, eventType, refId);
+    if (!claimed) {
+      await logNotif(userId, tenantId, "debug", refId, "whatsapp", "failed", `checkAntiSpam: Duplicate ${eventType} event blocked by claim lock`);
+      console.log(`[checkAntiSpam] Blocked duplicate ${eventType} for user ${userId} (already claimed)`);
+      return false;
+    }
+  }
 
   // Daily WhatsApp cap
   if (hasWA) {
@@ -426,7 +454,16 @@ async function sendNotifications(user: any, payload: {
     promises.push(
       sendWebPush(user.fcm_token, payload)
         .then(() => logNotif(user.id, tenantId, eventType, refId, "webpush", "sent", undefined, isUrgent))
-        .catch(e => logNotif(user.id, tenantId, eventType, refId, "webpush", "failed", String(e), isUrgent))
+        .catch(async e => {
+          const msg = String(e);
+          if (msg.includes("WebPush 410") || msg.includes("WebPush 404")) {
+            // Subscription is dead — clear it so the client re-prompts the
+            // user for notification permission next session instead of
+            // silently failing forever.
+            await supabase.from("users").update({ fcm_token: null }).eq("id", user.id);
+          }
+          await logNotif(user.id, tenantId, eventType, refId, "webpush", "failed", msg, isUrgent);
+        })
     );
   }
 
@@ -655,6 +692,22 @@ function addPkcs8Header(rawKey: Uint8Array): ArrayBuffer {
 async function getUser(userId: string) {
   const { data } = await supabase.from("users").select("*").eq("id", userId).single();
   return data;
+}
+
+// Atomically claims a single-fire notification event for a user. Returns true
+// if this call won the claim (proceed with sending), false if another call
+// already claimed it (a duplicate trigger — skip sending).
+async function claimEventOnce(userId: string, eventType: string, refId: string): Promise<boolean> {
+  const { error } = await supabase.from("notification_claims").insert([{
+    user_id: userId, event_type: eventType, reference_id: refId,
+  }]);
+  if (!error) return true;
+  // Postgres unique_violation — someone else already claimed this event.
+  if ((error as any).code === "23505") return false;
+  // Unexpected error (e.g. table missing) — fail open so we don't silently
+  // drop legitimate notifications if the migration hasn't been applied yet.
+  console.error("[claimEventOnce] Unexpected error, failing open:", error);
+  return true;
 }
 
 async function getTaskRecipients(task: any, excludeId?: string) {

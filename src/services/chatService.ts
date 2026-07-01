@@ -242,6 +242,10 @@ function mapMessage(row: any): TeamTalkMessage {
     voiceUrl: row.voice_url ?? undefined,
     voiceDurationSec: row.voice_duration_sec ?? undefined,
     voiceTranscript: row.voice_transcript ?? undefined,
+    imageUrl: row.image_url ?? undefined,
+    imageWidth: row.image_width ?? undefined,
+    imageHeight: row.image_height ?? undefined,
+    imageMimeType: row.image_mime_type ?? undefined,
     detectedLanguage: row.detected_language ?? undefined,
     translations: row.translations ?? {},
     linkedTaskId: row.linked_task_id ?? undefined,
@@ -675,6 +679,90 @@ export async function sendVoiceMessage(params: {
 
   if (error || !data) {
     console.error('sendVoiceMessage insert error:', error);
+    return null;
+  }
+  return mapMessage(data);
+}
+
+/** Downscales + compresses an image file client-side before upload, so a
+ * full-resolution phone-camera photo doesn't upload at several MB. */
+export async function resizeImageFile(file: File, maxDim = 1600, quality = 0.82): Promise<{ blob: Blob; width: number; height: number }> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const width = Math.round(bitmap.width * scale);
+  const height = Math.round(bitmap.height * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx?.drawImage(bitmap, 0, 0, width, height);
+
+  const blob: Blob = await new Promise((resolve, reject) => {
+    canvas.toBlob(b => b ? resolve(b) : reject(new Error('Image encoding failed')), 'image/jpeg', quality);
+  });
+
+  return { blob, width, height };
+}
+
+export async function sendImageMessage(params: {
+  channelId: string;
+  tenantId: string;
+  senderId: string;
+  senderName: string;
+  senderRole?: string;
+  senderAvatar?: string;
+  imageBlob: Blob;
+  width: number;
+  height: number;
+  threadId?: string;
+  mentionedUserIds?: string[];
+  threadStatus?: string;
+}): Promise<TeamTalkMessage | null> {
+  // 1. Upload to Supabase Storage
+  const fileName = `${params.tenantId}/${params.channelId}/${Date.now()}-${params.senderId}.jpg`;
+  const { error: storageError } = await supabase.storage
+    .from('chat-images')
+    .upload(fileName, params.imageBlob, {
+      contentType: 'image/jpeg',
+      upsert: false,
+    });
+
+  if (storageError) {
+    console.error('Image upload error:', storageError);
+    return null;
+  }
+
+  // 2. Get public URL
+  const { data: urlData } = supabase.storage
+    .from('chat-images')
+    .getPublicUrl(fileName);
+  const imageUrl = urlData.publicUrl;
+
+  // 3. Insert message record
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .insert({
+      channel_id: params.channelId,
+      tenant_id: params.tenantId,
+      thread_id: params.threadId ?? null,
+      sender_id: params.senderId,
+      sender_name: params.senderName,
+      sender_role: params.senderRole ?? null,
+      sender_avatar: params.senderAvatar ?? null,
+      message_type: 'image',
+      image_url: imageUrl,
+      image_width: params.width,
+      image_height: params.height,
+      image_mime_type: 'image/jpeg',
+      mentioned_user_ids: params.mentionedUserIds ?? null,
+      thread_status: params.threadStatus ?? null,
+    })
+    .select()
+    .single();
+
+  if (error || !data) {
+    console.error('sendImageMessage insert error:', error);
     return null;
   }
   return mapMessage(data);

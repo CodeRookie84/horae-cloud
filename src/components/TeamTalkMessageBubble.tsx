@@ -13,6 +13,7 @@ import {
 import type { TeamTalkMessage } from '../types';
 import type { User as AppUser } from '../types';
 import TeamTalkVoicePlayer from './TeamTalkVoicePlayer';
+import TeamTalkImageViewer from './TeamTalkImageViewer';
 import * as chatService from '../services/chatService';
 import { translateText } from '../services/store';
 import { renderMentionContent } from './TeamTalk';
@@ -252,6 +253,12 @@ export default function TeamTalkMessageBubble({
                 durationSec={message.voiceDurationSec}
                 transcript={message.voiceTranscript}
                 isMine={isMine}
+              />
+            ) : message.messageType === 'image' && message.imageUrl ? (
+              <TeamTalkImageViewer
+                url={message.imageUrl}
+                width={message.imageWidth}
+                height={message.imageHeight}
               />
             ) : (
               <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">

@@ -1554,7 +1554,6 @@ export class StoreService {
       // Unpack metadata from description if present
       let desc = t.description || "";
       let assigneeIds: string[] = [t.assigned_user_id].filter(Boolean);
-      let reminderSentAt: string | undefined = undefined;
       let translations: Record<string, string> | undefined = undefined;
       let photos: string[] = [];
       let linkedChannelId: string | undefined = undefined;
@@ -1565,7 +1564,6 @@ export class StoreService {
         try {
           const metadata = JSON.parse(parts[1]);
           if (metadata.assigneeIds) assigneeIds = metadata.assigneeIds;
-          if (metadata.reminderSentAt) reminderSentAt = metadata.reminderSentAt;
           if (metadata.translations) translations = metadata.translations;
           if (metadata.photos) photos = metadata.photos;
           if (metadata.linkedChannelId) linkedChannelId = metadata.linkedChannelId;
@@ -1589,7 +1587,6 @@ export class StoreService {
         createdByUserId: t.created_by_user_id,
         createdAt: t.created_at,
         chat,
-        reminderSentAt: reminderSentAt || localStorage.getItem(`horae_task_reminder_${t.id}`) || undefined,
         translations,
         photos,
         linkedChannelId,
@@ -1628,7 +1625,6 @@ export class StoreService {
     const metadata = {
       ...existingMetadata,
       assigneeIds: assignedUserIds,
-      reminderSentAt: existingMetadata.reminderSentAt || null,
       linkedChannelId: channelId || existingMetadata.linkedChannelId,
       linkedMessageId: msgId || existingMetadata.linkedMessageId
     };
@@ -1751,30 +1747,6 @@ export class StoreService {
 
     const tasks = await this.getTasks();
     return tasks.find(t => t.id === taskId) || null;
-  }
-
-  public async sendTaskReminder(taskId: string): Promise<Task | null> {
-    const tasks = await this.getTasks();
-    const task = tasks.find(t => t.id === taskId);
-    if (!task) return null;
-
-    const reminderTime = new Date().toISOString();
-    localStorage.setItem(`horae_task_reminder_${taskId}`, reminderTime);
-
-    // Repack metadata with reminder timestamp
-    const metadata = {
-      assigneeIds: task.assignedUserIds,
-      reminderSentAt: reminderTime
-    };
-    const packedDescription = `${task.description}\n\n---HORAE-METADATA---\n${JSON.stringify(metadata)}`;
-
-    await supabase
-      .from('tasks')
-      .update({ description: packedDescription })
-      .eq('id', taskId);
-
-    const updatedTasks = await this.getTasks();
-    return updatedTasks.find(t => t.id === taskId) || null;
   }
 
   public async sendUrgentWhatsAppPush(kind: "task" | "notice", recordId: string): Promise<void> {

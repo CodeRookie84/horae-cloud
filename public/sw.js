@@ -64,11 +64,14 @@ self.addEventListener('push', (event) => {
     let displayBody = body;
     if (existing.length > 0) {
       count = (existing[0].data?.count || 1) + 1;
-      displayBody = `${count} new alerts from Horae\nLatest: ${body}`;
+      displayBody = `${count} new messages\nLatest: ${body}`;
       existing.forEach((n) => n.close());
     }
 
-    await self.registration.showNotification(count > 1 ? 'Horae' : title, {
+    // Keep the conversation's own title (e.g. the chat/task name) instead of
+    // collapsing to a generic "Horae" — same as WhatsApp keeps the chat name
+    // and just bumps the count.
+    await self.registration.showNotification(title, {
       body: displayBody,
       icon,
       badge,

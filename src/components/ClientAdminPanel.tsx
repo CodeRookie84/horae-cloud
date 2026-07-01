@@ -84,8 +84,7 @@ interface ClientAdminPanelProps {
   onUpdateTaskPriority: (taskId: string, priority: string) => void;
   onAddMessage: (taskId: string, message: string) => void;
   onDeleteTask: (id: string) => void;
-  onSendReminder: (id: string) => void;
-  
+
   quizzes: Quiz[];
   onCreateQuiz: (title: string, description: string, dept: Department | string, role: Role | string, questions: any[], tenantId: string) => void;
   onDeleteQuiz: (id: string) => void;
@@ -127,7 +126,6 @@ export default function ClientAdminPanel({
   onUpdateTaskPriority,
   onAddMessage,
   onDeleteTask,
-  onSendReminder,
   quizzes,
   onCreateQuiz,
   onDeleteQuiz,
@@ -851,7 +849,7 @@ export default function ClientAdminPanel({
 
   const downloadTaskCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Task,Description,Outlet,Priority,Status,Due Date,Assignee,Days Pending,Reminder Sent\n";
+    csvContent += "Task,Description,Outlet,Priority,Status,Due Date,Assignee,Days Pending\n";
     filteredTasks.forEach(t => {
       const title = `"${t.title.replace(/"/g, '""')}"`;
       const desc = `"${t.description.replace(/"/g, '""')}"`;
@@ -861,8 +859,7 @@ export default function ClientAdminPanel({
       const dueDate = `"${t.dueDate}"`;
       const assignee = `"${tenantUsers.find(u => u.id === t.assignedUserId)?.name || "Unassigned"}"`;
       const daysPending = Math.floor(Math.abs(new Date().getTime() - new Date(t.createdAt).getTime()) / (1000 * 60 * 60 * 24));
-      const reminder = t.reminderSentAt ? `"${new Date(t.reminderSentAt).toLocaleString()}"` : "None";
-      csvContent += `${title},${desc},${outlet},${priority},${status},${dueDate},${assignee},${daysPending},${reminder}\n`;
+      csvContent += `${title},${desc},${outlet},${priority},${status},${dueDate},${assignee},${daysPending}\n`;
     });
     const link = document.createElement("a");
     link.setAttribute("href", encodeURI(csvContent));

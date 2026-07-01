@@ -32,6 +32,11 @@ const NotificationPermissionBanner: React.FC<NotificationPermissionBannerProps> 
   const [visible, setVisible] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [granted, setGranted] = useState(false);
+  // Android only creates a distinct notification-settings entry for an
+  // *installed* PWA — granting permission from a plain browser tab routes
+  // notifications through the browser instead. Nudge un-installed users.
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+    || (window.navigator as any).standalone === true;
 
   useEffect(() => {
     // Don't show if not configured
@@ -121,6 +126,11 @@ const NotificationPermissionBanner: React.FC<NotificationPermissionBannerProps> 
               <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
                 Get instant alerts for tasks, checklists, and notices — even when Horae is in the background.
               </p>
+              {!isStandalone && (
+                <p className="text-[11px] text-amber-600 mt-1.5 leading-relaxed">
+                  Tip: install Horae to your home screen first so notifications show up under their own app, not just your browser.
+                </p>
+              )}
             </div>
             <button
               onClick={handleDismiss}

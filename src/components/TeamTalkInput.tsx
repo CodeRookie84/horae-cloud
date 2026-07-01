@@ -10,15 +10,17 @@
  *   • Reply banner
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, MicOff, Send, X, Square, Slash, Lock } from 'lucide-react';
+import { Mic, MicOff, Send, X, Square, Slash, Lock, Camera, Image as ImageIcon, Paperclip } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type { User as AppUser } from '../types';
 import TeamTalkMentionPicker from './TeamTalkMentionPicker';
 import TeamTalkCommandPicker, { type SlashCommand } from './TeamTalkCommandPicker';
+import { resizeImageFile } from '../services/chatService';
 
 interface TeamTalkInputProps {
   onSendText: (text: string, mentionedUserIds?: string[], escalationRole?: string) => Promise<void>;
   onSendVoice: (blob: Blob, durationSec: number, escalationRole?: string) => Promise<void>;
+  onSendImage: (blob: Blob, width: number, height: number, mimeType: string) => Promise<void>;
   onCommand?: (commandId: string) => void;
   allUsers?: AppUser[];
   channelMembers?: AppUser[];
@@ -30,11 +32,12 @@ interface TeamTalkInputProps {
   onCancelReply?: () => void;
 }
 
-type InputMode = 'idle' | 'typing' | 'recording' | 'recorded';
+type InputMode = 'idle' | 'typing' | 'recording' | 'recorded' | 'image-preview';
 
 export default function TeamTalkInput({
   onSendText,
   onSendVoice,
+  onSendImage,
   onCommand,
   allUsers = [],
   channelMembers = [],
@@ -60,6 +63,13 @@ export default function TeamTalkInput({
   const [mentionQuery, setMentionQuery] = useState('');
   const [showCommandPicker, setShowCommandPicker] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
+
+  // Photo attach (camera / gallery)
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const pendingImageRef = useRef<{ blob: Blob; width: number; height: number } | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
 
 
@@ -258,6 +268,51 @@ export default function TeamTalkInput({
     await onSendVoice(blob, secs);
   }, [recordedBlobRef, recordingSeconds, onSendVoice]);
 
+  // ── Photo attach (camera / gallery) ───────────────────────────
+  const handleImageFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file next time
+    if (!file || disabled) return;
+    try {
+      const resized = await resizeImageFile(file);
+      pendingImageRef.current = resized;
+      setImagePreviewUrl(URL.createObjectURL(resized.blob));
+      setMode('image-preview');
+    } catch (err) {
+      console.error('Image processing failed:', err);
+    }
+  }, [disabled]);
+
+  const cancelImage = useCallback(() => {
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImagePreviewUrl(null);
+    pendingImageRef.current = null;
+    setMode('idle');
+  }, [imagePreviewUrl]);
+
+  const sendImage = useCallback(async () => {
+    const pending = pendingImageRef.current;
+    if (!pending) return;
+    const urlToRevoke = imagePreviewUrl;
+    pendingImageRef.current = null;
+    setImagePreviewUrl(null);
+    setMode('idle');
+    await onSendImage(pending.blob, pending.width, pending.height, 'image/jpeg');
+    if (urlToRevoke) URL.revokeObjectURL(urlToRevoke);
+  }, [imagePreviewUrl, onSendImage]);
+
+  // Close the camera/gallery popup on outside click
+  useEffect(() => {
+    if (!showAttachMenu) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setShowAttachMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [showAttachMenu]);
+
   const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   const hasText = text.trim().length > 0;
 
@@ -284,11 +339,53 @@ export default function TeamTalkInput({
         )}
       </AnimatePresence>
 
+      {/* Hidden file inputs for camera capture / gallery pick */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleImageFile}
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageFile}
+      />
+
       {/* Main compose area */}
       <div className="relative flex items-end gap-2 px-3 py-3">
         {/* Mention / Command pickers — positioned above input */}
         <AnimatePresence>
 
+
+          {showAttachMenu && (
+            <motion.div
+              key="attach-menu"
+              initial={{ opacity: 0, y: 6, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 6, scale: 0.96 }}
+              className="absolute bottom-full right-3 mb-2 bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden z-50 min-w-[160px]"
+            >
+              <button
+                type="button"
+                onClick={() => { setShowAttachMenu(false); cameraInputRef.current?.click(); }}
+                className="flex items-center gap-2.5 px-4 py-3 hover:bg-slate-50 w-full text-left text-[14px] font-medium text-slate-700 cursor-pointer"
+              >
+                <Camera className="w-4 h-4 text-[#162D4E]" /> Camera
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowAttachMenu(false); galleryInputRef.current?.click(); }}
+                className="flex items-center gap-2.5 px-4 py-3 hover:bg-slate-50 w-full text-left text-[14px] font-medium text-slate-700 cursor-pointer border-t border-slate-100"
+              >
+                <ImageIcon className="w-4 h-4 text-[#162D4E]" /> Gallery
+              </button>
+            </motion.div>
+          )}
 
           {showMentionPicker && (
             <motion.div
@@ -350,6 +447,14 @@ export default function TeamTalkInput({
                 <span className="text-[15px] font-bold text-emerald-700 flex-1">Ready to send ({fmtTime(recordingSeconds)})</span>
               </>
             )}
+          </div>
+        ) : mode === 'image-preview' ? (
+          /* ── IMAGE PREVIEW STATE ── */
+          <div className="flex-1 flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-2xl px-3 py-2">
+            {imagePreviewUrl && (
+              <img src={imagePreviewUrl} alt="Selected" className="w-11 h-11 rounded-xl object-cover shrink-0" />
+            )}
+            <span className="text-[15px] font-bold text-emerald-700 flex-1">Ready to send</span>
           </div>
         ) : (
           /* ── TYPING STATE ── */
@@ -440,32 +545,75 @@ export default function TeamTalkInput({
                 <Send className="w-5 h-5 text-white" />
               </button>
             </>
+          ) : mode === 'image-preview' ? (
+            <>
+              {/* Discard image */}
+              <button
+                onClick={cancelImage}
+                className="w-10 h-10 rounded-full bg-slate-200 hover:bg-slate-300 flex items-center justify-center transition-colors cursor-pointer"
+                title="Discard"
+              >
+                <X className="w-4 h-4 text-slate-600" />
+              </button>
+              {/* Send image */}
+              <button
+                onClick={sendImage}
+                className="w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-600 flex items-center justify-center transition-all cursor-pointer shadow-md"
+                title="Send photo"
+              >
+                <Send className="w-5 h-5 text-white" />
+              </button>
+            </>
           ) : hasText ? (
-            /* Send text — clear arrow button, never looks like a black circle */
-            <motion.button
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              onClick={handleSend}
-              disabled={disabled}
-              className="h-10 px-3 sm:px-4 rounded-full bg-[#162D4E] hover:bg-[#1E3A5F] flex items-center gap-1.5 transition-all cursor-pointer shadow-md disabled:opacity-50 shrink-0"
-              title="Send message"
-              id="send-text-btn"
-            >
-              <Send className="w-4 h-4 text-[#C5A880]" />
-              <span className="hidden sm:inline text-[14px] font-bold text-white">Send</span>
-            </motion.button>
+            <>
+              {/* Attach photo */}
+              <button
+                type="button"
+                onClick={() => setShowAttachMenu(v => !v)}
+                disabled={disabled}
+                className="w-10 h-10 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex items-center justify-center transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                title="Attach photo"
+              >
+                <Paperclip className="w-4 h-4" />
+              </button>
+              {/* Send text — clear arrow button, never looks like a black circle */}
+              <motion.button
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                onClick={handleSend}
+                disabled={disabled}
+                className="h-10 px-3 sm:px-4 rounded-full bg-[#162D4E] hover:bg-[#1E3A5F] flex items-center gap-1.5 transition-all cursor-pointer shadow-md disabled:opacity-50 shrink-0"
+                title="Send message"
+                id="send-text-btn"
+              >
+                <Send className="w-4 h-4 text-[#C5A880]" />
+                <span className="hidden sm:inline text-[14px] font-bold text-white">Send</span>
+              </motion.button>
+            </>
           ) : (
-            /* BIG Voice record button — WhatsApp style, dominant CTA */
-            <motion.button
-              whileTap={{ scale: 0.92 }}
-              onClick={startRecording}
-              disabled={disabled}
-              className="w-12 h-12 rounded-full bg-[#25D366] flex items-center justify-center transition-all cursor-pointer shadow-md hover:bg-[#20bd5a] disabled:opacity-50"
-              title="Hold to record voice message"
-              id="voice-record-btn"
-            >
-              <Mic className="w-5 h-5 text-white stroke-[2.5px]" />
-            </motion.button>
+            <>
+              {/* Attach photo */}
+              <button
+                type="button"
+                onClick={() => setShowAttachMenu(v => !v)}
+                disabled={disabled}
+                className="w-10 h-10 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex items-center justify-center transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                title="Attach photo"
+              >
+                <Camera className="w-4 h-4" />
+              </button>
+              {/* BIG Voice record button — WhatsApp style, dominant CTA */}
+              <motion.button
+                whileTap={{ scale: 0.92 }}
+                onClick={startRecording}
+                disabled={disabled}
+                className="w-12 h-12 rounded-full bg-[#25D366] flex items-center justify-center transition-all cursor-pointer shadow-md hover:bg-[#20bd5a] disabled:opacity-50"
+                title="Hold to record voice message"
+                id="voice-record-btn"
+              >
+                <Mic className="w-5 h-5 text-white stroke-[2.5px]" />
+              </motion.button>
+            </>
           )}
         </div>
       </div>
