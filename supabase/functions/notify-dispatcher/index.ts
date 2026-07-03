@@ -16,6 +16,7 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import webpush from "npm:web-push@3.6.7";
 
 // ─── Environment Variables ────────────────────────────────────────────────────
 const SUPABASE_URL      = Deno.env.get("SUPABASE_URL")!;
@@ -80,7 +81,7 @@ serve(async (req) => {
   try {
     if (table === "tasks") {
       if (type === "INSERT")       await handleTaskAssigned(record);
-      else if (type === "UPDATE")  await handleTaskUpdated(record, old_record);
+      else if (type === "UPDATE")  await handleTaskUpdated(record, old_record, body.actorId);
     } else if (table === "notices" && type === "INSERT") {
       await handleNoticePosted(record);
     } else if (table === "chat_messages" && type === "INSERT") {
@@ -138,26 +139,31 @@ async function handleTaskAssigned(task: any) {
   }
 }
 
-async function handleTaskUpdated(task: any, oldTask: any) {
+async function handleTaskUpdated(task: any, oldTask: any, actorId?: string) {
   const deepLink = `${APP_BASE_URL}/tasks/${task.id}`;
 
-  // Only push for meaningful status transitions
-  if (task.status !== oldTask?.status) {
-    const significantStatuses = ["Completed", "Closed", "On Hold"];
-    if (!significantStatuses.includes(task.status)) return;
+  // Notify recipients on any real status change (previously only Completed/
+  // Closed/On Hold fired, so most updates produced no notification at all).
+  if (task.status === oldTask?.status) return;
 
-    const recipients = await getTaskRecipients(task);
-    for (const user of recipients) {
-      if (!await checkAntiSpam(user.id, task.tenant_id, "task_status", task.id)) continue;
-      await sendNotifications(user, {
-        waMessage: buildStatusMessage(user.name, task.title, task.status, deepLink),
-        waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [task.title, `Now ${task.status}. ${deepLink}`] },
-        pushTitle: `🔄 Task ${task.status}: ${task.title}`,
-        pushBody: `Status updated`,
-        url: deepLink,
-        pushTag: `task-${task.id}`,
-      }, task.tenant_id, "task_status", task.id);
-    }
+  // Include the new status in the dedup key so each distinct transition can
+  // notify, while a duplicate fire of the SAME transition (DB webhook +
+  // client-side fallback) is still collapsed into a single message.
+  const statusRef = `${task.id}:${task.status}`;
+
+  // Exclude whoever made the change — they don't need to be told about their
+  // own action.
+  const recipients = await getTaskRecipients(task, actorId);
+  for (const user of recipients) {
+    if (!await checkAntiSpam(user.id, task.tenant_id, "task_status", statusRef)) continue;
+    await sendNotifications(user, {
+      waMessage: buildStatusMessage(user.name, task.title, task.status, deepLink),
+      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [task.title, `Now ${task.status}. ${deepLink}`] },
+      pushTitle: `🔄 Task ${task.status}: ${task.title}`,
+      pushBody: `Status updated`,
+      url: deepLink,
+      pushTag: `task-${task.id}`,
+    }, task.tenant_id, "task_status", statusRef);
   }
   // Note: task chat messages are in a separate task_messages table, not in task.chat.
   // Chat push is handled by the TASK_COMMENT event type dispatched from the client.
@@ -339,9 +345,9 @@ async function handleUrgentPush(kind: "task" | "notice" | "message", record: any
 
     await sendNotifications(user, {
       waMessage,
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [record.title, `Urgent — Immediate action required. ${deepLink}`] },
+      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [record.title, `Urgent — Immediate action needed. ${deepLink}`] },
       pushTitle: kind === "task" ? `🔴 Urgent task: ${record.title}` : `🔴 Urgent notice: ${record.title}`,
-      pushBody: "Immediate action required",
+      pushBody: "Immediate action needed",
       url: deepLink,
       pushTag: `urgent-${kind}-${record.id}`,
     }, tenantId, "urgent_push", record.id, true);
@@ -506,7 +512,12 @@ async function sendWhatsApp(phone: string, message: string, template?: { name: s
   if (!res.ok) throw new Error(`WA ${res.status}: ${await res.text()}`);
 }
 
-// ─── Web Push (Pure VAPID — No Firebase) ─────────────────────────────────────
+// ─── Web Push (VAPID via the web-push library) ───────────────────────────────
+// Uses the battle-tested `web-push` package for RFC 8291 aes128gcm encryption
+// + VAPID signing. The previous hand-rolled implementation sent a
+// `Content-Encoding: aes128gcm` header but derived the encryption keys with
+// the legacy "aesgcm" scheme (wrong HKDF info strings), so browsers could
+// never decrypt the payload — no push ever arrived on any device.
 
 async function sendWebPush(subscriptionJson: string, payload: {
   pushTitle: string;
@@ -515,9 +526,7 @@ async function sendWebPush(subscriptionJson: string, payload: {
   pushTag?: string;
 }): Promise<void> {
   const subscription = JSON.parse(subscriptionJson);
-  const endpoint: string = subscription.endpoint;
 
-  // Build the push payload
   const messagePayload = JSON.stringify({
     title: payload.pushTitle,
     body: payload.pushBody,
@@ -527,164 +536,22 @@ async function sendWebPush(subscriptionJson: string, payload: {
     tag: payload.pushTag || "horae-notif",
   });
 
-  // Encode payload using VAPID authentication
-  const authHeader = await buildVapidAuthHeader(endpoint);
-  const { ciphertext, salt, serverPublicKey } = await encryptPayload(
-    messagePayload,
-    subscription.keys.p256dh,
-    subscription.keys.auth
-  );
-
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Authorization": authHeader,
-      "Content-Type": "application/octet-stream",
-      "Content-Encoding": "aes128gcm",
-      "TTL": "86400",
-      "Urgency": "normal",
-    },
-    body: buildEncryptedBody(ciphertext, salt, serverPublicKey),
-  });
-
-  if (res.status !== 201 && res.status !== 200) {
-    const text = await res.text();
-    if (res.status === 410 || res.status === 404) {
-      // Subscription expired — clean up
-      console.warn("[WebPush] Subscription expired, status:", res.status);
-    }
-    throw new Error(`WebPush ${res.status}: ${text}`);
+  try {
+    await webpush.sendNotification(subscription, messagePayload, {
+      TTL: 86400,
+      vapidDetails: {
+        subject: VAPID_SUBJECT,
+        publicKey: VAPID_PUBLIC_KEY,
+        privateKey: VAPID_PRIVATE_KEY,
+      },
+    });
+  } catch (err: any) {
+    // Normalize to the "WebPush <status>" shape the caller relies on to detect
+    // dead subscriptions (410 Gone / 404 Not Found) and clear the token.
+    const status = err?.statusCode;
+    if (status) throw new Error(`WebPush ${status}: ${err?.body || err?.message || ""}`);
+    throw err;
   }
-}
-
-// ─── VAPID Auth Header Builder ────────────────────────────────────────────────
-
-async function buildVapidAuthHeader(endpoint: string): Promise<string> {
-  const url = new URL(endpoint);
-  const audience = `${url.protocol}//${url.host}`;
-  const expiry = Math.floor(Date.now() / 1000) + 12 * 3600;
-
-  const header = { typ: "JWT", alg: "ES256" };
-  const payload = { aud: audience, exp: expiry, sub: VAPID_SUBJECT };
-
-  const encodeBase64url = (obj: object) =>
-    btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-
-  const signingInput = `${encodeBase64url(header)}.${encodeBase64url(payload)}`;
-
-  const privateKeyBytes = base64UrlToUint8Array(VAPID_PRIVATE_KEY);
-  const cryptoKey = await crypto.subtle.importKey(
-    "pkcs8",
-    addPkcs8Header(privateKeyBytes),
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["sign"]
-  );
-
-  const signature = await crypto.subtle.sign(
-    { name: "ECDSA", hash: "SHA-256" },
-    cryptoKey,
-    new TextEncoder().encode(signingInput)
-  );
-
-  const jwt = `${signingInput}.${uint8ArrayToBase64url(new Uint8Array(signature))}`;
-  return `vapid t=${jwt}, k=${VAPID_PUBLIC_KEY}`;
-}
-
-// ─── Payload Encryption (RFC 8291 aes128gcm) ─────────────────────────────────
-
-async function encryptPayload(plaintext: string, clientPublicKeyB64: string, authB64: string) {
-  const clientPublicKey = base64UrlToUint8Array(clientPublicKeyB64);
-  const authSecret = base64UrlToUint8Array(authB64);
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-
-  const serverKeyPair = await crypto.subtle.generateKey(
-    { name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]
-  );
-
-  const serverPublicKeyRaw = new Uint8Array(
-    await crypto.subtle.exportKey("raw", serverKeyPair.publicKey)
-  );
-
-  const clientKey = await crypto.subtle.importKey(
-    "raw", clientPublicKey, { name: "ECDH", namedCurve: "P-256" }, false, []
-  );
-
-  const sharedBits = await crypto.subtle.deriveBits(
-    { name: "ECDH", public: clientKey }, serverKeyPair.privateKey, 256
-  );
-
-  // HKDF context info
-  const keyInfo   = buildInfo("aesgcm", clientPublicKey, serverPublicKeyRaw);
-  const nonceInfo = buildInfo("nonce",  clientPublicKey, serverPublicKeyRaw);
-
-  const ikm = await hkdf(authSecret, new Uint8Array(sharedBits), buildInfo("Content-Encoding: auth\0", new Uint8Array(0), new Uint8Array(0)), 32);
-  const cek   = await hkdf(salt, ikm, keyInfo,   16);
-  const nonce = await hkdf(salt, ikm, nonceInfo, 12);
-
-  const encKey = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["encrypt"]);
-  const encoded = new TextEncoder().encode(plaintext);
-
-  // Padding: 1 byte pad length + content
-  const padded = new Uint8Array(2 + encoded.length);
-  padded[0] = 0; padded[1] = 0; // 2-byte pad length = 0
-  padded.set(encoded, 2);
-
-  const ciphertext = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, encKey, padded)
-  );
-
-  return { ciphertext, salt, serverPublicKey: serverPublicKeyRaw };
-}
-
-function buildEncryptedBody(ciphertext: Uint8Array, salt: Uint8Array, serverPublicKey: Uint8Array): Uint8Array {
-  const body = new Uint8Array(21 + serverPublicKey.length + ciphertext.length);
-  body.set(salt, 0);
-  new DataView(body.buffer).setUint32(16, 4096);    // record size = 4096
-  body[20] = serverPublicKey.length;
-  body.set(serverPublicKey, 21);
-  body.set(ciphertext, 21 + serverPublicKey.length);
-  return body;
-}
-
-function buildInfo(type: string, clientKey: Uint8Array, serverKey: Uint8Array): Uint8Array {
-  const info = new TextEncoder().encode(`Content-Encoding: ${type}\0P-256\0`);
-  const result = new Uint8Array(info.length + 2 + clientKey.length + 2 + serverKey.length);
-  let offset = 0;
-  result.set(info, offset); offset += info.length;
-  new DataView(result.buffer).setUint16(offset, clientKey.length); offset += 2;
-  result.set(clientKey, offset); offset += clientKey.length;
-  new DataView(result.buffer).setUint16(offset, serverKey.length); offset += 2;
-  result.set(serverKey, offset);
-  return result;
-}
-
-async function hkdf(salt: Uint8Array, ikm: Uint8Array, info: Uint8Array, length: number): Promise<Uint8Array> {
-  const key = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, key, length * 8);
-  return new Uint8Array(bits);
-}
-
-function base64UrlToUint8Array(b64: string): Uint8Array {
-  const pad = '='.repeat((4 - b64.length % 4) % 4);
-  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
-  return Uint8Array.from(raw, c => c.charCodeAt(0));
-}
-
-function uint8ArrayToBase64url(buf: Uint8Array): string {
-  return btoa(String.fromCharCode(...buf)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-function addPkcs8Header(rawKey: Uint8Array): ArrayBuffer {
-  const header = new Uint8Array([
-    0x30, 0x41, 0x02, 0x01, 0x00, 0x30, 0x13, 0x06, 0x07, 0x2a,
-    0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86,
-    0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x04, 0x27, 0x30, 0x25,
-    0x02, 0x01, 0x01, 0x04, 0x20
-  ]);
-  const result = new Uint8Array(header.length + rawKey.length);
-  result.set(header); result.set(rawKey, header.length);
-  return result.buffer;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

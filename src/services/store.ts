@@ -1731,6 +1731,7 @@ export class StoreService {
           table: 'tasks',
           record: { ...taskRow, status, assigned_user_ids: assigneeIds },
           old_record: { ...taskRow, status: oldStatus, assigned_user_ids: assigneeIds },
+          actorId: me.id,
         },
       }).catch(() => {});
     }
