@@ -18,7 +18,16 @@
 
 import supabase from './supabaseClient';
 
-const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string;
+// VAPID public key for Web Push. Hardcoded on purpose (it is public, not a
+// secret) so the client and the notify-dispatcher edge function can never
+// drift out of sync via mismatched env config — a previous mismatch between
+// VITE_VAPID_PUBLIC_KEY (client) and VAPID_PUBLIC_KEY (server) made the push
+// service reject every send with "403 VAPID credentials do not correspond".
+// MUST stay identical to VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY in the edge
+// function secrets. To rotate: `npx web-push generate-vapid-keys`, update this
+// constant AND the two edge secrets together.
+const VAPID_PUBLIC_KEY =
+  'BN4eUHJux28yHCwatkpKWi5VhF5LtxP_kF_0DpXXF3mYVNc2uIePGeUsWavcz-ZXAGWUra_OMplvvdOL2Hg2mXk';
 
 // Session-level state — avoid re-asking in same session
 let pushInitialized = false;
@@ -48,6 +57,20 @@ export function isPushConfigured(): boolean {
     'PushManager' in window &&
     'Notification' in window
   );
+}
+
+/**
+ * True if an existing push subscription was created with the given VAPID
+ * public key. Used to detect a rotated server keypair so we can drop a stale
+ * subscription instead of reusing one that the push service will 403.
+ */
+function applicationServerKeyMatches(sub: PushSubscription, currentKey: Uint8Array): boolean {
+  const existing = sub.options?.applicationServerKey;
+  if (!existing) return false; // unknown key → treat as mismatch and re-subscribe
+  const a = new Uint8Array(existing as ArrayBuffer);
+  if (a.length !== currentKey.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== currentKey[i]) return false;
+  return true;
 }
 
 /**
@@ -94,14 +117,25 @@ export async function initPush(userId: string): Promise<string | null> {
       ),
     ]);
 
-    // Re-use existing subscription if already subscribed
+    const currentKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+
+    // Re-use existing subscription if already subscribed…
     let subscription = await registration.pushManager.getSubscription();
+
+    // …but only if it was created with the CURRENT VAPID key. If the server
+    // keypair was rotated, the old subscription is signed against a stale key
+    // and every push to it is rejected with 403. Drop it and re-subscribe.
+    if (subscription && !applicationServerKeyMatches(subscription, currentKey)) {
+      _lastPushError = '';
+      await subscription.unsubscribe();
+      subscription = null;
+    }
 
     if (!subscription) {
       // Subscribe with VAPID public key
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true, // Required — ensures every push shows a notification
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        applicationServerKey: currentKey,
       });
     }
 
