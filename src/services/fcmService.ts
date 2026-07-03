@@ -23,6 +23,11 @@ const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string;
 // Session-level state — avoid re-asking in same session
 let pushInitialized = false;
 
+// Last failure reason from initPush, surfaced in the UI so subscription
+// problems on a user's device are diagnosable instead of silently swallowed.
+let _lastPushError = '';
+export function getLastPushError(): string { return _lastPushError; }
+
 const OPT_OUT_KEY = 'horae_push_opt_out';
 
 /** User explicitly turned push off via Settings — never auto-prompt again until they turn it back on */
@@ -61,29 +66,33 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
  * Returns a token string (JSON) or null if denied / not supported.
  */
 export async function initPush(userId: string): Promise<string | null> {
-  if (!isPushConfigured()) {
-    console.info('[Push] Not configured or not supported in this browser.');
-    return null;
-  }
+  _lastPushError = '';
 
-  if (pushInitialized) {
-    // Already subscribed this session — re-save to DB in case it was cleared
-    const reg = await navigator.serviceWorker.ready;
-    const existing = await reg.pushManager.getSubscription();
-    if (existing) await savePushSubscription(userId, JSON.stringify(existing));
-    return existing ? JSON.stringify(existing) : null;
+  if (!isPushConfigured()) {
+    _lastPushError = `Not supported/configured (vapidKey=${!!VAPID_PUBLIC_KEY}, `
+      + `serviceWorker=${'serviceWorker' in navigator}, `
+      + `PushManager=${'PushManager' in window}, Notification=${'Notification' in window})`;
+    console.info('[Push]', _lastPushError);
+    return null;
   }
 
   try {
     // Request permission
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') {
-      console.info('[Push] Permission denied by user.');
+      _lastPushError = `Permission not granted (permission=${permission})`;
+      console.info('[Push]', _lastPushError);
       return null;
     }
 
-    // Wait for service worker to be ready
-    const registration = await navigator.serviceWorker.ready;
+    // Wait for service worker to be ready — guard against it never activating
+    // (a broken registration would otherwise hang this call forever).
+    const registration = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<ServiceWorkerRegistration>((_, reject) =>
+        setTimeout(() => reject(new Error('serviceWorker.ready timed out — SW not active')), 8000)
+      ),
+    ]);
 
     // Re-use existing subscription if already subscribed
     let subscription = await registration.pushManager.getSubscription();
@@ -100,20 +109,29 @@ export async function initPush(userId: string): Promise<string | null> {
     pushInitialized = true;
 
     // Save to Supabase so Edge Function can send pushes
-    await savePushSubscription(userId, subscriptionJson);
+    const saveErr = await savePushSubscription(userId, subscriptionJson);
     setPushOptOut(false);
 
-    console.info('[Push] Subscribed successfully.');
+    if (saveErr) {
+      // Browser is subscribed but the DB write failed — push still can't be
+      // delivered, so treat it as a failure the user/logs can see.
+      _lastPushError = `Subscribed in browser but DB save failed: ${saveErr}`;
+      console.warn('[Push]', _lastPushError);
+    } else {
+      console.info('[Push] Subscribed successfully.');
+    }
     return subscriptionJson;
 
-  } catch (err) {
+  } catch (err: any) {
+    _lastPushError = `${err?.name || 'Error'}: ${err?.message || String(err)}`;
     console.error('[Push] Subscription error:', err);
     return null;
   }
 }
 
-/** Save push subscription JSON to Supabase user profile */
-async function savePushSubscription(userId: string, subscription: string): Promise<void> {
+/** Save push subscription JSON to Supabase user profile. Returns an error
+ *  message string on failure, or null on success. */
+async function savePushSubscription(userId: string, subscription: string): Promise<string | null> {
   const { error } = await supabase
     .from('users')
     .update({ fcm_token: subscription }) // reusing fcm_token column to store WP subscription
@@ -121,7 +139,9 @@ async function savePushSubscription(userId: string, subscription: string): Promi
 
   if (error) {
     console.warn('[Push] Failed to save subscription to DB:', error.message);
+    return error.message;
   }
+  return null;
 }
 
 /** Unsubscribe from push and clear from DB (call on logout) */

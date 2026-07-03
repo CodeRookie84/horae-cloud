@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { Client, Tenant, User as AppUser, Role, Department } from "../types";
 import { store } from "../services/store";
-import { initPush, clearPushSubscription, setPushOptOut } from "../services/fcmService";
+import { initPush, clearPushSubscription, setPushOptOut, getLastPushError } from "../services/fcmService";
 
 interface SidebarProps {
   clients: Client[];
@@ -104,7 +104,8 @@ export default function Sidebar({
           await store.updateUserFCMToken(activeUser.id, token);
           setPushEnabled(true);
         } else {
-          alert("Notifications are blocked for this site in your browser settings. Enable them there, then try again.");
+          const reason = getLastPushError();
+          alert("Couldn't enable notifications.\n\nReason: " + (reason || "Notifications may be blocked in your browser settings. Enable them there, then try again."));
         }
       }
     } finally {
