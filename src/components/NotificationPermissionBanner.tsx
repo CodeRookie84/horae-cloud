@@ -42,15 +42,24 @@ const NotificationPermissionBanner: React.FC<NotificationPermissionBannerProps> 
     // Don't show if not configured
     if (!isPushConfigured()) return;
 
-    // Don't show if already granted
-    if (Notification.permission === 'granted') return;
-
     // Browser previously blocked — re-asking is pointless until the user
     // changes it in browser settings; no banner can help with that.
     if (Notification.permission === 'denied') return;
 
     // User explicitly turned push off via Settings — respect that, don't re-prompt
     if (isPushOptedOut()) return;
+
+    // Permission already granted: no banner needed, but the OS permission can
+    // be "granted" while the server has no push subscription for this user —
+    // e.g. after reinstalling the PWA, or if the stored subscription was
+    // cleared. In that state no push can ever be delivered. Silently re-run
+    // initPush so the subscription is re-created and saved to the DB. No UI.
+    if (Notification.permission === 'granted') {
+      if (variant === 'login') {
+        initPush(userId).then(token => { if (token) onPermissionGranted?.(token); });
+      }
+      return;
+    }
 
     // Don't show if user explicitly dismissed this session
     if (sessionStorage.getItem('horae_notif_dismissed')) return;
