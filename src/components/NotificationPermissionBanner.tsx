@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Bell, BellOff, X, Smartphone } from 'lucide-react';
 import { isPushConfigured, initPush, isPushOptedOut } from '../services/fcmService';
 
@@ -32,6 +32,11 @@ const NotificationPermissionBanner: React.FC<NotificationPermissionBannerProps> 
   const [visible, setVisible] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [granted, setGranted] = useState(false);
+  // initPush writes to the users table, which fires a realtime change event
+  // that refreshes app state and re-renders — which re-runs this effect. Guard
+  // so initPush is attempted at most once per mount, otherwise it loops and
+  // hammers the DB, making the whole app laggy and dropping UI updates.
+  const didAttemptInit = useRef(false);
   // Android only creates a distinct notification-settings entry for an
   // *installed* PWA — granting permission from a plain browser tab routes
   // notifications through the browser instead. Nudge un-installed users.
@@ -55,7 +60,8 @@ const NotificationPermissionBanner: React.FC<NotificationPermissionBannerProps> 
     // cleared. In that state no push can ever be delivered. Silently re-run
     // initPush so the subscription is re-created and saved to the DB. No UI.
     if (Notification.permission === 'granted') {
-      if (variant === 'login') {
+      if (variant === 'login' && !didAttemptInit.current) {
+        didAttemptInit.current = true;
         initPush(userId).then(token => { if (token) onPermissionGranted?.(token); });
       }
       return;
@@ -69,6 +75,8 @@ const NotificationPermissionBanner: React.FC<NotificationPermissionBannerProps> 
       // no click required. If the browser silently blocks the
       // programmatic call (no decision made), fall back to the banner
       // so there's at least one user-gesture path to grant it.
+      if (didAttemptInit.current) return;
+      didAttemptInit.current = true;
       (async () => {
         const token = await initPush(userId);
         if (token) {
