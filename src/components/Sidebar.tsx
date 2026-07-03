@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Building2,
   User,
@@ -79,6 +79,17 @@ export default function Sidebar({
   const [pushEnabled, setPushEnabled] = useState(
     typeof Notification !== 'undefined' && Notification.permission === 'granted' && !!activeUser.fcmToken
   );
+
+  // activeUser.fcmToken can change from outside this component — e.g. the
+  // server nulls it when a push subscription goes dead (410/404) so the
+  // client re-prompts. useState only reads it once, so without this the
+  // toggle would keep showing "on" forever after a silent server-side
+  // revocation, even though pushes have stopped arriving.
+  useEffect(() => {
+    setPushEnabled(
+      typeof Notification !== 'undefined' && Notification.permission === 'granted' && !!activeUser.fcmToken
+    );
+  }, [activeUser.fcmToken]);
 
   const handleTogglePush = async () => {
     setPushBusy(true);
