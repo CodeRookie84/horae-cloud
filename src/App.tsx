@@ -147,7 +147,7 @@ function AppInner() {
       dashboard: '/dashboard', notices: '/notices', checklists: '/checklists',
       tasks: '/tasks', quizzes: '/quizzes', sops: '/sops', 'admin-panel': '/admin',
       'horae-admin': '/horae-admin', 'checklist-report': '/checklist-report',
-      'team-talk': '/teamtalk',
+      'team-talk': '/teamtalk', swot: '/swot',
     };
     if (urlMap[tab] && location.pathname !== urlMap[tab]) {
       navigate(urlMap[tab]);
@@ -173,7 +173,7 @@ function AppInner() {
       '/dashboard': 'dashboard', '/notices': 'notices', '/checklists': 'checklists',
       '/tasks': 'tasks', '/quizzes': 'quizzes', '/sops': 'sops', '/admin': 'admin-panel',
       '/horae-admin': 'horae-admin', '/checklist-report': 'checklist-report',
-      '/teamtalk': 'team-talk',
+      '/teamtalk': 'team-talk', '/swot': 'swot',
     };
     
     const targetTab = reverseMap[mainRoute];
