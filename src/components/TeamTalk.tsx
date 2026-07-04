@@ -1284,6 +1284,17 @@ export default function TeamTalk({
     setPriorityUserIds(ids);
   }, [activeUser.id]);
 
+  /** Mark priority messages as seen (opened or dismissed) — persisted per-user. */
+  const handleMarkPrioritySeen = useCallback((msgIds: string[]) => {
+    setPrioritySeenIds(prev => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of msgIds) if (!next.has(id)) { next.add(id); changed = true; }
+      if (changed) localStorage.setItem(`horae_priority_seen_${activeUser.id}`, JSON.stringify([...next]));
+      return changed ? next : prev;
+    });
+  }, [activeUser.id]);
+
   /** The priority people resolved to full user objects, in saved order. */
   const priorityUsers = useMemo(
     () => priorityUserIds
@@ -1544,12 +1555,7 @@ export default function TeamTalk({
    *  "Seen" here is separate from channel read-state, so reading the chat
    *  normally never clears a priority person's "new" flag — only this does. */
   const handleOpenPriorityMessage = useCallback((msg: TeamTalkMessage) => {
-    setPrioritySeenIds(prev => {
-      if (prev.has(msg.id)) return prev;
-      const next = new Set(prev); next.add(msg.id);
-      localStorage.setItem(`horae_priority_seen_${activeUser.id}`, JSON.stringify([...next]));
-      return next;
-    });
+    handleMarkPrioritySeen([msg.id]);
     const ch = channels.find(c => c.id === msg.channelId);
     if (!ch) return;
     const isSameChannel = activeChannel?.id === ch.id;
@@ -1565,7 +1571,7 @@ export default function TeamTalk({
       setTimeout(() => setHighlightMsgId(msg.id), 50);
     };
     if (isSameChannel) openAndHighlight(); else setTimeout(openAndHighlight, 500);
-  }, [channels, activeChannel, activeUser.id, handleOpenThread, pushTeamTalkState]);
+  }, [channels, activeChannel, handleMarkPrioritySeen, handleOpenThread, pushTeamTalkState]);
 
   const handleStartTemporaryThread = useCallback(async () => {
     if (!activeChannel) return;
@@ -2012,6 +2018,7 @@ export default function TeamTalk({
               priorityMessages={priorityMessages}
               prioritySeenIds={prioritySeenIds}
               onOpenPriorityMessage={handleOpenPriorityMessage}
+              onMarkPrioritySeen={handleMarkPrioritySeen}
               onManagePriority={() => setShowPriorityManager(true)}
             />
           )}

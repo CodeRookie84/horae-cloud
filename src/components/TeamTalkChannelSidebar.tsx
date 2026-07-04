@@ -50,6 +50,8 @@ interface ChannelSidebarProps {
   prioritySeenIds?: Set<string>;
   /** Jump to a specific priority message (also marks it seen) */
   onOpenPriorityMessage?: (msg: TeamTalkMessage) => void;
+  /** Dismiss priority messages without opening (swipe / X / clear-all) */
+  onMarkPrioritySeen?: (msgIds: string[]) => void;
   /** Open the priority-people picker */
   onManagePriority?: () => void;
 }
@@ -80,6 +82,8 @@ function ChannelItem({
   canDeleteThread,
   mentionCount = 0,
   onMentionClick,
+  threadsExpanded = false,
+  onToggleThreads,
 }: {
   channel: ChatChannel;
   isActive: boolean;
@@ -96,14 +100,13 @@ function ChannelItem({
   mentionCount?: number;
   /** Called when the mention badge itself is clicked, to jump straight to that mention */
   onMentionClick?: () => void;
+  /** Thread-list expand state — lifted to the parent so it survives re-renders */
+  threadsExpanded?: boolean;
+  onToggleThreads?: () => void;
 }) {
   const Icon = getChannelIcon(channel.type);
   const unread = channel.unreadCount ?? 0;
   const [hovered, setHovered] = useState(false);
-  // Threads live nested under their chat, closed by default — the chat row only
-  // shows a total count; the arrow expands to the per-thread breakdown already
-  // shown below (each thread keeps its own separate unread badge).
-  const [threadsExpanded, setThreadsExpanded] = useState(false);
   const totalThreadUnread = activeThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 0), 0);
   const hasTrailingAction = Boolean(onClose || onReopen || (onDelete && channel.type !== 'dm' && channel.name !== 'general' && channel.name !== 'announcements'));
 
@@ -141,7 +144,7 @@ function ChannelItem({
           subtle chevron that reveals the thread list. */}
       {activeThreads.length > 0 && onOpenThread && (
         <button
-          onClick={e => { e.stopPropagation(); setThreadsExpanded(v => !v); }}
+          onClick={e => { e.stopPropagation(); onToggleThreads?.(); }}
           className={`absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1 py-0.5 rounded-full text-[10px] font-extrabold transition-all cursor-pointer z-10 ${
             totalThreadUnread > 0
               ? 'pl-1.5 pr-1 bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-200'
@@ -261,6 +264,7 @@ export default function TeamTalkChannelSidebar({
   priorityMessages = [],
   prioritySeenIds,
   onOpenPriorityMessage,
+  onMarkPrioritySeen,
   onManagePriority,
 }: ChannelSidebarProps) {
   const canManageChannels = currentUser.role === Role.ADMIN || currentUser.role === Role.MANAGER || currentUser.role === Role.SUPER_ADMIN;
@@ -303,12 +307,31 @@ export default function TeamTalkChannelSidebar({
 
   const [summaryOpen, setSummaryOpen] = useState(false);
 
+  // Collapse + thread-expand state is lifted here (not inside SubSection/ChannelItem)
+  // so it survives the frequent re-renders from unread/thread polling — otherwise
+  // SubSection, being defined inside render, remounts every poll and the Closed
+  // Direct Chats section would snap shut and threads would collapse on their own.
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set(['closed-dms']));
+  const [expandedThreadChannels, setExpandedThreadChannels] = useState<Set<string>>(new Set());
+  const toggleSection = (key: string) => setCollapsedSections(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
+  const toggleThreads = (channelId: string) => setExpandedThreadChannels(prev => {
+    const next = new Set(prev);
+    next.has(channelId) ? next.delete(channelId) : next.add(channelId);
+    return next;
+  });
+
   // Reusable sub-section: a collapsible mini-header + list
   function SubSection({
-    label, icon: Icon, channels: items, bgClass, iconClass, badgeClass, onAdd, onAddTitle,
+    sectionKey, label, icon: Icon, channels: items, bgClass, iconClass, badgeClass, onAdd, onAddTitle,
     onClose, onReopen, onDelete, onDeleteThread, onCloseThread,
-    alwaysShow = false, defaultCollapsed = false
+    alwaysShow = false,
   }: {
+    /** Stable, unique key for persisting this section's collapse state across re-renders */
+    sectionKey: string;
     label: string; icon: React.ElementType; channels: ChatChannel[];
     bgClass: string; iconClass: string; badgeClass: string;
     onAdd?: () => void; onAddTitle?: string;
@@ -316,16 +339,15 @@ export default function TeamTalkChannelSidebar({
     onDeleteThread?: (threadId: string) => void;
     onCloseThread?: (threadId: string) => void;
     alwaysShow?: boolean;
-    /** Starts closed and stays closed until the arrow is clicked — used for Closed Direct Chats */
-    defaultCollapsed?: boolean;
   }) {
-    const [collapsed, setCollapsed] = useState(defaultCollapsed);
+    const collapsed = collapsedSections.has(sectionKey);
+    const setCollapsed = () => toggleSection(sectionKey);
     const sectionUnread = items.reduce((s, ch) => s + (ch.unreadCount || 0), 0);
     if (items.length === 0 && !alwaysShow) return null;
     return (
       <div className="space-y-0.5">
         <div className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg ${bgClass}`}>
-          <button onClick={() => setCollapsed(v => !v)} className="flex-1 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wider cursor-pointer text-left">
+          <button onClick={setCollapsed} className="flex-1 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wider cursor-pointer text-left">
             {collapsed ? <ChevronRight className={`w-3 h-3 ${iconClass}`} /> : <ChevronDown className={`w-3 h-3 ${iconClass}`} />}
             <span className="flex-1">{label}</span>
           </button>
@@ -366,6 +388,8 @@ export default function TeamTalkChannelSidebar({
                   canDeleteThread={canManageChannels || ch.createdBy === currentUser.id}
                   mentionCount={chMentions.length}
                   onMentionClick={chMentions[0] && onOpenMention ? () => onOpenMention(chMentions[0]) : undefined}
+                  threadsExpanded={expandedThreadChannels.has(ch.id)}
+                  onToggleThreads={() => toggleThreads(ch.id)}
                 />
               );
             })}
@@ -424,6 +448,7 @@ export default function TeamTalkChannelSidebar({
             seenIds={prioritySeenIds ?? new Set()}
             channelNameById={Object.fromEntries(channelNameById)}
             onOpenMessage={m => onOpenPriorityMessage?.(m)}
+            onMarkSeen={ids => onMarkPrioritySeen?.(ids)}
             onManage={onManagePriority}
           />
         )}
@@ -483,6 +508,7 @@ export default function TeamTalkChannelSidebar({
                   <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-widest">Unread</span>
                 </div>
                 <SubSection
+                  sectionKey="dm-unread"
                   label="Direct Chats" icon={MessageCircle} channels={dmUnread}
                   bgClass="bg-sky-50 text-sky-800" iconClass="text-sky-500" badgeClass="bg-sky-200 text-sky-900"
                   onAdd={onStartDirectChat} onAddTitle="Start direct chat"
@@ -491,6 +517,7 @@ export default function TeamTalkChannelSidebar({
                   onCloseThread={onCloseThread}
                 />
                 <SubSection
+                  sectionKey="groups-unread"
                   label="Channels" icon={Users} channels={groupsUnread}
                   bgClass="bg-emerald-50 text-emerald-800" iconClass="text-emerald-500" badgeClass="bg-emerald-200 text-emerald-900"
                   onAdd={isClientAdmin ? onCreateChannel : undefined} onAddTitle="Add member"
@@ -499,6 +526,7 @@ export default function TeamTalkChannelSidebar({
                   onCloseThread={onCloseThread}
                 />
                 <SubSection
+                  sectionKey="rooms-unread"
                   label="Rooms" icon={Hash} channels={channelsUnread}
                   bgClass="bg-violet-50 text-violet-800" iconClass="text-violet-500" badgeClass="bg-violet-200 text-violet-900"
                   onDelete={isClientAdmin ? onDeleteChannel : undefined}
@@ -516,6 +544,7 @@ export default function TeamTalkChannelSidebar({
                   <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-widest">Everything Else</span>
                 </div>
                 <SubSection
+                  sectionKey="dm-read"
                   label="Direct Messages" icon={MessageCircle} channels={dmRead}
                   bgClass="bg-sky-50/60 text-sky-700" iconClass="text-sky-400" badgeClass="bg-sky-100 text-sky-800"
                   onAdd={onStartDirectChat} onAddTitle="Start direct chat"
@@ -525,6 +554,7 @@ export default function TeamTalkChannelSidebar({
                   alwaysShow={true}
                 />
                 <SubSection
+                  sectionKey="groups-read"
                   label="Channels" icon={Users} channels={groupsRead}
                   bgClass="bg-emerald-50/60 text-emerald-700" iconClass="text-emerald-400" badgeClass="bg-emerald-100 text-emerald-800"
                   onAdd={isClientAdmin ? onCreateChannel : undefined} onAddTitle="Add member"
@@ -534,6 +564,7 @@ export default function TeamTalkChannelSidebar({
                   alwaysShow={true}
                 />
                 <SubSection
+                  sectionKey="rooms-read"
                   label="Rooms" icon={Hash} channels={channelsRead}
                   bgClass="bg-violet-50/60 text-violet-700" iconClass="text-violet-400" badgeClass="bg-violet-100 text-violet-800"
                   onDelete={isClientAdmin ? onDeleteChannel : undefined}
@@ -552,11 +583,11 @@ export default function TeamTalkChannelSidebar({
                   <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-widest">Closed Direct Chats</span>
                 </div>
                 <SubSection
+                  sectionKey="closed-dms"
                   label="Closed Direct Chats" icon={MessageCircle} channels={closedDMChannels}
                   bgClass="bg-slate-100 text-slate-600" iconClass="text-slate-400" badgeClass="bg-slate-200 text-slate-700"
                   onReopen={onReopenDM}
                   alwaysShow={true}
-                  defaultCollapsed={true}
                 />
               </div>
             )}

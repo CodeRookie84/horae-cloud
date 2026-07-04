@@ -11,7 +11,7 @@
  * presentational and reuses the same slate/ink/gold palette as the rest of
  * Team Talk — no architectural change.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Star, Settings2, X, Search, Check } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { User as AppUser, TeamTalkMessage } from '../types';
@@ -59,19 +59,23 @@ export function PriorityStrip({
   seenIds,
   channelNameById,
   onOpenMessage,
+  onMarkSeen,
   onManage,
 }: {
   priorityUsers: AppUser[];
   /** Recent messages from priority people, newest first (read-state independent) */
   priorityMessages: TeamTalkMessage[];
-  /** Message IDs the user has explicitly opened from this strip — cleared here, not by channel-read */
+  /** Message IDs the user has explicitly opened/dismissed from this strip — cleared here, not by channel-read */
   seenIds: Set<string>;
   channelNameById: Record<string, string>;
   /** Jump to a specific priority message (also marks it seen) */
   onOpenMessage: (msg: TeamTalkMessage) => void;
+  /** Dismiss messages without opening them (swipe / X / clear-all) */
+  onMarkSeen: (msgIds: string[]) => void;
   onManage: () => void;
 }) {
   const [openUserId, setOpenUserId] = useState<string | null>(null);
+  const touchStartX = useRef<number | null>(null);
 
   // Group messages by their priority sender, newest first (input already sorted).
   const messagesByUser = useMemo(() => {
@@ -86,7 +90,11 @@ export function PriorityStrip({
     (messagesByUser[uid] ?? []).filter(m => !seenIds.has(m.id)).length;
 
   const openUser = priorityUsers.find(u => u.id === openUserId) || null;
-  const openUserMessages = openUserId ? (messagesByUser[openUserId] ?? []) : [];
+  // Only unopened messages appear in the dropdown — opening or dismissing one
+  // removes it from the list (and drops the avatar's green count).
+  const openUserMessages = openUserId
+    ? (messagesByUser[openUserId] ?? []).filter(m => !seenIds.has(m.id))
+    : [];
 
   return (
     <div className="relative rounded-xl bg-amber-50/70 border border-amber-100 px-2.5 py-2">
@@ -156,22 +164,40 @@ export function PriorityStrip({
           <div className="absolute left-2.5 right-2.5 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-30 max-h-72 overflow-y-auto py-1">
             <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-100">
               <span className="text-[12px] font-bold text-slate-700 truncate">{openUser.name}</span>
-              <button onClick={() => setOpenUserId(null)} className="p-0.5 hover:bg-slate-100 rounded cursor-pointer">
-                <X className="w-3.5 h-3.5 text-slate-400" />
-              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                {openUserMessages.length > 0 && (
+                  <button
+                    onClick={() => onMarkSeen(openUserMessages.map(m => m.id))}
+                    className="text-[11px] font-bold text-emerald-700 hover:bg-emerald-50 rounded px-1.5 py-0.5 cursor-pointer"
+                  >
+                    Clear all
+                  </button>
+                )}
+                <button onClick={() => setOpenUserId(null)} className="p-0.5 hover:bg-slate-100 rounded cursor-pointer">
+                  <X className="w-3.5 h-3.5 text-slate-400" />
+                </button>
+              </div>
             </div>
             {openUserMessages.length === 0 ? (
-              <p className="text-[12px] text-slate-400 px-3 py-3">No recent messages.</p>
+              <p className="text-[12px] text-slate-400 px-3 py-4 text-center">All caught up.</p>
             ) : (
-              openUserMessages.map(m => {
-                const isUnseen = !seenIds.has(m.id);
-                return (
+              openUserMessages.map(m => (
+                <div
+                  key={m.id}
+                  className="flex items-stretch hover:bg-emerald-50/40"
+                  onTouchStart={e => { touchStartX.current = e.touches[0].clientX; }}
+                  onTouchEnd={e => {
+                    if (touchStartX.current === null) return;
+                    const dx = e.changedTouches[0].clientX - touchStartX.current;
+                    touchStartX.current = null;
+                    if (dx < -50) onMarkSeen([m.id]); // swipe left to dismiss
+                  }}
+                >
                   <button
-                    key={m.id}
                     onClick={() => { onOpenMessage(m); setOpenUserId(null); }}
-                    className={`w-full flex items-start gap-2 px-3 py-2 text-left cursor-pointer transition-colors ${isUnseen ? 'bg-emerald-50/60 hover:bg-emerald-50' : 'hover:bg-slate-50'}`}
+                    className="flex-1 min-w-0 flex items-start gap-2 px-3 py-2 text-left cursor-pointer"
                   >
-                    <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${isUnseen ? 'bg-emerald-500' : 'bg-transparent'}`} />
+                    <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-500" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[12px] font-bold text-slate-600 truncate">
@@ -182,8 +208,15 @@ export function PriorityStrip({
                       <p className="text-[13px] text-slate-700 truncate">{messagePreview(m)}</p>
                     </div>
                   </button>
-                );
-              })
+                  <button
+                    onClick={() => onMarkSeen([m.id])}
+                    title="Dismiss"
+                    className="px-2 flex items-center text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))
             )}
           </div>
         </>
