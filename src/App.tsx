@@ -367,14 +367,31 @@ function AppInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Poll notifications every 15s — realtime subscription alone is insufficient
-  // because the 'notifications' table is not in the supabase_realtime publication,
-  // so INSERT events never arrive via postgres_changes.
+  // Cross-device sync fallback.
+  //
+  // Live updates come from the realtime postgres_changes subscription, but that
+  // silently drops events: a mobile PWA's websocket is suspended while it's
+  // backgrounded and missed events are never replayed, so a change made on
+  // another device (assign/delete a task, post a notice) stayed invisible until
+  // a manual refresh. This re-fetches the collaborative data whenever the app
+  // regains focus — the instant catch-up when you look at your phone — and on a
+  // light interval as a safety net. It also covers the 'notifications' table.
+  //
+  // Deliberately lighter than refreshLocalState: no chat/quiz/SOP fetch and no
+  // tab-navigation side effects, so it's safe to run frequently.
   useEffect(() => {
     if (!activeUser) return;
-    const pollNotifications = async () => {
+    const syncFromServer = async () => {
       try {
-        const notificationsList = await store.getNotifications();
+        const [notificationsList, tasksList, noticesList, checklistsList] = await Promise.all([
+          store.getNotifications(),
+          store.getTasks(),
+          store.getNotices(),
+          store.getChecklists(),
+        ]);
+        setTasks(tasksList);
+        setNotices(noticesList);
+        setChecklists(checklistsList);
         if (seenNotifIdsRef.current === null) {
           seenNotifIdsRef.current = new Set(notificationsList.map((n: any) => n.id));
         } else {
@@ -387,10 +404,19 @@ function AppInner() {
           seenNotifIdsRef.current = new Set(notificationsList.map((n: any) => n.id));
         }
         setNotifications(notificationsList);
-      } catch { /* silent — next poll will retry */ }
+      } catch { /* silent — next sync will retry */ }
     };
-    const interval = setInterval(pollNotifications, 15000);
-    return () => clearInterval(interval);
+
+    const onVisible = () => { if (document.visibilityState === 'visible') syncFromServer(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', syncFromServer);
+    const interval = setInterval(syncFromServer, 15000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', syncFromServer);
+      clearInterval(interval);
+    };
   }, [activeUser?.id]);
 
   // Poll for chat unread counts to keep sidebar updated
