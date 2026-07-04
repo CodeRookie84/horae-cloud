@@ -1674,3 +1674,101 @@ export function subscribeToChannelMembers(
     supabase.removeChannel(channel);
   };
 }
+
+// ─── Priority Users ("VIP" labelling) ─────────────────────────────────────────
+// A user can mark up to MAX_PRIORITY_USERS teammates as "priority" so their
+// messages are surfaced on the chat list and trigger a distinct break-through
+// push. Stored server-side (chat_priority_users) — not localStorage — so the
+// notify-dispatcher edge function can read the same list.
+
+export const MAX_PRIORITY_USERS = 3;
+
+/** IDs of the teammates the given user has marked as priority, in saved order. */
+export async function getPriorityUserIds(userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('chat_priority_users')
+    .select('priority_user_id, position')
+    .eq('user_id', userId)
+    .order('position', { ascending: true });
+
+  if (error || !data) return [];
+  return data.map((r: any) => r.priority_user_id);
+}
+
+/**
+ * Replace the user's priority list with `priorityIds` (capped at
+ * MAX_PRIORITY_USERS, order preserved). Idempotent — safe to call with the
+ * full desired set every time the user toggles a star.
+ */
+export async function setPriorityUserIds(userId: string, priorityIds: string[]): Promise<void> {
+  const capped = Array.from(new Set(priorityIds)).slice(0, MAX_PRIORITY_USERS);
+
+  // Simplest correct approach: clear the owner's rows, then re-insert the set.
+  await supabase.from('chat_priority_users').delete().eq('user_id', userId);
+  if (capped.length === 0) return;
+
+  await supabase.from('chat_priority_users').insert(
+    capped.map((pid, i) => ({ user_id: userId, priority_user_id: pid, position: i }))
+  );
+}
+
+/**
+ * How many unread messages each priority sender has waiting for `userId`,
+ * across every channel/DM they share. Returns { [priorityUserId]: count }.
+ * One members query + one messages query — cheap enough to poll alongside the
+ * sidebar's existing unread refresh.
+ */
+export async function getPriorityUnreadCounts(
+  userId: string,
+  priorityIds: string[]
+): Promise<Record<string, number>> {
+  const result: Record<string, number> = {};
+  if (priorityIds.length === 0) return result;
+
+  const { data: memberRows } = await supabase
+    .from('chat_members')
+    .select('channel_id, last_read_at')
+    .eq('user_id', userId);
+
+  if (!memberRows || memberRows.length === 0) return result;
+
+  const lastReadByChannel = new Map<string, string>();
+  memberRows.forEach((r: any) =>
+    lastReadByChannel.set(r.channel_id, r.last_read_at ?? '1970-01-01T00:00:00Z')
+  );
+  const channelIds = Array.from(lastReadByChannel.keys());
+
+  // Pull recent messages from the priority senders in the user's channels, then
+  // compare each against that channel's last_read_at (per-channel, so a single
+  // gt() filter can't do it server-side).
+  const { data: msgs } = await supabase
+    .from('chat_messages')
+    .select('channel_id, sender_id, created_at')
+    .in('channel_id', channelIds)
+    .in('sender_id', priorityIds)
+    .eq('is_deleted', false)
+    .is('thread_id', null)
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  (msgs ?? []).forEach((m: any) => {
+    const lastRead = lastReadByChannel.get(m.channel_id);
+    if (lastRead && m.created_at > lastRead) {
+      result[m.sender_id] = (result[m.sender_id] ?? 0) + 1;
+    }
+  });
+
+  return result;
+}
+
+/** Realtime: fire when this user's own priority list changes (e.g. edited on another device). */
+export function subscribeToPriorityUsers(userId: string, onUpdate: () => void): () => void {
+  const channel = supabase
+    .channel(`sync-priority-${userId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_priority_users', filter: `user_id=eq.${userId}` }, onUpdate)
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}

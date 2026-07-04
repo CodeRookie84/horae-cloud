@@ -11,7 +11,7 @@ import {
   ArrowLeft, MessageCircle, Sun, Building2, Users, Hash,
   Megaphone, MessageSquare, X, Search, Plus,
   Bell, CheckSquare, GitBranch, UserCheck, ChevronDown, ChevronUp,
-  Users2, Pin, Trash2, GitPullRequest, UserPlus, CheckCircle2,
+  Users2, Pin, Trash2, GitPullRequest, UserPlus, CheckCircle2, Star,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type { ChatChannel, TeamTalkMessage, Tenant } from '../types';
@@ -26,6 +26,7 @@ import TeamTalkMessageBubble from './TeamTalkMessageBubble';
 import TeamTalkInput from './TeamTalkInput';
 import TeamTalkPinnedBanner from './TeamTalkPinnedBanner';
 import TeamTalkQuickReport from './TeamTalkQuickReport';
+import { PriorityStrip, PriorityManagerModal } from './TeamTalkPriority';
 
 // ─── Types ────────────────────────────────────────────────────
 type TalkTab = 'my-day' | 'my-outlet' | 'directory';
@@ -603,7 +604,7 @@ function MessageList({
   const unreadIdSet = new Set(unreadIds ?? []);
   const firstUnreadId = unreadIds?.[0];
   return (
-    <div className="flex-1 overflow-y-auto px-3 py-3 pb-32 space-y-0.5" id="message-list">
+    <div className="flex-1 overflow-y-auto px-3 py-3 pb-32 space-y-0.5 bg-slate-50/50" id="message-list">
       {messages.map((msg, i) => {
         const dateStr = new Date(msg.createdAt).toLocaleDateString('en-IN', { weekday: 'long', month: 'long', day: 'numeric' });
         const showDateSep = dateStr !== lastDate;
@@ -1080,6 +1081,12 @@ export default function TeamTalk({
   // ── Mentions ───────────────────────────────────────────────
   const [mentionMessages, setMentionMessages] = useState<TeamTalkMessage[]>([]);
 
+  // ── Priority people ("VIP") ────────────────────────────────
+  const [priorityUserIds, setPriorityUserIds] = useState<string[]>([]);
+  /** { [priorityUserId]: unread count from that person } — polled with unread counts */
+  const [priorityUnread, setPriorityUnread] = useState<Record<string, number>>({});
+  const [showPriorityManager, setShowPriorityManager] = useState(false);
+
   // Active & Unread threads
   const [activeThreads, setActiveThreads] = useState<TeamTalkMessage[]>([]);
   const [unreadThreads, setUnreadThreads] = useState<TeamTalkMessage[]>([]);
@@ -1228,6 +1235,41 @@ export default function TeamTalk({
     return () => { unsub(); };
   }, [loadMentions]);
 
+  // ── Load Priority people + their unread counts ─────────────
+  const loadPriorityUsers = useCallback(async () => {
+    const ids = await chatService.getPriorityUserIds(activeUser.id);
+    setPriorityUserIds(ids);
+  }, [activeUser.id]);
+
+  const refreshPriorityUnread = useCallback(async () => {
+    if (priorityUserIds.length === 0) { setPriorityUnread({}); return; }
+    const counts = await chatService.getPriorityUnreadCounts(activeUser.id, priorityUserIds);
+    setPriorityUnread(counts);
+  }, [activeUser.id, priorityUserIds]);
+
+  useEffect(() => {
+    loadPriorityUsers();
+    const unsub = chatService.subscribeToPriorityUsers(activeUser.id, loadPriorityUsers);
+    return () => { unsub(); };
+  }, [loadPriorityUsers, activeUser.id]);
+
+  useEffect(() => {
+    refreshPriorityUnread();
+  }, [refreshPriorityUnread]);
+
+  const handleSavePriorityUsers = useCallback(async (ids: string[]) => {
+    await chatService.setPriorityUserIds(activeUser.id, ids);
+    setPriorityUserIds(ids);
+  }, [activeUser.id]);
+
+  /** The priority people resolved to full user objects, in saved order. */
+  const priorityUsers = useMemo(
+    () => priorityUserIds
+      .map(id => allTenantUsers.find(u => u.id === id))
+      .filter((u): u is AppUser => Boolean(u)),
+    [priorityUserIds, allTenantUsers]
+  );
+
   // ── Load Active Threads ────────────────────────────────────
   const loadActiveThreads = useCallback(async () => {
     const [threads, unread] = await Promise.all([
@@ -1247,9 +1289,10 @@ export default function TeamTalk({
     const interval = setInterval(() => {
       loadActiveThreads();
       refreshUnreadCounts();
+      refreshPriorityUnread();
     }, 10000);
     return () => clearInterval(interval);
-  }, [loadActiveThreads, refreshUnreadCounts]);
+  }, [loadActiveThreads, refreshUnreadCounts, refreshPriorityUnread]);
 
   // ── Load messages for the current tab's channel ────────────
   const loadMessages = useCallback(async (channel: ChatChannel) => {
@@ -1816,6 +1859,30 @@ export default function TeamTalk({
     }).map(m => m.id);
   }, [visibleMessages, searchQuery]);
 
+  /**
+   * Template C — priority senders who have unread messages in the *currently
+   * open* channel. Drives the gold spotlight banner under the chat header so a
+   * priority person's message can't be scrolled past unnoticed.
+   */
+  const prioritySendersInChannel = React.useMemo(() => {
+    if (priorityUserIds.length === 0 || pendingUnreadIds.length === 0) return [];
+    const unreadSet = new Set(pendingUnreadIds);
+    const seen = new Set<string>();
+    const out: { id: string; name: string; firstUnreadId: string }[] = [];
+    for (const m of messages) {
+      if (unreadSet.has(m.id) && priorityUserIds.includes(m.senderId) && !seen.has(m.senderId)) {
+        seen.add(m.senderId);
+        out.push({ id: m.senderId, name: m.senderName.split(' - ')[0], firstUnreadId: m.id });
+      }
+    }
+    return out;
+  }, [messages, pendingUnreadIds, priorityUserIds]);
+
+  const [prioritySpotlightDismissed, setPrioritySpotlightDismissed] = useState(false);
+  // Re-arm the spotlight whenever a new priority sender appears or the channel changes.
+  const prioritySpotlightKey = prioritySendersInChannel.map(s => s.id).join(',') + '@' + (activeChannel?.id ?? '');
+  useEffect(() => { setPrioritySpotlightDismissed(false); }, [prioritySpotlightKey]);
+
   // ── Render ─────────────────────────────────────────────────
   return (
     <div className="h-full flex flex-col bg-white overflow-hidden" id="team-talk-container">
@@ -1892,6 +1959,10 @@ export default function TeamTalk({
               onOpenThread={handleNavigateToThread}
               onDeleteThread={handleDelete}
               onCloseThread={handleCloseThread}
+              priorityUsers={priorityUsers}
+              priorityUnread={priorityUnread}
+              onOpenPriorityUser={u => { handleDMUser(u); setShowMobileSidebar(false); }}
+              onManagePriority={() => setShowPriorityManager(true)}
             />
           )}
         </div>
@@ -1910,7 +1981,7 @@ export default function TeamTalk({
           ) : (
             <>
               {/* Channel header */}
-              <div className="flex items-center gap-3 px-4 py-2.5 bg-white/50 backdrop-blur-md border-b border-white/60 shadow-sm shrink-0">
+              <div className="flex items-center gap-3 px-4 py-2.5 bg-white/80 backdrop-blur-md border-b border-slate-100 shrink-0">
                 {/* Mobile Drawer Menu Button */}
                 <button 
                   onClick={() => {
@@ -2095,6 +2166,35 @@ export default function TeamTalk({
                 </button>
               </div>
             )}
+
+          {/* Priority spotlight (Template C) — a priority person has unread here */}
+          {prioritySendersInChannel.length > 0 && !prioritySpotlightDismissed && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200">
+              <Star className="w-4 h-4 fill-amber-500 text-amber-500 shrink-0" />
+              <span className="text-[13px] text-amber-800 flex-1 min-w-0 truncate">
+                <span className="font-bold">
+                  {prioritySendersInChannel.map(s => s.name).join(', ')}
+                </span>
+                {' '}· priority · new message{prioritySendersInChannel.length > 1 ? 's' : ''}
+              </span>
+              <button
+                onClick={() => {
+                  setHighlightMsgId(undefined);
+                  setTimeout(() => setHighlightMsgId(prioritySendersInChannel[0].firstUnreadId), 50);
+                }}
+                className="shrink-0 text-[12px] font-bold text-amber-900 bg-amber-300 hover:bg-amber-400 rounded-lg px-3 py-1 transition-colors cursor-pointer"
+              >
+                Jump
+              </button>
+              <button
+                onClick={() => setPrioritySpotlightDismissed(true)}
+                className="shrink-0 p-1 rounded-md text-amber-600 hover:bg-amber-200 transition-colors cursor-pointer"
+                title="Dismiss"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* Pinned banner */}
           {pinnedMessage && !pinnedDismissed && activeChannel && (
@@ -2288,6 +2388,17 @@ export default function TeamTalk({
             channel={deletingChannel}
             onClose={() => setDeletingChannel(null)}
             onConfirm={handleDeleteChannel}
+          />
+        )}
+
+        {showPriorityManager && (
+          <PriorityManagerModal
+            key="priority-manager"
+            allUsers={allTenantUsers}
+            currentUserId={activeUser.id}
+            initialSelectedIds={priorityUserIds}
+            onClose={() => setShowPriorityManager(false)}
+            onSave={handleSavePriorityUsers}
           />
         )}
 

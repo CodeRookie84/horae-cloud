@@ -259,6 +259,19 @@ async function handleChatMessage(msg: any) {
   recipientIds.delete(msg.sender_id);
   if (recipientIds.size === 0) return;
 
+  // Recipients who have marked this sender as a "priority" person get a
+  // distinct, unmistakable push (⭐ + its own tag + high-priority log) so a
+  // contact they can't miss breaks through even in a busy channel.
+  const prioritizedBy = new Set<string>();
+  {
+    const { data: prio } = await supabase
+      .from("chat_priority_users")
+      .select("user_id")
+      .eq("priority_user_id", msg.sender_id)
+      .in("user_id", Array.from(recipientIds));
+    (prio || []).forEach((r: any) => prioritizedBy.add(r.user_id));
+  }
+
   const preview = msg.message_type === "voice" ? "🎤 Voice message"
     : msg.message_type === "image" ? "📷 Photo"
     : (msg.content || "").slice(0, 80);
@@ -271,21 +284,26 @@ async function handleChatMessage(msg: any) {
     if (!await checkAntiSpam(userId, channel.tenant_id, "chat_message", msg.id)) continue;
 
     const isMentionForUser = mentionUserIds.has(userId);
-    const pushTitle = isMentionForUser
-      ? `🔔 ${msg.sender_name} mentioned you in ${channelLabel}`
-      : msg.thread_id
-        ? `💬 ${msg.sender_name} replied in ${channelLabel}`
-        : `💬 ${msg.sender_name} in ${channelLabel}`;
+    const isPriorityForUser = prioritizedBy.has(userId);
+    const pushTitle = isPriorityForUser
+      ? `⭐ Priority · ${msg.sender_name} in ${channelLabel}`
+      : isMentionForUser
+        ? `🔔 ${msg.sender_name} mentioned you in ${channelLabel}`
+        : msg.thread_id
+          ? `💬 ${msg.sender_name} replied in ${channelLabel}`
+          : `💬 ${msg.sender_name} in ${channelLabel}`;
 
     // Push/in-app only — WhatsApp for Team Talk messages stays manual, via the "Notify on WhatsApp" button.
+    // Priority senders use their own push tag so they don't collapse into the
+    // channel's regular chat notification, and are logged as urgent.
     await sendNotifications(user, {
       waMessage: buildChatMessage(msg.sender_name || "Someone", channel.name, preview, deepLink),
       waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [msg.sender_name || "Someone", `${preview} ${deepLink}`] },
       pushTitle,
       pushBody: preview,
       url: deepLink,
-      pushTag: `chat-${msg.channel_id}`,
-    }, channel.tenant_id, "chat_message", msg.id, false, true);
+      pushTag: isPriorityForUser ? `chat-priority-${msg.channel_id}` : `chat-${msg.channel_id}`,
+    }, channel.tenant_id, "chat_message", msg.id, isPriorityForUser, true);
   }
 }
 
