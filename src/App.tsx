@@ -40,6 +40,7 @@ import ClientAdminPanel from "./components/ClientAdminPanel";
 import Login from "./components/Login";
 import NotificationPermissionBanner from "./components/NotificationPermissionBanner";
 import TeamTalk from "./components/TeamTalk";
+import SwotCompass from "./components/swot/SwotCompass";
 
 
 /** Single row in the notifications dropdown — swipe left/right to dismiss, tap to open + mark read. */
@@ -1244,6 +1245,13 @@ function AppInner() {
                         return taskId;
                       }}
                       onBack={handleBack}
+                    />
+                  )}
+
+                  {activeTab === "swot" && (
+                    <SwotCompass
+                      activeUser={activeUser}
+                      tenants={tenants}
                     />
                   )}
 

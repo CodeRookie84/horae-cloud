@@ -21,7 +21,8 @@ import {
   Key,
   MessageCircle,
   Bell,
-  BellOff
+  BellOff,
+  Compass
 } from "lucide-react";
 import { Client, Tenant, User as AppUser, Role, Department } from "../types";
 import { store } from "../services/store";
@@ -433,6 +434,25 @@ export default function Sidebar({
                     {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
                   </span>
                 )}
+              </button>
+
+              {/* ── Growth Compass (personal SWOT) ── */}
+              <div className="text-sm text-slate-500 font-medium tracking-wide mt-4 mb-1 px-1">
+                Growth
+              </div>
+              <button
+                id="btn-swot"
+                onClick={() => handleTabClick("swot")}
+                className={`w-full flex items-center justify-between px-2.5 py-1.8 rounded-md text-sm font-medium transition-all cursor-pointer ${
+                  activeTab === "swot"
+                    ? "bg-gradient-to-r from-[#162D4E] to-slate-800 border border-[#C5A880]/30 text-slate-800 shadow-lg font-semibold"
+                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Compass className="w-3.5 h-3.5 text-[#C5A880]" />
+                  <span>Growth Compass</span>
+                </div>
               </button>
 
               {activeUser.role === Role.ADMIN && (
