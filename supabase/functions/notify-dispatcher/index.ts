@@ -536,6 +536,13 @@ async function sendWebPush(subscriptionJson: string, payload: {
   try {
     await webpush.sendNotification(subscription, messagePayload, {
       TTL: 86400,
+      // High urgency tells the push service (FCM) to deliver the message
+      // immediately even when the device is in Doze / battery-saver. Aggressive
+      // Android OEMs (esp. Xiaomi/MIUI) silently defer or drop "normal" urgency
+      // pushes once the app has been idle in the background — the send is
+      // accepted (201) but the service worker is never woken to show it. Set
+      // via the Urgency header so it works regardless of web-push version.
+      headers: { Urgency: "high" },
       vapidDetails: {
         subject: VAPID_SUBJECT,
         publicKey: VAPID_PUBLIC_KEY,
