@@ -540,9 +540,10 @@ async function sendWebPush(subscriptionJson: string, payload: {
       // immediately even when the device is in Doze / battery-saver. Aggressive
       // Android OEMs (esp. Xiaomi/MIUI) silently defer or drop "normal" urgency
       // pushes once the app has been idle in the background — the send is
-      // accepted (201) but the service worker is never woken to show it. Set
-      // via the Urgency header so it works regardless of web-push version.
-      headers: { Urgency: "high" },
+      // accepted (201) but the service worker is never woken to show it.
+      // Use the library's `urgency` option (the documented way) so it isn't
+      // overridden by web-push's own default Urgency header.
+      urgency: "high",
       vapidDetails: {
         subject: VAPID_SUBJECT,
         publicKey: VAPID_PUBLIC_KEY,
