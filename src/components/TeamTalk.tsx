@@ -1083,8 +1083,20 @@ export default function TeamTalk({
 
   // ── Priority people ("VIP") ────────────────────────────────
   const [priorityUserIds, setPriorityUserIds] = useState<string[]>([]);
-  /** { [priorityUserId]: unread count from that person } — polled with unread counts */
-  const [priorityUnread, setPriorityUnread] = useState<Record<string, number>>({});
+  /** Recent messages from priority people (read-state independent), newest first */
+  const [priorityMessages, setPriorityMessages] = useState<TeamTalkMessage[]>([]);
+  /**
+   * Message IDs the user has explicitly opened from the priority strip. This is
+   * deliberately separate from channel read-state: opening a busy chat to read
+   * someone else must NOT clear a priority person's "new" flag — only opening it
+   * from the strip does. Persisted per-user so it survives reloads.
+   */
+  const [prioritySeenIds, setPrioritySeenIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem(`horae_priority_seen_${activeUser.id}`);
+      return new Set<string>(stored ? JSON.parse(stored) : []);
+    } catch { return new Set<string>(); }
+  });
   const [showPriorityManager, setShowPriorityManager] = useState(false);
 
   // Active & Unread threads
@@ -1241,10 +1253,20 @@ export default function TeamTalk({
     setPriorityUserIds(ids);
   }, [activeUser.id]);
 
-  const refreshPriorityUnread = useCallback(async () => {
-    if (priorityUserIds.length === 0) { setPriorityUnread({}); return; }
-    const counts = await chatService.getPriorityUnreadCounts(activeUser.id, priorityUserIds);
-    setPriorityUnread(counts);
+  const refreshPriorityMessages = useCallback(async () => {
+    if (priorityUserIds.length === 0) { setPriorityMessages([]); return; }
+    const msgs = await chatService.getPriorityMessages(activeUser.id, priorityUserIds);
+    setPriorityMessages(msgs);
+    // Prune "seen" ids down to messages still in the recent window so the
+    // localStorage set can't grow without bound.
+    setPrioritySeenIds(prev => {
+      const liveIds = new Set(msgs.map(m => m.id));
+      const pruned = new Set([...prev].filter(id => liveIds.has(id)));
+      if (pruned.size !== prev.size) {
+        localStorage.setItem(`horae_priority_seen_${activeUser.id}`, JSON.stringify([...pruned]));
+      }
+      return pruned;
+    });
   }, [activeUser.id, priorityUserIds]);
 
   useEffect(() => {
@@ -1254,8 +1276,8 @@ export default function TeamTalk({
   }, [loadPriorityUsers, activeUser.id]);
 
   useEffect(() => {
-    refreshPriorityUnread();
-  }, [refreshPriorityUnread]);
+    refreshPriorityMessages();
+  }, [refreshPriorityMessages]);
 
   const handleSavePriorityUsers = useCallback(async (ids: string[]) => {
     await chatService.setPriorityUserIds(activeUser.id, ids);
@@ -1289,10 +1311,10 @@ export default function TeamTalk({
     const interval = setInterval(() => {
       loadActiveThreads();
       refreshUnreadCounts();
-      refreshPriorityUnread();
+      refreshPriorityMessages();
     }, 10000);
     return () => clearInterval(interval);
-  }, [loadActiveThreads, refreshUnreadCounts, refreshPriorityUnread]);
+  }, [loadActiveThreads, refreshUnreadCounts, refreshPriorityMessages]);
 
   // ── Load messages for the current tab's channel ────────────
   const loadMessages = useCallback(async (channel: ChatChannel) => {
@@ -1517,6 +1539,33 @@ export default function TeamTalk({
       setTimeout(openAndHighlight, 500);
     }
   }, [channels, activeChannel, activeUser.id, handleOpenThread, pushTeamTalkState, loadActiveThreads]);
+
+  /** Open a specific priority message: mark it seen (persist), then jump to it.
+   *  "Seen" here is separate from channel read-state, so reading the chat
+   *  normally never clears a priority person's "new" flag — only this does. */
+  const handleOpenPriorityMessage = useCallback((msg: TeamTalkMessage) => {
+    setPrioritySeenIds(prev => {
+      if (prev.has(msg.id)) return prev;
+      const next = new Set(prev); next.add(msg.id);
+      localStorage.setItem(`horae_priority_seen_${activeUser.id}`, JSON.stringify([...next]));
+      return next;
+    });
+    const ch = channels.find(c => c.id === msg.channelId);
+    if (!ch) return;
+    const isSameChannel = activeChannel?.id === ch.id;
+    setActiveChannel(ch);
+    setShowMobileSidebar(false);
+    pushTeamTalkState('channel');
+    const openAndHighlight = async () => {
+      if (msg.threadId) {
+        const root = await chatService.getMessageById(msg.threadId);
+        if (root) await handleOpenThread(root);
+      }
+      setHighlightMsgId(undefined);
+      setTimeout(() => setHighlightMsgId(msg.id), 50);
+    };
+    if (isSameChannel) openAndHighlight(); else setTimeout(openAndHighlight, 500);
+  }, [channels, activeChannel, activeUser.id, handleOpenThread, pushTeamTalkState]);
 
   const handleStartTemporaryThread = useCallback(async () => {
     if (!activeChannel) return;
@@ -1924,7 +1973,7 @@ export default function TeamTalk({
         <div 
           className={`shrink-0 flex md:static absolute inset-y-0 left-0 z-50 transform transition-transform duration-300 w-full max-w-none md:w-auto md:max-w-none md:translate-x-0 ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full shadow-2xl md:shadow-none'}`}
         >
-          {loadingChannels ? (
+          {loadingChannels && channels.length === 0 ? (
             <div className="w-full md:w-56 lg:w-64 bg-indigo-50/40 backdrop-blur-md flex items-center justify-center">
               <div className="w-5 h-5 border-2 border-slate-200 border-t-[#C5A880] rounded-full animate-spin" />
             </div>
@@ -1960,8 +2009,9 @@ export default function TeamTalk({
               onDeleteThread={handleDelete}
               onCloseThread={handleCloseThread}
               priorityUsers={priorityUsers}
-              priorityUnread={priorityUnread}
-              onOpenPriorityUser={u => { handleDMUser(u); setShowMobileSidebar(false); }}
+              priorityMessages={priorityMessages}
+              prioritySeenIds={prioritySeenIds}
+              onOpenPriorityMessage={handleOpenPriorityMessage}
               onManagePriority={() => setShowPriorityManager(true)}
             />
           )}

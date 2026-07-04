@@ -14,10 +14,24 @@
 import React, { useMemo, useState } from 'react';
 import { Star, Settings2, X, Search, Check } from 'lucide-react';
 import { motion } from 'motion/react';
-import type { User as AppUser } from '../types';
+import type { User as AppUser, TeamTalkMessage } from '../types';
 import { MAX_PRIORITY_USERS } from '../services/chatService';
 
-const GOLD = '#C5A880';
+function messagePreview(m: TeamTalkMessage): string {
+  if (m.isDeleted) return 'Message deleted';
+  if (m.messageType === 'voice') return '🎤 Voice message';
+  if (m.messageType === 'image') return '📷 Photo';
+  // Strip @[Name](id) mention markup down to just the name for the preview.
+  return (m.content || '').replace(/@\[([^\]]+)\]\([^)]+\)/g, '@$1');
+}
+
+function shortTime(iso: string): string {
+  const d = new Date(iso);
+  const sameDay = new Date().toDateString() === d.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 
 function Avatar({ user, size = 40 }: { user: AppUser; size?: number }) {
   const dim = { width: size, height: size };
@@ -41,18 +55,41 @@ function Avatar({ user, size = 40 }: { user: AppUser; size?: number }) {
 // ─── Priority Strip (Template A) ──────────────────────────────────────────────
 export function PriorityStrip({
   priorityUsers,
-  unreadBySender,
-  onOpenUser,
+  priorityMessages,
+  seenIds,
+  channelNameById,
+  onOpenMessage,
   onManage,
 }: {
   priorityUsers: AppUser[];
-  /** { [userId]: unread count from that priority person } */
-  unreadBySender: Record<string, number>;
-  onOpenUser: (user: AppUser) => void;
+  /** Recent messages from priority people, newest first (read-state independent) */
+  priorityMessages: TeamTalkMessage[];
+  /** Message IDs the user has explicitly opened from this strip — cleared here, not by channel-read */
+  seenIds: Set<string>;
+  channelNameById: Record<string, string>;
+  /** Jump to a specific priority message (also marks it seen) */
+  onOpenMessage: (msg: TeamTalkMessage) => void;
   onManage: () => void;
 }) {
+  const [openUserId, setOpenUserId] = useState<string | null>(null);
+
+  // Group messages by their priority sender, newest first (input already sorted).
+  const messagesByUser = useMemo(() => {
+    const map: Record<string, TeamTalkMessage[]> = {};
+    for (const m of priorityMessages) {
+      (map[m.senderId] ??= []).push(m);
+    }
+    return map;
+  }, [priorityMessages]);
+
+  const unseenCount = (uid: string) =>
+    (messagesByUser[uid] ?? []).filter(m => !seenIds.has(m.id)).length;
+
+  const openUser = priorityUsers.find(u => u.id === openUserId) || null;
+  const openUserMessages = openUserId ? (messagesByUser[openUserId] ?? []) : [];
+
   return (
-    <div className="rounded-xl bg-amber-50/70 border border-amber-100 px-2.5 py-2">
+    <div className="relative rounded-xl bg-amber-50/70 border border-amber-100 px-2.5 py-2">
       <div className="flex items-center justify-between mb-1.5">
         <span className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-widest text-amber-700">
           <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
@@ -76,26 +113,28 @@ export function PriorityStrip({
           Add up to {MAX_PRIORITY_USERS} people you can’t miss
         </button>
       ) : (
-        <div className="flex items-start gap-3 px-0.5">
+        <div className="flex items-start gap-3 px-0.5 overflow-x-auto">
           {priorityUsers.map(u => {
-            const unread = unreadBySender[u.id] ?? 0;
+            const unseen = unseenCount(u.id);
+            const isOpen = openUserId === u.id;
             return (
               <button
                 key={u.id}
-                onClick={() => onOpenUser(u)}
+                onClick={() => setOpenUserId(isOpen ? null : u.id)}
                 className="flex flex-col items-center gap-1 group cursor-pointer min-w-0"
-                title={unread > 0 ? `${u.name} — ${unread} new` : u.name}
+                title={unseen > 0 ? `${u.name} — ${unseen} new` : u.name}
               >
                 <span className="relative shrink-0">
                   <span
-                    className="block rounded-full transition-transform group-hover:scale-105"
-                    style={unread > 0 ? { boxShadow: `0 0 0 2px ${GOLD}` } : undefined}
+                    className={`block rounded-full transition-transform group-hover:scale-105 ${
+                      unseen > 0 ? 'ring-2 ring-emerald-500' : isOpen ? 'ring-2 ring-amber-300' : ''
+                    }`}
                   >
                     <Avatar user={u} size={38} />
                   </span>
-                  {unread > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-extrabold flex items-center justify-center border border-white">
-                      {unread > 9 ? '9+' : unread}
+                  {unseen > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-emerald-500 text-white text-[10px] font-extrabold flex items-center justify-center border border-white">
+                      {unseen > 9 ? '9+' : unseen}
                     </span>
                   )}
                 </span>
@@ -106,6 +145,48 @@ export function PriorityStrip({
             );
           })}
         </div>
+      )}
+
+      {/* Dropdown of the selected person's recent messages — like the Mentions
+          summary. Opening a message here (not just reading the chat) is what
+          clears its green "new" flag, so priority messages can't slip past. */}
+      {openUser && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setOpenUserId(null)} />
+          <div className="absolute left-2.5 right-2.5 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-30 max-h-72 overflow-y-auto py-1">
+            <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-100">
+              <span className="text-[12px] font-bold text-slate-700 truncate">{openUser.name}</span>
+              <button onClick={() => setOpenUserId(null)} className="p-0.5 hover:bg-slate-100 rounded cursor-pointer">
+                <X className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+            </div>
+            {openUserMessages.length === 0 ? (
+              <p className="text-[12px] text-slate-400 px-3 py-3">No recent messages.</p>
+            ) : (
+              openUserMessages.map(m => {
+                const isUnseen = !seenIds.has(m.id);
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => { onOpenMessage(m); setOpenUserId(null); }}
+                    className={`w-full flex items-start gap-2 px-3 py-2 text-left cursor-pointer transition-colors ${isUnseen ? 'bg-emerald-50/60 hover:bg-emerald-50' : 'hover:bg-slate-50'}`}
+                  >
+                    <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${isUnseen ? 'bg-emerald-500' : 'bg-transparent'}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[12px] font-bold text-slate-600 truncate">
+                          {m.channelId && channelNameById[m.channelId] ? channelNameById[m.channelId] : 'Chat'}
+                        </span>
+                        <span className="text-[11px] text-slate-400 shrink-0">{shortTime(m.createdAt)}</span>
+                      </div>
+                      <p className="text-[13px] text-slate-700 truncate">{messagePreview(m)}</p>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </>
       )}
     </div>
   );

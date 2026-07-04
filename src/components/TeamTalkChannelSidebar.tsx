@@ -8,7 +8,7 @@
 
 import React, { useState } from 'react';
 import {
-  MessageCircle, Hash, ChevronDown, ChevronRight, Search, Plus, Trash2, Megaphone, Building2, Users, BellRing, AtSign, MessageSquarePlus, X, UserPlus, CheckCircle2
+  MessageCircle, Hash, ChevronDown, ChevronUp, ChevronRight, Search, Plus, Trash2, Megaphone, Building2, Users, BellRing, AtSign, MessageSquarePlus, X, UserPlus, CheckCircle2
 } from 'lucide-react';
 import type { ChatChannel } from '../types';
 import type { User as AppUser, TeamTalkMessage } from '../types';
@@ -42,12 +42,14 @@ interface ChannelSidebarProps {
   allUsers?: AppUser[];
   /** Called when user reopens a previously-closed DM from the "Closed Direct Chats" section */
   onReopenDM?: (channelId: string) => void;
-  /** Priority ("VIP") people — the up-to-3 roster shown pinned at the top */
+  /** Priority ("VIP") people — the roster shown pinned at the top */
   priorityUsers?: AppUser[];
-  /** { [priorityUserId]: unread count } driving the gold badge on the strip */
-  priorityUnread?: Record<string, number>;
-  /** Open a chat with a priority person (from the strip) */
-  onOpenPriorityUser?: (user: AppUser) => void;
+  /** Recent messages from priority people, newest first (read-state independent) */
+  priorityMessages?: TeamTalkMessage[];
+  /** Message IDs the user has explicitly opened from the priority strip */
+  prioritySeenIds?: Set<string>;
+  /** Jump to a specific priority message (also marks it seen) */
+  onOpenPriorityMessage?: (msg: TeamTalkMessage) => void;
   /** Open the priority-people picker */
   onManagePriority?: () => void;
 }
@@ -133,21 +135,23 @@ function ChannelItem({
         )}
       </button>
 
-      {/* Threads toggle — a labelled pill with a prominent down-chevron so unread
-          threads are easy to notice. Filled indigo when there are unread replies. */}
+      {/* Threads toggle — down-chevron to expand, up-chevron to collapse (a stable
+          toggle). A count only appears for UNREAD replies (filled indigo) so it
+          isn't mistaken for a channel-unread badge; with no unread it's just a
+          subtle chevron that reveals the thread list. */}
       {activeThreads.length > 0 && onOpenThread && (
         <button
           onClick={e => { e.stopPropagation(); setThreadsExpanded(v => !v); }}
-          className={`absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pl-1.5 pr-1 py-0.5 rounded-full text-[10px] font-extrabold transition-all cursor-pointer z-10 ${
+          className={`absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1 py-0.5 rounded-full text-[10px] font-extrabold transition-all cursor-pointer z-10 ${
             totalThreadUnread > 0
-              ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-200'
-              : 'bg-slate-100 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600'
+              ? 'pl-1.5 pr-1 bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-200'
+              : 'px-1 text-slate-400 hover:bg-slate-100 hover:text-indigo-600'
           }`}
-          title={`${activeThreads.length} thread${activeThreads.length > 1 ? 's' : ''}${totalThreadUnread > 0 ? ` — ${totalThreadUnread} unread repl${totalThreadUnread > 1 ? 'ies' : 'y'}` : ''}`}
+          title={`${activeThreads.length} thread${activeThreads.length > 1 ? 's' : ''}${totalThreadUnread > 0 ? ` — ${totalThreadUnread} unread repl${totalThreadUnread > 1 ? 'ies' : 'y'}` : ''} · tap to ${threadsExpanded ? 'collapse' : 'expand'}`}
           style={hasTrailingAction ? { right: '1.75rem' } : undefined}
         >
-          <span>{totalThreadUnread > 0 ? (totalThreadUnread > 99 ? '99+' : totalThreadUnread) : activeThreads.length}</span>
-          <ChevronDown className={`w-4 h-4 transition-transform ${threadsExpanded ? '' : '-rotate-90'}`} />
+          {totalThreadUnread > 0 && <span>{totalThreadUnread > 99 ? '99+' : totalThreadUnread}</span>}
+          {threadsExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
         </button>
       )}
 
@@ -254,8 +258,9 @@ export default function TeamTalkChannelSidebar({
   onCloseThread,
   onReopenDM,
   priorityUsers,
-  priorityUnread = {},
-  onOpenPriorityUser,
+  priorityMessages = [],
+  prioritySeenIds,
+  onOpenPriorityMessage,
   onManagePriority,
 }: ChannelSidebarProps) {
   const canManageChannels = currentUser.role === Role.ADMIN || currentUser.role === Role.MANAGER || currentUser.role === Role.SUPER_ADMIN;
@@ -415,8 +420,10 @@ export default function TeamTalkChannelSidebar({
         {onManagePriority && (
           <PriorityStrip
             priorityUsers={priorityUsers ?? []}
-            unreadBySender={priorityUnread}
-            onOpenUser={u => onOpenPriorityUser?.(u)}
+            priorityMessages={priorityMessages}
+            seenIds={prioritySeenIds ?? new Set()}
+            channelNameById={Object.fromEntries(channelNameById)}
+            onOpenMessage={m => onOpenPriorityMessage?.(m)}
             onManage={onManagePriority}
           />
         )}

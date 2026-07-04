@@ -1681,7 +1681,7 @@ export function subscribeToChannelMembers(
 // push. Stored server-side (chat_priority_users) — not localStorage — so the
 // notify-dispatcher edge function can read the same list.
 
-export const MAX_PRIORITY_USERS = 3;
+export const MAX_PRIORITY_USERS = 5;
 
 /** IDs of the teammates the given user has marked as priority, in saved order. */
 export async function getPriorityUserIds(userId: string): Promise<string[]> {
@@ -1759,6 +1759,43 @@ export async function getPriorityUnreadCounts(
   });
 
   return result;
+}
+
+/**
+ * Recent messages authored by the user's priority people, across every channel
+ * they share, REGARDLESS of read state (last `sinceHours`). Read state is
+ * deliberately ignored so opening a busy channel to read someone else doesn't
+ * silently clear a priority person's message — the UI tracks "seen from the
+ * priority dropdown" separately. Newest first.
+ */
+export async function getPriorityMessages(
+  userId: string,
+  priorityIds: string[],
+  sinceHours = 48,
+  limit = 50
+): Promise<TeamTalkMessage[]> {
+  if (priorityIds.length === 0) return [];
+
+  const { data: memberRows } = await supabase
+    .from('chat_members')
+    .select('channel_id')
+    .eq('user_id', userId);
+
+  const channelIds = (memberRows ?? []).map((r: any) => r.channel_id);
+  if (channelIds.length === 0) return [];
+
+  const since = new Date(Date.now() - sinceHours * 3600000).toISOString();
+  const { data } = await supabase
+    .from('chat_messages')
+    .select('*')
+    .in('channel_id', channelIds)
+    .in('sender_id', priorityIds)
+    .eq('is_deleted', false)
+    .gt('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  return (data ?? []).map(mapMessage);
 }
 
 /** Realtime: fire when this user's own priority list changes (e.g. edited on another device). */
