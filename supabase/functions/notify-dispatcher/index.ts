@@ -111,9 +111,6 @@ serve(async (req) => {
 
 async function handleTaskAssigned(task: any) {
   const assigneeIds: string[] = task.assigned_user_ids || (task.assigned_user_id ? [task.assigned_user_id] : []);
-  
-  // DEBUG LOG
-  await logNotif(assigneeIds[0] || "unknown", task.tenant_id, "debug", task.id, "whatsapp", "sent", `Assignees parsed: ${JSON.stringify(assigneeIds)}`);
   const deepLink = `${APP_BASE_URL}/tasks/${task.id}`;
 
   for (const userId of assigneeIds) {
@@ -404,18 +401,9 @@ async function checkAntiSpam(userId: string, tenantId: string, eventType: string
     }
   }
 
-  // Daily WhatsApp cap
-  if (hasWA) {
-    const today = new Date().toISOString().slice(0, 10);
-    const { count } = await supabase.from("notification_log")
-      .select("id", { count: "exact" })
-      .eq("user_id", userId).eq("channel", "whatsapp").eq("status", "sent")
-      .gte("sent_at", today + "T00:00:00Z");
-    if ((count || 0) >= MAX_MESSAGES_PER_USER_DAY) {
-      await logNotif(userId, tenantId, "debug", refId, "whatsapp", "failed", `checkAntiSpam: Daily WA cap reached (${count})`);
-      return false;
-    }
-  }
+  // NOTE: the daily WhatsApp cap is enforced in sendNotifications, NOT here.
+  // It is a WhatsApp-only limit; enforcing it here returned false and skipped
+  // BOTH channels, so hitting the WA cap silently killed push too.
 
   // Task dedup — no repeat for same task within TASK_DEDUP_HOURS
   if (refId && !["daily_digest", "notice"].includes(eventType)) {
@@ -447,13 +435,22 @@ async function sendNotifications(user: any, payload: {
   const promises: Promise<void>[] = [];
 
   if (!pushOnly && user.phone_number && user.whatsapp_opted_in && !DISABLE_WHATSAPP) {
-    const prefix = META_WA_TOKEN.substring(0, 15) + '...';
-    await logNotif(user.id, tenantId, "debug", refId, "whatsapp", "sent", "Token prefix in EF: " + prefix);
-    promises.push(
-      sendWhatsApp(user.phone_number, payload.waMessage, payload.waTemplate)
-        .then(() => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "sent", undefined, isUrgent))
-        .catch(e => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "failed", String(e), isUrgent))
-    );
+    // Daily WhatsApp cap — enforced here (WhatsApp-only) so it never suppresses
+    // push. Counts only real sends (event_type != 'debug') so diagnostic rows
+    // can't inflate the count and lock the user out.
+    const today = new Date().toISOString().slice(0, 10);
+    const { count } = await supabase.from("notification_log")
+      .select("id", { count: "exact" })
+      .eq("user_id", user.id).eq("channel", "whatsapp").eq("status", "sent")
+      .neq("event_type", "debug")
+      .gte("sent_at", today + "T00:00:00Z");
+    if ((count || 0) < MAX_MESSAGES_PER_USER_DAY) {
+      promises.push(
+        sendWhatsApp(user.phone_number, payload.waMessage, payload.waTemplate)
+          .then(() => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "sent", undefined, isUrgent))
+          .catch(e => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "failed", String(e), isUrgent))
+      );
+    }
   }
 
   if (user.fcm_token) {
