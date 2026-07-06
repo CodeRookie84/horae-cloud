@@ -41,6 +41,7 @@ import Login from "./components/Login";
 import NotificationPermissionBanner from "./components/NotificationPermissionBanner";
 import TeamTalk from "./components/TeamTalk";
 import SwotCompass from "./components/swot/SwotCompass";
+import MaintenanceHub from "./components/maintenance/MaintenanceHub";
 
 
 /** Single row in the notifications dropdown — swipe left/right to dismiss, tap to open + mark read. */
@@ -127,6 +128,7 @@ function AppInner() {
     if (path.startsWith('/tasks'))        deepLinkRef.current = { tab: 'tasks',      itemId: match('/tasks/') };
     else if (path.startsWith('/notices')) deepLinkRef.current = { tab: 'notices',    itemId: match('/notices/') };
     else if (path.startsWith('/checklists')) deepLinkRef.current = { tab: 'checklists', itemId: match('/checklists/') };
+    else if (path.startsWith('/maintenance')) deepLinkRef.current = { tab: 'maintenance' };
     else if (path.startsWith('/quizzes')) deepLinkRef.current = { tab: 'quizzes',    itemId: match('/quizzes/') };
     else if (path.startsWith('/sops'))    deepLinkRef.current = { tab: 'sops',       itemId: match('/sops/') };
     else if (path.startsWith('/digest'))  deepLinkRef.current = { tab: 'dashboard' };
@@ -147,7 +149,7 @@ function AppInner() {
       dashboard: '/dashboard', notices: '/notices', checklists: '/checklists',
       tasks: '/tasks', quizzes: '/quizzes', sops: '/sops', 'admin-panel': '/admin',
       'horae-admin': '/horae-admin', 'checklist-report': '/checklist-report',
-      'team-talk': '/teamtalk', swot: '/swot',
+      'team-talk': '/teamtalk', swot: '/swot', maintenance: '/maintenance',
     };
     if (urlMap[tab] && location.pathname !== urlMap[tab]) {
       navigate(urlMap[tab]);
@@ -173,7 +175,7 @@ function AppInner() {
       '/dashboard': 'dashboard', '/notices': 'notices', '/checklists': 'checklists',
       '/tasks': 'tasks', '/quizzes': 'quizzes', '/sops': 'sops', '/admin': 'admin-panel',
       '/horae-admin': 'horae-admin', '/checklist-report': 'checklist-report',
-      '/teamtalk': 'team-talk', '/swot': 'swot',
+      '/teamtalk': 'team-talk', '/swot': 'swot', '/maintenance': 'maintenance',
     };
     
     const targetTab = reverseMap[mainRoute];
@@ -463,6 +465,7 @@ function AppInner() {
       if (path.startsWith('/tasks'))        handleSetActiveTab('tasks',      path.split('/')[2]);
       else if (path.startsWith('/notices')) handleSetActiveTab('notices',    path.split('/')[2]);
       else if (path.startsWith('/checklists')) handleSetActiveTab('checklists', path.split('/')[2]);
+      else if (path.startsWith('/maintenance')) handleSetActiveTab('maintenance');
       else if (path.startsWith('/quizzes')) handleSetActiveTab('quizzes',    path.split('/')[2]);
       else                                  handleSetActiveTab('dashboard');
     });
@@ -1251,6 +1254,14 @@ function AppInner() {
                   {activeTab === "swot" && (
                     <SwotCompass
                       activeUser={activeUser}
+                      tenants={tenants}
+                    />
+                  )}
+
+                  {activeTab === "maintenance" && (
+                    <MaintenanceHub
+                      activeUser={activeUser}
+                      activeTenant={activeTenant}
                       tenants={tenants}
                     />
                   )}

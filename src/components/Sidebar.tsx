@@ -22,7 +22,8 @@ import {
   MessageCircle,
   Bell,
   BellOff,
-  Compass
+  Compass,
+  Wrench
 } from "lucide-react";
 import { Client, Tenant, User as AppUser, Role, Department } from "../types";
 import { store } from "../services/store";
@@ -360,6 +361,21 @@ export default function Sidebar({
                   </div>
                 </button>
               )}
+
+              <button
+                id="btn-maintenance"
+                onClick={() => handleTabClick("maintenance")}
+                className={`w-full flex items-center justify-between px-2.5 py-1.8 rounded-md text-sm font-medium transition-all cursor-pointer ${
+                  activeTab === "maintenance"
+                    ? "bg-blue-50 text-blue-700 font-semibold rounded-xl"
+                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Wrench className="w-3.5 h-3.5" />
+                  <span>Equipment Maintenance</span>
+                </div>
+              </button>
 
               {showTasks && (
                 <button
