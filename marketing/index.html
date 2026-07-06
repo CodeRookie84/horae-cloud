@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Horae — Operations, Simplified for Hospitality</title>
+<meta name="description" content="Horae is a consulting-led operations service for hotels, restaurants and cafés. We design your workflows, run them on a mobile-first app your whole team can use, and report results to leadership." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --ink:#241D4B;
+    --ink-soft:#6A6390;
+    --ink-body:#312A55;
+    --bg:#FBFAFF;
+    --violet:#8B7CF6; --violet-l:#EDE9FE;
+    --sky:#6FB7F7;    --sky-l:#DCEEFE;
+    --mint:#4FD6B0;   --mint-l:#D4F6EC;
+    --peach:#FBAF9A;  --peach-l:#FFE3DA;
+    --blush:#F49AD1;  --blush-l:#FCE1F1;
+    --gold:#C79A3A;
+    --card:rgba(255,255,255,.62);
+    --card-brd:rgba(255,255,255,.75);
+    --grad:linear-gradient(120deg,#8B7CF6 0%,#6FB7F7 52%,#4FD6B0 100%);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    font-family:'Inter',system-ui,sans-serif;color:var(--ink);
+    background:var(--bg);line-height:1.6;-webkit-font-smoothing:antialiased;
+    overflow-x:hidden;position:relative;
+  }
+  /* soft pastel mesh background */
+  .mesh{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;}
+  .blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.5;}
+  .b1{width:520px;height:520px;background:var(--violet);top:-140px;left:-120px;animation:float1 18s ease-in-out infinite;}
+  .b2{width:460px;height:460px;background:var(--mint);top:280px;right:-140px;animation:float2 22s ease-in-out infinite;}
+  .b3{width:420px;height:420px;background:var(--blush);bottom:-120px;left:20%;opacity:.4;animation:float1 26s ease-in-out infinite;}
+  .b4{width:360px;height:360px;background:var(--sky);top:900px;left:-100px;opacity:.45;animation:float2 20s ease-in-out infinite;}
+  @keyframes float1{0%,100%{transform:translate(0,0)}50%{transform:translate(40px,50px)}}
+  @keyframes float2{0%,100%{transform:translate(0,0)}50%{transform:translate(-50px,-40px)}}
+
+  h1,h2,h3{font-family:'Fraunces',Georgia,serif;letter-spacing:-0.015em;line-height:1.1;font-weight:600;}
+  a{color:inherit;text-decoration:none;}
+  .wrap{max-width:1140px;margin:0 auto;padding:0 22px;}
+  .grad-text{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;
+    letter-spacing:0.12em;text-transform:uppercase;color:var(--violet);margin-bottom:16px;
+  }
+  .eyebrow::before{content:"";width:16px;height:2px;border-radius:2px;background:var(--grad);}
+  .pill{
+    display:inline-flex;align-items:center;gap:9px;padding:8px 16px;border-radius:100px;
+    background:var(--card);border:1px solid var(--card-brd);backdrop-filter:blur(12px);
+    font-size:14px;font-weight:600;color:var(--ink);box-shadow:0 4px 18px rgba(130,120,200,.10);
+  }
+  .pill .dot{width:7px;height:7px;border-radius:50%;background:var(--grad);}
+
+  .btn{
+    display:inline-flex;align-items:center;gap:9px;padding:14px 26px;border-radius:14px;
+    font-size:15px;font-weight:650;cursor:pointer;border:1px solid transparent;
+    transition:transform .16s ease,box-shadow .2s ease,background .2s;
+  }
+  .btn-primary{background:var(--grad);color:#fff;box-shadow:0 10px 26px rgba(123,110,240,.32);}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 16px 34px rgba(123,110,240,.42);}
+  .btn-glass{background:var(--card);border-color:var(--card-brd);backdrop-filter:blur(12px);color:var(--ink);}
+  .btn-glass:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(130,120,200,.16);}
+
+  .glass{
+    background:var(--card);border:1px solid var(--card-brd);border-radius:22px;
+    backdrop-filter:blur(18px) saturate(135%);-webkit-backdrop-filter:blur(18px) saturate(135%);
+    box-shadow:0 12px 40px rgba(120,110,200,.13);
+  }
+
+  /* ── NAV (sticky, direct child of body so it sticks across the page) ── */
+  nav{position:sticky;top:14px;z-index:60;padding-top:14px;}
+  .nav-inner{
+    display:flex;align-items:center;justify-content:space-between;gap:14px;
+    padding:11px 12px 11px 18px;border-radius:18px;
+    background:rgba(255,255,255,.78);border:1px solid var(--card-brd);
+    backdrop-filter:blur(16px) saturate(140%);box-shadow:0 8px 30px rgba(120,110,200,.12);
+  }
+  .brand{display:flex;align-items:center;gap:10px;}
+  .brand-mark{height:40px;width:auto;flex-shrink:0;border-radius:9px;}
+  .brand b{font-family:'Fraunces',serif;font-weight:700;font-size:22px;color:var(--ink);letter-spacing:.01em;}
+  .nav-links{display:none;gap:26px;}
+  .nav-links a{font-size:15px;font-weight:550;color:var(--ink-soft);transition:color .15s;}
+  .nav-links a:hover{color:var(--violet);}
+  .nav-cta{padding:10px 18px;font-size:13.5px;border-radius:12px;}
+  @media(min-width:920px){.nav-links{display:flex;}}
+
+  /* ── HERO ── */
+  .hero{padding:58px 0 40px;}
+  .hero-grid{display:grid;gap:44px;align-items:center;}
+  .hero-grid>div{min-width:0;}
+  @media(min-width:1000px){.hero-grid{grid-template-columns:1.05fr .95fr;gap:36px;}}
+  .hero h1{font-size:clamp(42px,6.6vw,68px);margin:20px 0 22px;font-weight:600;}
+  .hero p{font-size:clamp(17px,2.4vw,21px);color:var(--ink-body);max-width:540px;margin-bottom:30px;}
+  .hero-cta{display:flex;gap:13px;flex-wrap:wrap;}
+  .chips{display:flex;flex-wrap:wrap;gap:9px;margin-top:34px;}
+  .chip{
+    font-size:13.5px;font-weight:600;color:var(--ink-soft);padding:8px 14px;border-radius:100px;
+    background:rgba(255,255,255,.55);border:1px solid var(--card-brd);backdrop-filter:blur(8px);
+  }
+
+  /* hero visual: glass phone mock */
+  .stage{position:relative;display:flex;align-items:center;justify-content:center;padding:10px 0;}
+  .phone{
+    width:250px;border-radius:38px;padding:14px;position:relative;z-index:2;
+    background:linear-gradient(160deg,rgba(255,255,255,.85),rgba(255,255,255,.5));
+    border:1px solid rgba(255,255,255,.85);
+    box-shadow:0 30px 70px rgba(110,100,190,.28),inset 0 1px 0 rgba(255,255,255,.9);
+    backdrop-filter:blur(18px);animation:phoneFloat 6s ease-in-out infinite;will-change:transform;
+  }
+  @keyframes phoneFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+  .phone .screen{border-radius:26px;background:linear-gradient(175deg,#F7F5FF,#EAF6FF);overflow:hidden;border:1px solid rgba(255,255,255,.9);padding-bottom:8px;}
+  .ph-top{padding:16px 16px 12px;display:flex;align-items:center;gap:8px;}
+  .ph-top .d{width:22px;height:22px;border-radius:7px;background:var(--grad);}
+  .ph-top b{font-family:'Fraunces',serif;font-size:14px;color:var(--ink);}
+  .ph-sec{font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--violet);padding:2px 16px 8px;}
+  .ph-item{display:flex;align-items:center;gap:9px;margin:0 12px 8px;padding:10px 11px;border-radius:12px;background:#fff;box-shadow:0 4px 12px rgba(120,110,200,.08);}
+  .ph-item .ck{width:18px;height:18px;border-radius:6px;background:var(--mint-l);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:#189a72;}
+  .ph-item.pending .ck{background:#EEF0F6;}
+  .ph-item span{font-size:11px;font-weight:600;color:var(--ink);}
+  .ph-item small{display:block;font-size:9px;color:var(--ink-soft);font-weight:500;}
+  .ph-chat{margin:12px;padding:11px;border-radius:14px;background:var(--violet-l);}
+  .ph-chat .b{font-size:10px;color:var(--ink);background:#fff;border-radius:10px;padding:7px 9px;margin-bottom:6px;display:inline-block;max-width:85%;box-shadow:0 3px 8px rgba(120,110,200,.08);}
+  .ph-chat .me{background:var(--grad);color:#fff;float:right;}
+  @media(max-width:520px){.stage{display:none;}}
+
+  /* ── SECTIONS ── */
+  section{padding:56px 0;}
+  .head{max-width:660px;margin-bottom:38px;}
+  .head.center{margin-inline:auto;text-align:center;}
+  .head h2{font-size:clamp(31px,4.8vw,46px);margin-bottom:14px;}
+  .head p{font-size:18px;color:var(--ink-body);}
+
+  .grid{display:grid;gap:20px;}
+  @media(min-width:640px){.grid.c2{grid-template-columns:1fr 1fr;}}
+  @media(min-width:920px){.grid.c3{grid-template-columns:repeat(3,1fr);}.grid.c4{grid-template-columns:repeat(4,1fr);}}
+
+  .card{padding:28px 26px;position:relative;overflow:hidden;transition:transform .25s cubic-bezier(.2,.7,.2,1),box-shadow .25s ease;}
+  .card:hover{transform:translateY(-6px);box-shadow:0 24px 50px rgba(120,110,200,.22);}
+  /* light sweep across the glass on hover */
+  .card::before{content:"";position:absolute;top:0;left:-130%;width:70%;height:100%;
+    background:linear-gradient(100deg,transparent,rgba(255,255,255,.55),transparent);
+    transform:skewX(-18deg);transition:left .7s ease;pointer-events:none;}
+  .card:hover::before{left:140%;}
+  .card .ic{width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff;margin-bottom:16px;box-shadow:0 8px 20px rgba(120,110,200,.22);transition:transform .25s ease;}
+  .card:hover .ic{transform:scale(1.08) rotate(-3deg);}
+  .card h3{font-family:'Inter';font-weight:700;font-size:18px;letter-spacing:0;margin-bottom:8px;}
+  .card p{font-size:16px;color:var(--ink-body);}
+  /* staggered entrance for grid cards */
+  .grid .reveal{transition-delay:0s;}
+  .grid .reveal:nth-child(2){transition-delay:.09s;}
+  .grid .reveal:nth-child(3){transition-delay:.18s;}
+  .grid .reveal:nth-child(4){transition-delay:.27s;}
+  .ic-violet{background:linear-gradient(135deg,#8B7CF6,#A78BFA);}
+  .ic-sky{background:linear-gradient(135deg,#6FB7F7,#57A0EE);}
+  .ic-mint{background:linear-gradient(135deg,#4FD6B0,#37C6A0);}
+  .ic-peach{background:linear-gradient(135deg,#FBAF9A,#F58E88);}
+  .ic-blush{background:linear-gradient(135deg,#F49AD1,#E884C6);}
+
+  /* METHOD principles */
+  .principle{padding:32px 28px;position:relative;overflow:hidden;transition:transform .25s cubic-bezier(.2,.7,.2,1),box-shadow .25s ease;}
+  .principle:hover{transform:translateY(-6px);box-shadow:0 24px 50px rgba(120,110,200,.22);}
+  .principle::before{content:"";position:absolute;top:0;left:-130%;width:70%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.55),transparent);transform:skewX(-18deg);transition:left .7s ease;pointer-events:none;}
+  .principle:hover::before{left:140%;}
+  .principle .n{font-family:'Fraunces',serif;font-size:17px;font-weight:700;color:#fff;width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;margin-bottom:18px;transition:transform .25s ease;}
+  .principle:hover .n{transform:scale(1.08) rotate(-3deg);}
+  .principle h3{font-family:'Fraunces',serif;font-size:25px;margin-bottom:10px;font-weight:600;}
+  .principle p{font-size:16px;color:var(--ink-body);}
+  .cycle{margin-top:22px;padding:24px 28px;text-align:center;display:flex;flex-wrap:wrap;gap:10px 8px;align-items:center;justify-content:center;font-size:16.5px;font-weight:600;color:var(--ink);}
+  .cycle b{font-family:'Fraunces',serif;font-weight:600;}
+  .cycle .arw{color:var(--violet);font-weight:800;}
+
+  /* problem root note */
+  .rootline{margin-top:22px;padding:22px 26px;font-size:17px;color:var(--ink);}
+  .rootline b{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+
+  .divider-label{text-align:center;margin:52px 0 34px;}
+
+  /* approach mini steps */
+  .mini{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:26px;}
+  .mini .m{flex:1;min-width:180px;padding:18px 20px;border-radius:16px;background:rgba(255,255,255,.55);border:1px solid var(--card-brd);backdrop-filter:blur(10px);transition:transform .2s ease,box-shadow .2s ease;}
+  .mini .m:hover{transform:translateY(-4px);box-shadow:0 16px 34px rgba(120,110,200,.16);}
+  .mini .m b{display:block;font-size:15.5px;color:var(--ink);margin-bottom:4px;}
+  .mini .m span{font-size:14.5px;color:var(--ink-body);}
+  .mini .m i{font-style:normal;font-family:'Fraunces',serif;font-size:12.5px;color:var(--violet);font-weight:700;}
+
+  /* CTA */
+  .cta-panel{padding:56px 28px;text-align:center;}
+  .cta-panel h2{font-size:clamp(31px,5vw,46px);margin-bottom:14px;}
+  .cta-panel p{font-size:18.5px;color:var(--ink-body);max-width:540px;margin:0 auto 30px;}
+
+  footer{padding:34px 0 40px;}
+  .foot{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center;font-size:14px;color:var(--ink-body);}
+  footer a{color:var(--violet);font-weight:600;}
+
+  .reveal{opacity:0;transform:translateY(20px);transition:opacity .6s ease,transform .6s ease;}
+  .reveal.in{opacity:1;transform:none;}
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}.blob,.phone{animation:none!important}}
+</style>
+</head>
+<body>
+
+<div class="mesh"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div></div>
+
+<!-- NAV -->
+<nav>
+  <div class="wrap">
+  <div class="nav-inner">
+    <a class="brand" href="#top" aria-label="Horae home">
+      <img src="horae-icon.jpg" alt="Horae" class="brand-mark" />
+      <b>Horae</b>
+    </a>
+    <div class="nav-links">
+      <a href="#method">The Method</a>
+      <a href="#platform">Platform</a>
+      <a href="#contact">Contact</a>
+    </div>
+    <a class="btn btn-primary nav-cta" href="#contact">Book a consultation</a>
+  </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<header id="top">
+  <div class="wrap hero">
+    <div class="hero-grid">
+      <div class="reveal">
+        <span class="pill"><span class="dot"></span>Operations consulting · Hospitality</span>
+        <h1>Order, restored to the <span class="grad-text">hospitality floor.</span></h1>
+        <p>We design your workflows, run them on a mobile-first app your whole team can actually use, and report the results to leadership. Done for you.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#contact">Book a consultation</a>
+        </div>
+        <div class="chips">
+          <span class="chip">SOPs</span><span class="chip">Checklists</span>
+          <span class="chip">Task management</span><span class="chip">Team chat</span>
+          <span class="chip">Reports to leadership</span>
+        </div>
+      </div>
+
+      <div class="reveal">
+        <div class="stage">
+          <div class="phone">
+            <div class="screen">
+              <div class="ph-top"><span class="d"></span><b>Horae</b></div>
+              <div class="ph-sec">Opening checklist</div>
+              <div class="ph-item"><span class="ck">✓</span><div><span>Fridge temperature logged</span><small>Priya · 8:02 AM</small></div></div>
+              <div class="ph-item"><span class="ck">✓</span><div><span>Prep stations sanitised</span><small>Arun · 8:14 AM</small></div></div>
+              <div class="ph-item pending"><span class="ck"></span><div><span>Stock count — dry store</span><small>Due 9:00 AM</small></div></div>
+              <div class="ph-chat">
+                <span class="ph-sec" style="padding:0 0 6px;">Team chat</span>
+                <div class="b">Counter running low on cups 🧋</div>
+                <div class="b me">On it — restocking now</div>
+                <div style="clear:both"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- WHY IT BREAKS + THE HORAE METHOD (combined) -->
+<section id="method">
+  <div class="wrap">
+    <div class="head center reveal">
+      <span class="eyebrow" style="justify-content:center;">Why it breaks — and how we fix it</span>
+      <h2>From a chaotic floor to a calm operation.</h2>
+      <p>Fast work, teams that change often, instructions that rarely land the same way twice. Here's where the floor breaks — and the simple loop, named for the ancient keepers of order, that puts it right.</p>
+    </div>
+
+    <div class="grid c4">
+      <div class="card glass reveal"><div class="ic ic-violet"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><h3>Lost communication</h3><p>Updates vanish between shifts, side rooms and scattered chat groups.</p></div>
+      <div class="card glass reveal"><div class="ic ic-sky"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg></div><h3>Language &amp; skill gaps</h3><p>A multilingual, high-turnover team reads instructions differently.</p></div>
+      <div class="card glass reveal"><div class="ic ic-peach"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><h3>SOPs in binders</h3><p>Procedures live on paper nobody opens once it gets busy.</p></div>
+      <div class="card glass reveal"><div class="ic ic-blush"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div><h3>No accountability</h3><p>When everyone owns a task, no one does — until a complaint.</p></div>
+    </div>
+    <div class="rootline glass reveal">
+      <b>The root cause:</b> shift teams that change often, speak many languages and never sit at a desk — while paper and generic apps quietly assume the opposite.
+    </div>
+
+    <div class="divider-label reveal">
+      <span class="eyebrow" style="justify-content:center;margin-bottom:6px;">The Horae Method</span>
+      <h2 style="font-size:clamp(24px,3.6vw,34px);">Three principles. One calm operation.</h2>
+    </div>
+    <div class="grid c3">
+      <div class="principle glass reveal">
+        <div class="n ic-violet">I</div>
+        <h3>Structure</h3>
+        <p>Clear procedures, defined roles and simple checklists — so work is predictable and nothing slips.</p>
+      </div>
+      <div class="principle glass reveal">
+        <div class="n ic-sky">II</div>
+        <h3>Accountability</h3>
+        <p>Transparent tracking and honest feedback — so standards hold and issues get resolved fast.</p>
+      </div>
+      <div class="principle glass reveal">
+        <div class="n ic-mint">III</div>
+        <h3>Harmony</h3>
+        <p>A calmer floor where people feel safe to speak up — so staff stay and output stays steady.</p>
+      </div>
+    </div>
+    <div class="cycle glass reveal">
+      <b>Structure</b><span class="arw">→</span><b>Accountability</b><span class="arw">→</span><b>Harmony</b>
+      <span style="color:var(--ink-body);font-weight:500;width:100%;margin-top:4px;">Delivered on time, through every season of demand.</span>
+    </div>
+  </div>
+</section>
+
+<!-- BRIDGE + PLATFORM (combined) -->
+<section id="platform">
+  <div class="wrap">
+    <div class="head reveal">
+      <span class="eyebrow">How we close the gap</span>
+      <h2>We don't sell you software. We run the system for you.</h2>
+      <p>A done-for-you engagement — you serve guests, we build and manage the operational backbone.</p>
+    </div>
+    <div class="mini reveal">
+      <div class="m"><i>01 · Design</i><b>Built around you</b><span>Your SOPs, checklists and workflows — not a template.</span></div>
+      <div class="m"><i>02 · Manage</i><b>We run the app</b><span>We configure it, onboard the team, keep the floor on track.</span></div>
+      <div class="m"><i>03 · Report</i><b>Always visible</b><span>Clear, regular reports to the people who need them.</span></div>
+    </div>
+    <div class="grid c2">
+      <div class="card glass reveal"><div class="ic ic-violet"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg></div><h3>Mobile-first workflows &amp; tasks</h3><p>Every task, checklist and procedure in one thumb-friendly app — assigned, tracked and closed right on the floor.</p></div>
+      <div class="card glass reveal"><div class="ic ic-sky"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h8M8 13h5"/></svg></div><h3>Team chat for multilingual teams</h3><p>Structured conversations built for every skill level and language — so nothing gets lost in translation.</p></div>
+      <div class="card glass reveal"><div class="ic ic-mint"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3>Top-to-bottom communication</h3><p>A clear line from owner to entry-level staff — announcements reach everyone, issues escalate to the right person.</p></div>
+      <div class="card glass reveal"><div class="ic ic-peach"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg></div><h3>Accountability by default</h3><p>Who did what, and when — captured automatically and rolled up into the reports leadership relies on.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section id="contact">
+  <div class="wrap">
+    <div class="cta-panel glass reveal">
+      <span class="eyebrow" style="justify-content:center;">Let's talk</span>
+      <h2>Ready to bring order to your operations?</h2>
+      <p>No software to buy today — just a conversation about what's slowing your floor down, and how we'd fix it.</p>
+      <div style="display:flex;gap:13px;justify-content:center;flex-wrap:wrap;">
+        <a class="btn btn-primary" href="mailto:hello@horae.cloud?subject=Horae%20consultation%20enquiry">Book a consultation</a>
+        <a class="btn btn-glass" href="mailto:hello@horae.cloud">hello@horae.cloud</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot">
+    <div class="brand" style="display:flex;align-items:center;gap:10px;">
+      <img src="horae-icon.jpg" alt="Horae" style="height:30px;width:auto;border-radius:7px;" />
+      <b style="font-family:'Fraunces',serif;color:var(--ink);font-size:19px;">Horae</b>
+    </div>
+    <div>Operations, simplified for hospitality · <a href="mailto:hello@horae.cloud">hello@horae.cloud</a></div>
+    <div>© 2026 Horae</div>
+  </div>
+</footer>
+
+<script>
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  }, { threshold:0.12, rootMargin:'0px 0px -40px 0px' });
+  document.querySelectorAll('.reveal').forEach(function(el){ io.observe(el); });
+</script>
+</body>
+</html>
