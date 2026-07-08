@@ -171,8 +171,12 @@
   .principle:hover .n{transform:scale(1.08) rotate(-3deg);}
   .principle h3{font-family:'Fraunces',serif;font-size:25px;margin-bottom:10px;font-weight:600;}
   .principle p{font-size:16px;color:var(--ink-body);}
-  .principle .gap{font-size:14px;color:var(--ink-body);margin-bottom:12px;padding-bottom:12px;border-bottom:1px dashed rgba(120,110,200,.30);}
-  .principle .gap b{color:#D06B84;font-weight:700;}
+  /* problem vs fix, distinguished by a ✕ / ✓ marker instead of a label */
+  .principle .prob{display:flex;gap:9px;align-items:flex-start;font-size:14px;color:var(--ink-soft);margin-bottom:12px;padding-bottom:12px;border-bottom:1px dashed rgba(120,110,200,.30);}
+  .principle .sol{display:flex;gap:9px;align-items:flex-start;font-size:16px;color:var(--ink-body);}
+  .principle .mk{flex-shrink:0;width:19px;height:19px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;line-height:1;margin-top:2px;}
+  .principle .mk-x{background:#FCE0E6;color:#D06B84;}
+  .principle .mk-ok{background:var(--mint-l);color:#12946B;}
   .cycle{margin-top:22px;padding:24px 28px;text-align:center;display:flex;flex-wrap:wrap;gap:10px 8px;align-items:center;justify-content:center;font-size:16.5px;font-weight:600;color:var(--ink);}
   .cycle b{font-family:'Fraunces',serif;font-weight:600;}
   .cycle .arw{color:var(--violet);font-weight:800;}
@@ -279,20 +283,20 @@
       <div class="principle glass reveal">
         <div class="n ic-violet">I</div>
         <h3>Structure</h3>
-        <p class="gap"><b>The gap:</b> SOPs stuck in binders and tasks slipping through the cracks.</p>
-        <p>Clear procedures, defined roles and simple checklists — so work is predictable and nothing slips.</p>
+        <p class="prob"><span class="mk mk-x">✕</span>SOPs stuck in binders and tasks slipping through the cracks.</p>
+        <p class="sol"><span class="mk mk-ok">✓</span>Clear procedures, defined roles and simple checklists — so work is predictable and nothing slips.</p>
       </div>
       <div class="principle glass reveal">
         <div class="n ic-sky">II</div>
         <h3>Accountability</h3>
-        <p class="gap"><b>The gap:</b> when everyone owns a task, no one does — until a complaint lands.</p>
-        <p>Transparent tracking and honest feedback — so standards hold and issues get resolved fast.</p>
+        <p class="prob"><span class="mk mk-x">✕</span>When everyone owns a task, no one does — until a complaint lands.</p>
+        <p class="sol"><span class="mk mk-ok">✓</span>Transparent tracking and honest feedback — so standards hold and issues get resolved fast.</p>
       </div>
       <div class="principle glass reveal">
         <div class="n ic-mint">III</div>
         <h3>Harmony</h3>
-        <p class="gap"><b>The gap:</b> communication and language break down; good staff burn out and leave.</p>
-        <p>A calmer floor where people feel safe to speak up — so staff stay and output stays steady.</p>
+        <p class="prob"><span class="mk mk-x">✕</span>Communication and language break down; good staff burn out and leave.</p>
+        <p class="sol"><span class="mk mk-ok">✓</span>A calmer floor where people feel safe to speak up — so staff stay and output stays steady.</p>
       </div>
     </div>
     <div class="cycle glass reveal">
