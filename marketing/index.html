@@ -171,6 +171,8 @@
   .principle:hover .n{transform:scale(1.08) rotate(-3deg);}
   .principle h3{font-family:'Fraunces',serif;font-size:25px;margin-bottom:10px;font-weight:600;}
   .principle p{font-size:16px;color:var(--ink-body);}
+  .principle .gap{font-size:14px;color:var(--ink-body);margin-bottom:12px;padding-bottom:12px;border-bottom:1px dashed rgba(120,110,200,.30);}
+  .principle .gap b{color:#D06B84;font-weight:700;}
   .cycle{margin-top:22px;padding:24px 28px;text-align:center;display:flex;flex-wrap:wrap;gap:10px 8px;align-items:center;justify-content:center;font-size:16.5px;font-weight:600;color:var(--ink);}
   .cycle b{font-family:'Fraunces',serif;font-weight:600;}
   .cycle .arw{color:var(--violet);font-weight:800;}
@@ -230,8 +232,7 @@
   <div class="wrap hero">
     <div class="hero-grid">
       <div class="reveal">
-        <span class="pill"><span class="dot"></span>Operations consulting · Hospitality</span>
-        <h1>Order, restored to the <span class="grad-text">hospitality floor.</span></h1>
+        <h1>Order, restored to the <span class="grad-text">outlet floor.</span></h1>
         <p>We design your workflows, run them on a mobile-first app your whole team can actually use, and report the results to leadership. Done for you.</p>
         <div class="hero-cta">
           <a class="btn btn-primary" href="#contact">Book a consultation</a>
@@ -266,43 +267,31 @@
   </div>
 </header>
 
-<!-- WHY IT BREAKS + THE HORAE METHOD (combined) -->
+<!-- THE HORAE METHOD — leads; each principle answers a real gap on the floor -->
 <section id="method">
   <div class="wrap">
     <div class="head center reveal">
-      <span class="eyebrow" style="justify-content:center;">Why it breaks — and how we fix it</span>
-      <h2>From a chaotic floor to a calm operation.</h2>
-      <p>Fast work, teams that change often, instructions that rarely land the same way twice. Here's where the floor breaks — and the simple loop, named for the ancient keepers of order, that puts it right.</p>
-    </div>
-
-    <div class="grid c4">
-      <div class="card glass reveal"><div class="ic ic-violet"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><h3>Lost communication</h3><p>Updates vanish between shifts, side rooms and scattered chat groups.</p></div>
-      <div class="card glass reveal"><div class="ic ic-sky"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg></div><h3>Language &amp; skill gaps</h3><p>A multilingual, high-turnover team reads instructions differently.</p></div>
-      <div class="card glass reveal"><div class="ic ic-peach"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><h3>SOPs in binders</h3><p>Procedures live on paper nobody opens once it gets busy.</p></div>
-      <div class="card glass reveal"><div class="ic ic-blush"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div><h3>No accountability</h3><p>When everyone owns a task, no one does — until a complaint.</p></div>
-    </div>
-    <div class="rootline glass reveal">
-      <b>The root cause:</b> shift teams that change often, speak many languages and never sit at a desk — while paper and generic apps quietly assume the opposite.
-    </div>
-
-    <div class="divider-label reveal">
-      <span class="eyebrow" style="justify-content:center;margin-bottom:6px;">The Horae Method</span>
-      <h2 style="font-size:clamp(24px,3.6vw,34px);">Three principles. One calm operation.</h2>
+      <span class="eyebrow" style="justify-content:center;">The Horae Method</span>
+      <h2>Three principles that turn chaos into calm.</h2>
+      <p>Named for the ancient keepers of order, the method rests on three principles. Every headache on the floor traces back to one of three gaps — here's each gap, and the principle that closes it.</p>
     </div>
     <div class="grid c3">
       <div class="principle glass reveal">
         <div class="n ic-violet">I</div>
         <h3>Structure</h3>
+        <p class="gap"><b>The gap:</b> SOPs stuck in binders and tasks slipping through the cracks.</p>
         <p>Clear procedures, defined roles and simple checklists — so work is predictable and nothing slips.</p>
       </div>
       <div class="principle glass reveal">
         <div class="n ic-sky">II</div>
         <h3>Accountability</h3>
+        <p class="gap"><b>The gap:</b> when everyone owns a task, no one does — until a complaint lands.</p>
         <p>Transparent tracking and honest feedback — so standards hold and issues get resolved fast.</p>
       </div>
       <div class="principle glass reveal">
         <div class="n ic-mint">III</div>
         <h3>Harmony</h3>
+        <p class="gap"><b>The gap:</b> communication and language break down; good staff burn out and leave.</p>
         <p>A calmer floor where people feel safe to speak up — so staff stay and output stays steady.</p>
       </div>
     </div>
@@ -356,7 +345,7 @@
       <img src="horae-icon.jpg" alt="Horae" style="height:30px;width:auto;border-radius:7px;" />
       <b style="font-family:'Fraunces',serif;color:var(--ink);font-size:19px;">Horae</b>
     </div>
-    <div>Operations, simplified for hospitality · <a href="mailto:hello@horae.cloud">hello@horae.cloud</a></div>
+    <div><a href="mailto:hello@horae.cloud">hello@horae.cloud</a></div>
     <div>© 2026 Horae</div>
   </div>
 </footer>
