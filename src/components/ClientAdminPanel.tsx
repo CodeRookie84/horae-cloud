@@ -10,7 +10,7 @@ import {
   Plus, Trash2, BellRing, Bell, Download, Search, Check, ChevronRight, X, Filter, Users, AlertTriangle, ArrowRight,
   Building2, UserPlus, Edit2, Copy, Languages, ArrowLeft, KeyRound, Eye, EyeOff, MessageCircle
 } from "lucide-react";
-import { 
+import {
   Notice, Checklist, Task, User as AppUser, Tenant, Department, Role, Quiz, QuizAttempt, SOP, SOPReadStatus, Client
 } from "../types";
 import { store, translateText } from "../services/store";
@@ -102,8 +102,8 @@ interface ClientAdminPanelProps {
   onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise") => void;
   onDeleteTenant: (tenantId: string) => void;
   
-  onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean) => void;
-  onUpdateUser: (userId: string, name: string, email: string, role: string, department: string) => void;
+  onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean, clitAccess?: boolean, clitRole?: string) => void;
+  onUpdateUser: (userId: string, name: string, email: string, role: string, department: string, clitAccess?: boolean, clitRole?: string) => void;
   onDeleteUser: (userId: string) => void;
   onBack?: () => void;
 }

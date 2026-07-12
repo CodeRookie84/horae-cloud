@@ -4,33 +4,57 @@
  */
 // Equipment Maintenance (CLIT Autonomous Maintenance) — the dashboard tab.
 //
-// A self-contained React "island" that ports the standalone CLIT tool into
-// Horae: it loads per-outlet state from Supabase (maintenanceService), renders
-// the active sub-tab's HTML (maintenanceEngine.renderTab) into a `.clit-scope`
-// container, and drives all interactivity through delegated native event
-// listeners keyed on the same `data-*` attributes the original tool used. Light
-// polling + focus/visibility refresh keeps outlets in sync across devices.
+// CLIT work is CLIENT-scoped: a user with CLIT access services every outlet +
+// floor under their client and filters here. Most tabs render HTML strings into a
+// `.clit-scope` container with delegated native events; the Admin Console is a
+// React panel (MaintenanceAdmin). What each CLIT role can see/do comes from the
+// capability matrix in clitRoles.ts; Client Admins are CLIT Admins by default.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Wrench } from "lucide-react";
 import { User as AppUser, Tenant } from "../../types";
-import { CLIT_SCOPED_CSS, MAINT_TABS, MaintRole } from "./maintenanceTheme";
+import { CLIT_SCOPED_CSS, MAINT_TABS } from "./maintenanceTheme";
+import { ClitRole, caps as roleCaps, effectiveClitRole } from "./clitRoles";
 import {
-  MaintCtx, DraftRow, Equipment, DefectRow, AuditRow, HistoryRow, ChecklistResponses,
-  maintRole, renderTab, buildCsv, deriveCriticality, getFacilityTodayString,
+  MaintCtx, Equipment, DefectRow, AuditRow, HistoryRow, ChecklistResponses,
+  renderTab, buildCsv, deriveCriticality, getFacilityTodayString,
 } from "./maintenanceEngine";
+import MaintenanceAdmin from "./MaintenanceAdmin";
 import * as svc from "../../services/maintenanceService";
+import { AUDIT_PARAMS } from "./maintenanceData";
+import { translateText } from "../../services/store";
+
+type ChkLang = "original" | "kn" | "hi" | "ta";
+const CLIT_LANGS: { c: ChkLang; l: string }[] = [
+  { c: "original", l: "Original" }, { c: "kn", l: "ಕನ್ನಡ" }, { c: "hi", l: "हिंदी" }, { c: "ta", l: "தமிழ்" },
+];
 
 interface Props {
   activeUser: AppUser;
   activeTenant: Tenant;
   tenants: Tenant[];
+  /** All staff of the active client — used by the Admin Console access manager. */
+  clientUsers?: AppUser[];
+  /** Grant/revoke CLIT access + role for a staff member (wired to the store). */
+  onSetClitAccess?: (userId: string, access: boolean, role: string) => Promise<void>;
 }
 
-export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
-  const tenantId = activeTenant.id;
-  const role: MaintRole = maintRole(activeUser.role as string);
-  const visibleTabs = useMemo(() => MAINT_TABS.filter(t => t.roles.includes(role)), [role]);
+export default function MaintenanceHub({ activeUser, activeTenant, tenants, clientUsers = [], onSetClitAccess }: Props) {
+  const role: ClitRole = useMemo(
+    () => effectiveClitRole(activeUser.clitRole, activeUser.role as string),
+    [activeUser.clitRole, activeUser.role],
+  );
+  const capMap = useMemo(() => roleCaps(role), [role]);
+  const visibleTabs = useMemo(
+    () => MAINT_TABS.filter(t => t.requires === null || capMap[t.requires]),
+    [capMap],
+  );
+
+  const outlets = tenants && tenants.length > 0 ? tenants : [activeTenant];
+  const [selectedOutletId, setSelectedOutletId] = useState<string>(activeTenant.id);
+  const tenantId = selectedOutletId;
+  const selectedOutlet = outlets.find(o => o.id === selectedOutletId) || activeTenant;
+  const clientId = activeTenant.clientId;
 
   // ── Data + UI state ────────────────────────────────────────────────────────
   const [equipment, setEquipment] = useState<Equipment[]>([]);
@@ -38,23 +62,29 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
   const [defects, setDefects] = useState<DefectRow[]>([]);
   const [audits, setAudits] = useState<AuditRow[]>([]);
   const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [sopRoster, setSopRoster] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
-  const [activeSubTab, setActiveSubTab] = useState<string>(visibleTabs[0]?.id || "templates");
+  const [activeSubTab, setActiveSubTab] = useState<string>(visibleTabs[0]?.id || "equipment");
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
-  const [machineAdminOpen, setMachineAdminOpen] = useState(false);
+  const [reopened, setReopened] = useState<string[]>([]);
+  const [selectedFloor, setSelectedFloor] = useState<string>("");
+  const [chkLang, setChkLang] = useState<ChkLang>("original");
+  const [trCache, setTrCache] = useState<Record<string, string>>({});
+  const [translating, setTranslating] = useState(false);
   const [checklistHistoryFilterDate, setChecklistHistoryFilterDate] = useState<string>(getFacilityTodayString());
   const [auditHistoryFilterDate, setAuditHistoryFilterDate] = useState<string>(getFacilityTodayString());
 
-  // Machine-add draft is a mutable ref (like the original) so typing into its
-  // fields never triggers a re-render / focus loss; structural changes bump tick.
-  const draftRef = useRef<DraftRow[]>([{ c: "", p: "Clean", std: "", freq: "Daily", method: "" }]);
-  const [tick, setTick] = useState(0);
-  const forceRender = useCallback(() => setTick(t => t + 1), []);
-
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  // ── Load / reload ──────────────────────────────────────────────────────────
+  // Keep the active sub-tab valid if the role's visible tabs change.
+  useEffect(() => {
+    if (!visibleTabs.some(t => t.id === activeSubTab)) {
+      setActiveSubTab(visibleTabs[0]?.id || "equipment");
+    }
+  }, [visibleTabs, activeSubTab]);
+
+  // ── Load / reload (for the SELECTED outlet) ─────────────────────────────────
   const reload = useCallback(async () => {
     const eq = await svc.getEquipment(tenantId);
     const nameById: Record<string, string> = {};
@@ -73,7 +103,12 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
     setLoading(false);
   }, [tenantId]);
 
-  useEffect(() => { setLoading(true); reload(); }, [reload]);
+  useEffect(() => { setLoading(true); setSelectedMachine(null); reload(); }, [reload]);
+  // Re-opened frequencies are per-open-machine — reset when the machine changes.
+  useEffect(() => { setReopened([]); }, [selectedMachine]);
+
+  // SOP roster is per client — load once.
+  useEffect(() => { if (clientId) svc.getSopRoster(clientId).then(setSopRoster); }, [clientId]);
 
   // Cross-device sync: refresh on focus/visibility + a light interval, but skip
   // while the user is typing into one of our fields so we don't clobber input.
@@ -95,12 +130,51 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
     };
   }, [reload]);
 
+  // Floors available in this outlet (derived from its equipment).
+  const floors = useMemo(
+    () => Array.from(new Set(equipment.map(e => e.floor || "").filter(Boolean))).sort(),
+    [equipment],
+  );
+  const visibleEquipment = useMemo(
+    () => (selectedFloor ? equipment.filter(e => (e.floor || "") === selectedFloor) : equipment),
+    [equipment, selectedFloor],
+  );
+
+  // ── Google-translate for checklist / audit text (like Checklist Routines) ────
+  const tr = useCallback(
+    (text: string) => (chkLang === "original" || !text ? text : (trCache[`${chkLang}:${text}`] ?? text)),
+    [chkLang, trCache],
+  );
+  useEffect(() => {
+    if (chkLang === "original") return;
+    const strings = new Set<string>();
+    if (activeSubTab === "equipment" && selectedMachine) {
+      const m = equipment.find(e => e.id === selectedMachine);
+      (m?.checklist || []).forEach(it => { [it.c, it.std, it.method].forEach(s => { if (s && s.trim()) strings.add(s); }); });
+    }
+    if (activeSubTab === "audit") {
+      (AUDIT_PARAMS as any[]).forEach(p => { strings.add(p.name); strings.add(p.desc); });
+    }
+    const missing = Array.from(strings).filter(s => !(`${chkLang}:${s}` in trCache));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    setTranslating(true);
+    Promise.all(missing.map(async s => [s, await translateText(s, chkLang)] as const))
+      .then(pairs => {
+        if (cancelled) return;
+        setTrCache(prev => { const next = { ...prev }; pairs.forEach(([s, t]) => { next[`${chkLang}:${s}`] = t; }); return next; });
+      })
+      .finally(() => { if (!cancelled) setTranslating(false); });
+    return () => { cancelled = true; };
+    // trCache intentionally omitted — closure value is correct for the current switch.
+  }, [chkLang, selectedMachine, activeSubTab, equipment]);
+
   // ── Build the render context ────────────────────────────────────────────────
   const ctx: MaintCtx = useMemo(() => {
     const CHECKLISTS: Record<string, any> = {};
     equipment.forEach(e => { CHECKLISTS[e.id] = e.checklist; });
     return {
-      MACHINES: equipment,
+      MACHINES: visibleEquipment,
       CHECKLISTS,
       checklists,
       defects,
@@ -108,29 +182,31 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
       checklistHistory: history,
       userName: activeUser.name,
       role,
+      caps: capMap,
+      canSubmit: capMap.runChecklist,
       selectedMachine,
-      machineAdminOpen,
-      newMachineDraft: draftRef.current,
       checklistHistoryFilterDate,
       auditHistoryFilterDate,
+      floorFilter: selectedFloor,
+      outletName: selectedOutlet.name,
+      sopRoster,
+      reopened,
+      tr,
     };
-    // `tick` forces a rebuild when the (mutable) machine-add draft rows change.
-  }, [equipment, checklists, defects, audits, history, activeUser.name, role,
-      selectedMachine, machineAdminOpen, checklistHistoryFilterDate, auditHistoryFilterDate, tick]);
+  }, [equipment, visibleEquipment, checklists, defects, audits, history, activeUser.name, role, capMap,
+      selectedMachine, checklistHistoryFilterDate, auditHistoryFilterDate, selectedFloor, selectedOutlet.name, sopRoster, reopened, tr]);
 
-  // Keep the latest ctx + tenant available to the (stable) native listeners.
-  const latestRef = useRef({ ctx, tenantId });
-  latestRef.current = { ctx, tenantId };
+  const latestRef = useRef({ ctx, tenantId, clientId });
+  latestRef.current = { ctx, tenantId, clientId };
 
   const bodyHtml = useMemo(() => renderTab(ctx, activeSubTab), [ctx, activeSubTab]);
 
-  // ── Delegated actions (attached once to the body container) ─────────────────
+  // ── Delegated actions ───────────────────────────────────────────────────────
   const download = (content: string, filename: string) => {
     const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.setAttribute("href", url);
-    a.setAttribute("download", filename);
+    a.setAttribute("href", url); a.setAttribute("download", filename);
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
@@ -148,12 +224,10 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
       const responses: Record<string, string> = {};
       Object.keys(cur).forEach(k => { if (k !== "_tech") responses[k] = (cur as any)[k]; });
       const techName = (cur as any)._tech || activeUser.name;
-      // Persist state + create/resolve defect (fire-and-forget; poll reconciles).
       svc.setChecklistMark(tid, equipId, responses, techName).then(async () => {
         const rule = eq.checklist[idx];
         if (next === "notok" && rule) {
-          await svc.createDefect(tid, equipId, eq.name, idx, rule.c, rule.std,
-            deriveCriticality(rule.p, rule.c));
+          await svc.createDefect(tid, equipId, eq.name, idx, rule.c, rule.std, deriveCriticality(rule.p, rule.c));
         } else {
           await svc.resolveDefectForItem(tid, equipId, idx);
         }
@@ -165,12 +239,13 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
 
   const handleClick = useCallback((e: Event) => {
     const target = e.target as HTMLElement;
-    const el = target.closest("[data-open-chk],[data-chk-val],[data-remove-draft-row],[data-delete-machine],#chkBackBtn,#completeRoundBtn,#submitAuditBtn,#exportDefectsCsv,#exportAuditsCsv,#toggleMachineAdminBtn,#addChecklistRowBtn,#createMachineBtn,#purgeDataBtn,#auditHistoryShowAllBtn,#checklistHistoryShowAllBtn") as HTMLElement | null;
+    const el = target.closest("[data-open-chk],[data-chk-val],[data-complete-freq],[data-reopen-freq],#chkBackBtn,#submitAuditBtn,#exportRoundsCsv,#exportDefectsCsv,#exportAuditsCsv,#auditHistoryShowAllBtn,#checklistHistoryShowAllBtn") as HTMLElement | null;
     if (!el) return;
     const { ctx: c, tenantId: tid } = latestRef.current;
 
     if (el.hasAttribute("data-open-chk")) { setSelectedMachine(el.getAttribute("data-open-chk")); return; }
     if (el.id === "chkBackBtn") { setSelectedMachine(null); return; }
+    if (el.hasAttribute("data-reopen-freq")) { const f = el.getAttribute("data-reopen-freq")!; setReopened(prev => prev.includes(f) ? prev : [...prev, f]); return; }
 
     if (el.hasAttribute("data-chk-val")) {
       const idx = parseInt(el.getAttribute("data-chk-idx") || "0", 10);
@@ -179,15 +254,26 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
       return;
     }
 
-    if (el.id === "completeRoundBtn") {
+    if (el.hasAttribute("data-complete-freq")) {
+      const freq = el.getAttribute("data-complete-freq")!;
       const mId = c.selectedMachine;
       if (!mId) return;
-      const eq = c.MACHINES.find(m => m.id === mId);
+      const machine = c.MACHINES.find(m => m.id === mId);
+      const checklist = machine?.checklist || [];
       const cur = c.checklists[mId] || {};
-      const responses: Record<string, string> = {};
-      Object.keys(cur).forEach(k => { if (k !== "_tech") responses[k] = (cur as any)[k]; });
-      svc.completeRound(tid, mId, eq?.name || mId, responses, (cur as any)._tech || activeUser.name)
-        .then(() => { setSelectedMachine(null); reload(); });
+      const freqIdx = new Set<string>();
+      checklist.forEach((it, idx) => { if ((it.freq || "Daily") === freq) freqIdx.add(String(idx)); });
+      const archiveItems: Record<string, string> = {};
+      const remaining: Record<string, string> = {};
+      Object.keys(cur).forEach(k => {
+        if (k === "_tech") return;
+        if (freqIdx.has(k)) archiveItems[k] = (cur as any)[k];
+        else remaining[k] = (cur as any)[k];
+      });
+      if (Object.keys(archiveItems).length === 0) { alert(`Mark at least one ${freq} item before submitting.`); return; }
+      const techName = (cur as any)._tech || activeUser.name;
+      setReopened(prev => prev.filter(f => f !== freq));
+      svc.completeFrequencyRound(tid, mId, machine?.name || mId, archiveItems, remaining, techName, freq).then(reload);
       return;
     }
 
@@ -201,83 +287,20 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
       root.querySelectorAll(".audit-score-input").forEach(s => scores.push(parseInt((s as HTMLSelectElement).value, 10)));
       root.querySelectorAll(".audit-remark-input").forEach(s => remarks.push((s as HTMLInputElement).value));
       svc.submitAudit(tid, chosenId, eq?.name || chosenId, activeUser.name, scores, remarks)
-        .then(total => { alert(`Audit transaction finalized successfully. Total Score: ${total} / 25`); reload(); });
+        .then(total => { alert(`Audit saved. Total score: ${total} / 25`); reload(); });
       return;
     }
 
+    if (el.id === "exportRoundsCsv") { const { content, filename } = buildCsv(c, "rounds"); download(content, filename); return; }
     if (el.id === "exportDefectsCsv") { const { content, filename } = buildCsv(c, "defects"); download(content, filename); return; }
     if (el.id === "exportAuditsCsv") { const { content, filename } = buildCsv(c, "audits"); download(content, filename); return; }
     if (el.id === "checklistHistoryShowAllBtn") { setChecklistHistoryFilterDate(""); return; }
     if (el.id === "auditHistoryShowAllBtn") { setAuditHistoryFilterDate(""); return; }
-
-    // ── Machine admin ──
-    if (el.id === "toggleMachineAdminBtn") {
-      setMachineAdminOpen(open => {
-        const next = !open;
-        if (next) draftRef.current = [{ c: "", p: "Clean", std: "", freq: "Daily", method: "" }];
-        return next;
-      });
-      return;
-    }
-    if (el.id === "addChecklistRowBtn") {
-      draftRef.current = [...draftRef.current, { c: "", p: "Clean", std: "", freq: "Daily", method: "" }];
-      forceRender();
-      return;
-    }
-    if (el.hasAttribute("data-remove-draft-row")) {
-      const i = parseInt(el.getAttribute("data-remove-draft-row") || "0", 10);
-      if (draftRef.current.length > 1) draftRef.current = draftRef.current.filter((_, j) => j !== i);
-      forceRender();
-      return;
-    }
-    if (el.id === "createMachineBtn") {
-      const root = bodyRef.current!;
-      const name = ((root.querySelector("#newMachName") as HTMLInputElement)?.value || "").trim();
-      const group = ((root.querySelector("#newMachGroup") as HTMLInputElement)?.value || "").trim();
-      const icon = (root.querySelector("#newMachIcon") as HTMLSelectElement)?.value || "oven";
-      const checklist = draftRef.current.filter(r => r.c.trim() && r.std.trim());
-      if (!name || !group || checklist.length === 0) {
-        alert("Please provide a machine name, category, and at least one complete checklist row (component + target standard).");
-        return;
-      }
-      svc.addEquipment(tid, name, group, icon, checklist).then(() => {
-        draftRef.current = [{ c: "", p: "Clean", std: "", freq: "Daily", method: "" }];
-        setMachineAdminOpen(false);
-        reload();
-      });
-      return;
-    }
-    if (el.hasAttribute("data-delete-machine")) {
-      e.stopPropagation();
-      const id = el.getAttribute("data-delete-machine")!;
-      const mach = c.MACHINES.find(m => m.id === id);
-      if (!confirm(`Delete "${mach ? mach.name : id}" and its in-progress checklist? This cannot be undone.`)) return;
-      svc.deleteEquipment(id).then(reload);
-      return;
-    }
-    if (el.id === "purgeDataBtn") {
-      if (!confirm("Reset System Cache for this outlet? This wipes in-progress checklist marks and the open Defect Log. Audit history and the Checklist History archive are preserved.")) return;
-      svc.resetCache(tid).then(reload);
-      return;
-    }
-  }, [handleToggle, reload, activeUser.name, forceRender]);
+  }, [handleToggle, reload, activeUser.name]);
 
   const handleChange = useCallback((e: Event) => {
     const el = e.target as HTMLElement;
-    const { ctx: c, tenantId: tid } = latestRef.current;
-
-    // Draft field edits — mutate the ref silently (no re-render, no focus loss).
-    const draftClass = ["chk-draft-c", "chk-draft-p", "chk-draft-std", "chk-draft-freq", "chk-draft-method"]
-      .find(cls => el.classList.contains(cls));
-    if (draftClass) {
-      const i = parseInt(el.getAttribute("data-row") || "0", 10);
-      const row = draftRef.current[i];
-      if (row) {
-        const key = draftClass.replace("chk-draft-", "") as keyof DraftRow;
-        (row as any)[key] = (el as HTMLInputElement).value;
-      }
-      return;
-    }
+    const { ctx: c, tenantId: tid, clientId: cid } = latestRef.current;
 
     if (el.id === "techNameInput" && c.selectedMachine) {
       const mId = c.selectedMachine;
@@ -289,6 +312,17 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
         Object.keys(cur).forEach(k => { if (k !== "_tech") responses[k] = (cur as any)[k]; });
         svc.setChecklistMark(tid, mId, responses, value);
         return { ...prev, [mId]: cur };
+      });
+      return;
+    }
+
+    if (el.classList.contains("sop-roster-input")) {
+      const key = el.getAttribute("data-roster-key")!;
+      const value = (el as HTMLInputElement).value;
+      setSopRoster(prev => {
+        const next = { ...prev, [key]: value };
+        if (cid) svc.setSopRoster(cid, next);
+        return next;
       });
       return;
     }
@@ -316,24 +350,45 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
       node.removeEventListener("click", handleClick);
       node.removeEventListener("change", handleChange);
     };
-  }, [handleClick, handleChange]);
+  }, [handleClick, handleChange, activeSubTab]);
 
-  // Switching sub-tabs always returns to the machine list.
-  const selectTab = (id: string) => { setActiveSubTab(id); setSelectedMachine(null); setMachineAdminOpen(false); };
+  const selectTab = (id: string) => { setActiveSubTab(id); setSelectedMachine(null); };
+  const onOutletChange = (id: string) => { setSelectedOutletId(id); setSelectedFloor(""); setSelectedMachine(null); };
+  const onFloorChange = (f: string) => { setSelectedFloor(f); setSelectedMachine(null); };
+
+  const isAdminTab = activeSubTab === "adminPanel";
 
   return (
     <div className="clit-scope" style={{ fontFamily: "Inter, sans-serif" }}>
       <style>{CLIT_SCOPED_CSS}</style>
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
-        <div style={{ width: 34, height: 34, border: "2px solid var(--amber)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--amber)", flexShrink: 0 }}>
+        <div style={{ width: 34, height: 34, border: "2px solid var(--amber)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--amber)", flexShrink: 0 }}>
           <Wrench className="w-4 h-4" />
         </div>
         <div>
-          <h1 style={{ fontSize: 17 }}>CLIT Autonomous Maintenance</h1>
-          <p style={{ margin: "2px 0 0", fontSize: 11, color: "var(--muted)", fontFamily: "'IBM Plex Mono', monospace" }}>
-            {activeTenant.name} &middot; Clean · Lubricate · Inspect · Tighten
+          <h1 style={{ fontSize: 18 }}>CLIT Autonomous Maintenance</h1>
+          <p style={{ margin: "2px 0 0", fontSize: 11, color: "var(--muted)", fontFamily: "'JetBrains Mono', monospace" }}>
+            {selectedOutlet.name} &middot; Clean · Lubricate · Inspect · Tighten
           </p>
+        </div>
+      </div>
+
+      <div className="clit-filterbar">
+        <div className="clit-filter-field">
+          <label>Outlet</label>
+          <select value={selectedOutletId} onChange={e => onOutletChange(e.target.value)}>
+            {outlets.map(o => (
+              <option key={o.id} value={o.id}>{o.logo ? `${o.logo} ` : ""}{o.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="clit-filter-field">
+          <label>Floor</label>
+          <select value={selectedFloor} onChange={e => onFloorChange(e.target.value)} disabled={floors.length === 0}>
+            <option value="">{floors.length === 0 ? "No floors tagged yet" : "All floors"}</option>
+            {floors.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
         </div>
       </div>
 
@@ -349,8 +404,30 @@ export default function MaintenanceHub({ activeUser, activeTenant }: Props) {
         ))}
       </div>
 
+      {!loading && !isAdminTab && ((activeSubTab === "equipment" && selectedMachine) || activeSubTab === "audit") && (
+        <div className="clit-langbar">
+          <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "'JetBrains Mono', monospace" }}>View in:</span>
+          {CLIT_LANGS.map(x => (
+            <button key={x.c} className={`lang-btn ${chkLang === x.c ? "active" : ""}`} disabled={translating} onClick={() => setChkLang(x.c)}>{x.l}</button>
+          ))}
+          {translating && <span style={{ fontSize: 10, color: "var(--muted)" }}>Translating…</span>}
+        </div>
+      )}
+
       {loading ? (
         <div className="empty-state">Loading outlet maintenance data…</div>
+      ) : isAdminTab ? (
+        <MaintenanceAdmin
+          tenantId={tenantId}
+          outletName={selectedOutlet.name}
+          equipment={equipment}
+          floorPrefill={selectedFloor}
+          canManageEquipment={capMap.manageEquipment}
+          canManageAccess={capMap.manageAccess}
+          clientUsers={clientUsers}
+          onReloadEquipment={reload}
+          onSetClitAccess={onSetClitAccess || (async () => {})}
+        />
       ) : (
         <div ref={bodyRef} dangerouslySetInnerHTML={{ __html: bodyHtml }} />
       )}

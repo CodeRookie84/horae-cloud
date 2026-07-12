@@ -341,31 +341,39 @@ async function handleDigest(userId: string, tenantId: string, items: any, runMod
   }, tenantId, "daily_digest", `digest-${runMode}-` + new Date().toISOString().slice(0, 10));
 }
 
-async function handleUrgentPush(kind: "task" | "notice" | "message", record: any, userIds: string[], tenantId: string) {
+async function handleUrgentPush(kind: "task" | "notice" | "message" | "training", record: any, userIds: string[], tenantId: string) {
   if (!record || !userIds?.length) return;
   const deepLink = kind === "task" ? `${APP_BASE_URL}/tasks/${record.id}`
     : kind === "notice" ? `${APP_BASE_URL}/notices/${record.id}`
+    : kind === "training" ? `${APP_BASE_URL}/training`
     : `${APP_BASE_URL}/team-talk?channel=${record.channelId}&msg=${record.id}`;
 
   for (const userId of userIds) {
     const user = await getUser(userId);
     if (!user) continue;
-    if (!await checkAntiSpam(userId, tenantId, "urgent_push", record.id)) continue;
+    // Training reminders are opt-in nudges, not one-shot urgent events — use a
+    // dedup key that changes per calendar day so a reminder can be re-sent later.
+    const refId = kind === "training" ? `${record.id}:${new Date().toISOString().slice(0, 10)}` : record.id;
+    if (!await checkAntiSpam(userId, tenantId, "urgent_push", refId)) continue;
 
     const waMessage = kind === "task"
       ? `🔴 *Urgent task — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\nImmediate action required.\n\n👉 ${deepLink}`
       : kind === "notice"
       ? `🔴 *Urgent notice — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\n\n👉 ${deepLink}`
+      : kind === "training"
+      ? `📚 *Training reminder — Horae*\n\nHi ${user.name.split(" ")[0]},\nPlease complete your training: *${record.title}*.\n\n👉 ${deepLink}`
       : `🔴 *Urgent message — Horae*\n\nHi ${user.name.split(" ")[0]},\n${record.senderName ? `${record.senderName}: ` : ""}"${record.title}"\n\n👉 ${deepLink}`;
 
     await sendNotifications(user, {
       waMessage,
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [record.title, `Urgent — Immediate action needed. ${deepLink}`] },
-      pushTitle: kind === "task" ? `🔴 Urgent task: ${record.title}` : `🔴 Urgent notice: ${record.title}`,
-      pushBody: "Immediate action needed",
+      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [record.title, kind === "training" ? `Training to complete. ${deepLink}` : `Urgent — Immediate action needed. ${deepLink}`] },
+      pushTitle: kind === "task" ? `🔴 Urgent task: ${record.title}`
+        : kind === "training" ? `📚 Training: ${record.title}`
+        : `🔴 Urgent notice: ${record.title}`,
+      pushBody: kind === "training" ? "Tap to complete your training" : "Immediate action needed",
       url: deepLink,
       pushTag: `urgent-${kind}-${record.id}`,
-    }, tenantId, "urgent_push", record.id, true);
+    }, tenantId, "urgent_push", refId, true);
   }
 }
 

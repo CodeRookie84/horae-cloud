@@ -23,7 +23,8 @@ import {
   Bell,
   BellOff,
   Compass,
-  Wrench
+  Wrench,
+  GraduationCap
 } from "lucide-react";
 import { Client, Tenant, User as AppUser, Role, Department } from "../types";
 import { store } from "../services/store";
@@ -362,18 +363,35 @@ export default function Sidebar({
                 </button>
               )}
 
+              {(activeUser.clitAccess || activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN) && (
+                <button
+                  id="btn-maintenance"
+                  onClick={() => handleTabClick("maintenance")}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.8 rounded-md text-sm font-medium transition-all cursor-pointer ${
+                    activeTab === "maintenance"
+                      ? "bg-blue-50 text-blue-700 font-semibold rounded-xl"
+                      : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Wrench className="w-3.5 h-3.5" />
+                    <span>Equipment Maintenance</span>
+                  </div>
+                </button>
+              )}
+
               <button
-                id="btn-maintenance"
-                onClick={() => handleTabClick("maintenance")}
+                id="btn-training"
+                onClick={() => handleTabClick("training")}
                 className={`w-full flex items-center justify-between px-2.5 py-1.8 rounded-md text-sm font-medium transition-all cursor-pointer ${
-                  activeTab === "maintenance"
+                  activeTab === "training"
                     ? "bg-blue-50 text-blue-700 font-semibold rounded-xl"
                     : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <Wrench className="w-3.5 h-3.5" />
-                  <span>Equipment Maintenance</span>
+                  <GraduationCap className="w-3.5 h-3.5" />
+                  <span>Training</span>
                 </div>
               </button>
 

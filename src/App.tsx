@@ -42,6 +42,9 @@ import NotificationPermissionBanner from "./components/NotificationPermissionBan
 import TeamTalk from "./components/TeamTalk";
 import SwotCompass from "./components/swot/SwotCompass";
 import MaintenanceHub from "./components/maintenance/MaintenanceHub";
+import Training from "./components/Training";
+import TrainingAdmin from "./components/TrainingAdmin";
+import * as trainingSvc from "./services/trainingService";
 
 
 /** Single row in the notifications dropdown — swipe left/right to dismiss, tap to open + mark read. */
@@ -149,7 +152,7 @@ function AppInner() {
       dashboard: '/dashboard', notices: '/notices', checklists: '/checklists',
       tasks: '/tasks', quizzes: '/quizzes', sops: '/sops', 'admin-panel': '/admin',
       'horae-admin': '/horae-admin', 'checklist-report': '/checklist-report',
-      'team-talk': '/teamtalk', swot: '/swot', maintenance: '/maintenance',
+      'team-talk': '/teamtalk', swot: '/swot', maintenance: '/maintenance', training: '/training',
     };
     if (urlMap[tab] && location.pathname !== urlMap[tab]) {
       navigate(urlMap[tab]);
@@ -175,7 +178,7 @@ function AppInner() {
       '/dashboard': 'dashboard', '/notices': 'notices', '/checklists': 'checklists',
       '/tasks': 'tasks', '/quizzes': 'quizzes', '/sops': 'sops', '/admin': 'admin-panel',
       '/horae-admin': 'horae-admin', '/checklist-report': 'checklist-report',
-      '/teamtalk': 'team-talk', '/swot': 'swot', '/maintenance': 'maintenance',
+      '/teamtalk': 'team-talk', '/swot': 'swot', '/maintenance': 'maintenance', '/training': 'training',
     };
     
     const targetTab = reverseMap[mainRoute];
@@ -212,6 +215,8 @@ function AppInner() {
   const [quizAttempts, setQuizAttempts] = useState<any[]>([]);
   const [sops, setSops] = useState<any[]>([]);
   const [sopReadStatuses, setSopReadStatuses] = useState<any[]>([]);
+  const [trainings, setTrainings] = useState<any[]>([]);
+  const [trainingAttempts, setTrainingAttempts] = useState<any[]>([]);
   const [chatUnreadCount, setChatUnreadCount] = useState<number>(0);
 
   const isTrialExpired = activeClient?.plan === "Free" && (() => {
@@ -303,6 +308,8 @@ function AppInner() {
       const attemptsList = await store.getQuizAttempts();
       const sopsList = await store.getSOPs();
       const readStatusesList = await store.getSOPReadStatuses();
+      const trainingsList = await trainingSvc.getTrainings(activeClientObj.id);
+      const trainingAttemptsList = await trainingSvc.getAttempts(trainingsList.map(t => t.id));
       
       // Fetch unread channels, threads & mentions — the dashboard total is the sum of all three:
       // plain unread messages in DMs/channels/rooms, unread thread replies, and unread @mentions.
@@ -325,6 +332,8 @@ function AppInner() {
       setQuizAttempts(attemptsList);
       setSops(sopsList);
       setSopReadStatuses(readStatusesList);
+      setTrainings(trainingsList);
+      setTrainingAttempts(trainingAttemptsList);
 
       if (userObj.role === Role.SUPER_ADMIN) {
         handleSetActiveTab("horae-admin");
@@ -537,8 +546,8 @@ function AppInner() {
     await refreshLocalState();
   };
 
-  const handleOnboardStaff = async (tenantId: string, name: string, email: string, role: Role, department: Department, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean) => {
-    await store.onboardingUser(tenantId, name, email, role, department, avatar, phoneNumber, whatsappOptedIn);
+  const handleOnboardStaff = async (tenantId: string, name: string, email: string, role: Role, department: Department, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean, clitAccess?: boolean, clitRole?: string) => {
+    await store.onboardingUser(tenantId, name, email, role, department, avatar, phoneNumber, whatsappOptedIn, clitAccess, clitRole);
     await refreshLocalState();
   };
 
@@ -747,10 +756,35 @@ function AppInner() {
     triggerToast("Outlet workspace deleted.");
   };
 
-  const handleUpdateUser = async (userId: string, name: string, email: string, role: string, department: string) => {
-    await store.updateUser(userId, name, email, role, department);
+  const handleUpdateUser = async (userId: string, name: string, email: string, role: string, department: string, clitAccess?: boolean, clitRole?: string) => {
+    await store.updateUser(userId, name, email, role, department, clitAccess, clitRole);
     await refreshLocalState();
     triggerToast("Staff user updated.");
+  };
+
+  const handleSetClitAccess = async (userId: string, access: boolean, clitRole: string) => {
+    await store.setClitAccess(userId, access, clitRole);
+    await refreshLocalState();
+    triggerToast(access ? "CLIT access granted." : "CLIT access removed.");
+  };
+
+  const refreshTraining = async () => {
+    const cid = activeClient?.id;
+    if (!cid) return;
+    const list = await trainingSvc.getTrainings(cid);
+    const att = await trainingSvc.getAttempts(list.map(t => t.id));
+    setTrainings(list);
+    setTrainingAttempts(att);
+  };
+
+  const handleSubmitTraining = async (training: any, answers: number[]) => {
+    const att = await trainingSvc.submitAttempt(
+      training,
+      { id: activeUser!.id, name: activeUser!.name, role: String(activeUser!.role), department: String(activeUser!.department), tenantId: activeUser!.tenantId },
+      answers,
+    );
+    await refreshTraining();
+    return att;
   };
 
   const handleDeleteUser = async (userId: string) => {
@@ -918,7 +952,7 @@ function AppInner() {
 
         {/* TOP STATUS BAR BAR */}
         {activeTab !== 'team-talk' && (
-        <header className="bg-white border-b border-slate-100 px-4 py-3 md:px-8 md:py-4 flex items-center justify-between shrink-0" id="top-navbar">
+        <header className="bg-white/70 backdrop-blur-xl border-b border-slate-100 px-4 py-3 md:px-8 md:py-4 flex items-center justify-between shrink-0" id="top-navbar">
           <div className="flex items-center gap-3">
             {/* Hamburger Menu Toggle */}
             <button
@@ -1174,6 +1208,8 @@ function AppInner() {
                       }
                       quizzes={quizzes}
                       quizAttempts={quizAttempts}
+                      trainings={trainings}
+                      trainingAttempts={trainingAttempts}
                     />
                   )}
 
@@ -1235,6 +1271,28 @@ function AppInner() {
                     />
                   )}
 
+                  {activeTab === "training" && (
+                    [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role) ? (
+                      <TrainingAdmin
+                        trainings={trainings}
+                        attempts={trainingAttempts}
+                        activeUser={activeUser}
+                        clientId={activeClient?.id || activeTenant.clientId}
+                        tenants={tenants}
+                        clientUsers={allUsers.filter(u => tenants.some(t => t.id === u.tenantId))}
+                        onChanged={refreshTraining}
+                      />
+                    ) : (
+                      <Training
+                        trainings={trainings}
+                        attempts={trainingAttempts}
+                        activeUser={activeUser}
+                        onSubmit={handleSubmitTraining}
+                        onBack={handleBack}
+                      />
+                    )
+                  )}
+
                   {activeTab === "team-talk" && (
                     <TeamTalk
                       activeUser={activeUser}
@@ -1258,11 +1316,13 @@ function AppInner() {
                     />
                   )}
 
-                  {activeTab === "maintenance" && (
+                  {activeTab === "maintenance" && (activeUser.clitAccess || [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role)) && (
                     <MaintenanceHub
                       activeUser={activeUser}
                       activeTenant={activeTenant}
                       tenants={tenants}
+                      clientUsers={allUsers.filter(u => tenants.some(t => t.id === u.tenantId))}
+                      onSetClitAccess={handleSetClitAccess}
                     />
                   )}
 

@@ -116,42 +116,49 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     }
   };
 
+  // Shared light-glass input classes (violet focus). Super Admin gets an amber focus.
+  const inputBase =
+    "w-full text-xs py-3 bg-white/70 border rounded-xl text-[#241D4B] placeholder-[#9E97BE] focus:outline-none focus:bg-white transition-all";
+  const inputBrand = "border-[#E7E3F5] focus:border-[#8B7CF6] focus:ring-1 focus:ring-[#8B7CF6]/40";
+  const inputAdmin = "border-amber-300/60 focus:border-amber-500 focus:ring-1 focus:ring-amber-400/50";
+
   return (
-    <div className="min-h-screen w-full bg-[#0B1528] relative flex items-center justify-center font-sans overflow-hidden p-4">
-      {/* Decorative premium gradient orbs */}
-      <div 
-        className={`absolute top-[-20%] left-[-10%] w-[50%] h-[60%] rounded-full blur-[120px] pointer-events-none transition-colors duration-500 ${
-          isSuperAdminEmail ? "bg-amber-600/10" : "bg-[#1E3A8A]/30"
-        }`} 
+    <div className="min-h-screen w-full bg-[#FBFAFF] relative flex items-center justify-center font-sans overflow-hidden p-4">
+      {/* Decorative pastel gradient orbs */}
+      <div
+        className={`absolute top-[-20%] left-[-10%] w-[55%] h-[60%] rounded-full blur-[120px] pointer-events-none transition-colors duration-500 ${
+          isSuperAdminEmail ? "bg-amber-400/20" : "bg-[#8B7CF6]/30"
+        }`}
       />
-      <div 
-        className={`absolute bottom-[-20%] right-[-10%] w-[50%] h-[60%] rounded-full blur-[120px] pointer-events-none transition-colors duration-500 ${
-          isSuperAdminEmail ? "bg-amber-600/10" : "bg-[#854D0E]/20"
-        }`} 
+      <div
+        className={`absolute bottom-[-20%] right-[-12%] w-[55%] h-[62%] rounded-full blur-[120px] pointer-events-none transition-colors duration-500 ${
+          isSuperAdminEmail ? "bg-amber-300/15" : "bg-[#4FD6B0]/25"
+        }`}
       />
+      <div className="absolute top-[30%] right-[20%] w-[32%] h-[40%] rounded-full blur-[120px] pointer-events-none bg-[#F49AD1]/18" />
 
       {/* Main card */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, ease: "easeOut" }}
-        className={`w-full max-w-md bg-slate-900/60 backdrop-blur-xl border rounded-3xl p-8 shadow-2xl flex flex-col relative z-10 transition-colors duration-550 ${
-          isSuperAdminEmail ? "border-amber-500/30" : "border-slate-800/80"
+        className={`w-full max-w-md bg-white/75 backdrop-blur-2xl border rounded-3xl p-8 shadow-[0_24px_70px_-20px_rgba(123,110,240,0.35)] flex flex-col relative z-10 transition-colors duration-550 ${
+          isSuperAdminEmail ? "border-amber-300/50" : "border-white/70"
         }`}
       >
         {/* Brand Header */}
         <div className="text-center space-y-2 mb-8 select-none flex flex-col items-center">
-          <img 
-            src="/horae-logo.jpg" 
-            alt="Horae Logo" 
+          <img
+            src="/horae-logo.jpg"
+            alt="Horae Logo"
             onDoubleClick={handleLogoDoubleClick}
             title="Double-click to activate administrative mode"
-            className="h-14 max-w-full object-contain mb-2 cursor-pointer active:scale-95 transition-all bg-white p-2.5 rounded-2xl border border-slate-800/40 shadow-inner" 
+            className="h-14 max-w-full object-contain mb-2 cursor-pointer active:scale-95 transition-all bg-white p-2.5 rounded-2xl border border-[#E7E3F5] shadow-sm"
           />
-          <h2 className="text-2xl font-bold text-slate-100 tracking-tight">
+          <h2 className="text-2xl font-display font-semibold text-[#241D4B] tracking-tight">
             Horae Operations Portal
           </h2>
-          <p className="text-xs text-slate-400 font-medium">
+          <p className="text-xs text-[#6A6390] font-medium">
             Standard Operating Compliance & Operations Platform
           </p>
         </div>
@@ -159,16 +166,16 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         {showFirstLoginPrompt && tempLoggedInUser ? (
           <div className="space-y-6">
             <div className="text-center space-y-2 mb-4">
-              <KeyRound className="w-10 h-10 text-amber-550 mx-auto" />
-              <h3 className="text-lg font-bold text-slate-105">Optional: Change Password</h3>
-              <p className="text-xs text-slate-400 leading-normal">
+              <KeyRound className="w-10 h-10 text-[#8B7CF6] mx-auto" />
+              <h3 className="text-lg font-display font-semibold text-[#241D4B]">Optional: Change Password</h3>
+              <p className="text-xs text-[#6A6390] leading-normal">
                 This appears to be your first login. You can set a new secure password now, or continue with your current password.
               </p>
             </div>
 
             <form onSubmit={handleFirstLoginPasswordChange} className="space-y-4">
               <div className="space-y-1.5 text-left">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block px-1">
+                <label className="text-[10px] font-bold text-[#6A6390] uppercase tracking-widest block px-1">
                   New Password
                 </label>
                 <div className="relative">
@@ -178,12 +185,12 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     placeholder="Enter new password..."
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full text-xs pl-4 pr-10 py-3 bg-slate-955/60 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:bg-slate-950/80 transition-all font-semibold"
+                    className={`${inputBase} ${inputBrand} pl-4 pr-10 font-semibold`}
                   />
                   <button
                     type="button"
                     onClick={() => setShowNewPassword(!showNewPassword)}
-                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-200 focus:outline-none cursor-pointer flex items-center h-5"
+                    className="absolute right-3 top-3 text-[#9E97BE] hover:text-[#8B7CF6] focus:outline-none cursor-pointer flex items-center h-5"
                   >
                     {showNewPassword ? (
                       <EyeOff className="w-4 h-4" />
@@ -195,7 +202,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               </div>
 
               <div className="space-y-1.5 text-left">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block px-1">
+                <label className="text-[10px] font-bold text-[#6A6390] uppercase tracking-widest block px-1">
                   Confirm Password
                 </label>
                 <div className="relative">
@@ -205,12 +212,12 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     placeholder="Confirm new password..."
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="w-full text-xs pl-4 pr-10 py-3 bg-slate-955/60 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:bg-slate-950/80 transition-all font-semibold"
+                    className={`${inputBase} ${inputBrand} pl-4 pr-10 font-semibold`}
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-200 focus:outline-none cursor-pointer flex items-center h-5"
+                    className="absolute right-3 top-3 text-[#9E97BE] hover:text-[#8B7CF6] focus:outline-none cursor-pointer flex items-center h-5"
                   >
                     {showConfirmPassword ? (
                       <EyeOff className="w-4 h-4" />
@@ -222,9 +229,9 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               </div>
 
               {pwdError && (
-                <div className="p-3 bg-red-955/40 border border-red-900/60 rounded-xl flex items-start gap-2.5">
-                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                  <span className="text-[11px] font-medium text-red-300 leading-snug">{pwdError}</span>
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                  <span className="text-[11px] font-medium text-rose-600 leading-snug">{pwdError}</span>
                 </div>
               )}
 
@@ -232,16 +239,16 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full py-3 px-4 bg-[#F59E0B] text-slate-950 font-bold text-xs uppercase tracking-wider rounded-xl transition-all active:scale-98 cursor-pointer flex items-center justify-center gap-2"
+                  className="w-full py-3 px-4 bg-gradient-to-r from-[#8B7CF6] via-[#6FB7F7] to-[#4FD6B0] hover:brightness-105 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all active:scale-98 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#8B7CF6]/25"
                 >
                   Update & Enter Portal
                 </button>
-                
+
                 <button
                   type="button"
                   onClick={handleSkipPasswordChange}
                   disabled={loading}
-                  className="w-full py-3 px-4 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/40 text-slate-300 font-bold text-xs uppercase tracking-wider rounded-xl transition-all active:scale-98 cursor-pointer"
+                  className="w-full py-3 px-4 border border-[#E7E3F5] hover:border-[#8B7CF6]/50 hover:bg-[#F4F1FF] text-[#6A6390] font-bold text-xs uppercase tracking-wider rounded-xl transition-all active:scale-98 cursor-pointer"
                 >
                   Continue with Current Password
                 </button>
@@ -257,10 +264,10 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                   initial={{ opacity: 0, y: -10, height: 0 }}
                   animate={{ opacity: 1, y: 0, height: "auto" }}
                   exit={{ opacity: 0, y: -10, height: 0 }}
-                  className="bg-amber-950/30 border border-amber-900/40 p-2.5 rounded-xl text-center mb-5 overflow-hidden flex items-center justify-center gap-1.5"
+                  className="bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-center mb-5 overflow-hidden flex items-center justify-center gap-1.5"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                  <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                  <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">
                     Super Admin Session Detected
                   </span>
                 </motion.div>
@@ -278,18 +285,18 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     transition={{ duration: 0.35, ease: "easeInOut" }}
                     className="space-y-1.5 overflow-hidden text-left"
                   >
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block px-1">
+                    <label className="text-[10px] font-bold text-[#6A6390] uppercase tracking-widest block px-1">
                       Company ID
                     </label>
                     <div className="relative">
-                      <Building className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                      <Building className="absolute left-3 top-3 w-4 h-4 text-[#8B7CF6]" />
                       <input
                         type="text"
                         required={!isSuperAdminEmail}
                         placeholder="e.g. cakewala"
                         value={companyId}
                         onChange={(e) => setCompanyId(e.target.value.toLowerCase().replace(/\s+/g, ""))}
-                        className="w-full text-xs pl-10 pr-4 py-3 bg-slate-955/60 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:bg-slate-950/80 transition-all font-mono"
+                        className={`${inputBase} ${inputBrand} pl-10 pr-4 font-mono`}
                       />
                     </div>
                   </motion.div>
@@ -298,49 +305,41 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
               {/* Email Input */}
               <div className="space-y-1.5 text-left">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block px-1">
+                <label className="text-[10px] font-bold text-[#6A6390] uppercase tracking-widest block px-1">
                   Registered Email
                 </label>
                 <div className="relative">
-                  <Mail className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                  <Mail className="absolute left-3 top-3 w-4 h-4 text-[#8B7CF6]" />
                   <input
                     type="email"
                     required
                     placeholder="e.g. karan@cakewala.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className={`w-full text-xs pl-10 pr-4 py-3 bg-slate-955/60 border rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:bg-slate-950/80 transition-all ${
-                      isSuperAdminEmail 
-                        ? "border-amber-500/40 focus:border-amber-500 focus:ring-1 focus:ring-amber-500" 
-                        : "border-slate-800 focus:border-indigo-500"
-                    }`}
+                    className={`${inputBase} ${isSuperAdminEmail ? inputAdmin : inputBrand} pl-10 pr-4`}
                   />
                 </div>
               </div>
 
               {/* Password Input */}
               <div className="space-y-1.5 text-left">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block px-1">
+                <label className="text-[10px] font-bold text-[#6A6390] uppercase tracking-widest block px-1">
                   Secure Password
                 </label>
                 <div className="relative">
-                  <KeyRound className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                  <KeyRound className="absolute left-3 top-3 w-4 h-4 text-[#8B7CF6]" />
                   <input
                     type={showPassword ? "text" : "password"}
                     required
                     placeholder="Enter password..."
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className={`w-full text-xs pl-10 pr-10 py-3 bg-slate-955/60 border rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:bg-slate-950/80 transition-all ${
-                      isSuperAdminEmail 
-                        ? "border-amber-500/40 focus:border-amber-500 focus:ring-1 focus:ring-amber-500" 
-                        : "border-slate-800 focus:border-indigo-500"
-                    }`}
+                    className={`${inputBase} ${isSuperAdminEmail ? inputAdmin : inputBrand} pl-10 pr-10`}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-200 focus:outline-none cursor-pointer flex items-center h-5"
+                    className="absolute right-3 top-3 text-[#9E97BE] hover:text-[#8B7CF6] focus:outline-none cursor-pointer flex items-center h-5"
                   >
                     {showPassword ? (
                       <EyeOff className="w-4 h-4" />
@@ -352,9 +351,9 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               </div>
 
               {errorMsg && (
-                <div className="p-3 bg-red-955/40 border border-red-900/60 rounded-xl flex items-start gap-2.5">
-                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                  <span className="text-[11px] font-medium text-red-300 leading-snug">{errorMsg}</span>
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                  <span className="text-[11px] font-medium text-rose-600 leading-snug">{errorMsg}</span>
                 </div>
               )}
 
@@ -364,15 +363,15 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                 disabled={loading}
                 className={`w-full py-3 px-4 font-bold text-xs uppercase tracking-wider rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all active:scale-98 cursor-pointer ${
                   loading
-                    ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+                    ? "bg-slate-200 text-slate-400 cursor-not-allowed"
                     : isSuperAdminEmail
-                    ? "bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white shadow-amber-950/30"
-                    : "bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white shadow-indigo-950/30"
+                    ? "bg-gradient-to-r from-amber-500 to-amber-600 hover:brightness-105 text-white shadow-amber-500/30"
+                    : "bg-gradient-to-r from-[#8B7CF6] via-[#6FB7F7] to-[#4FD6B0] hover:brightness-105 text-white shadow-[#8B7CF6]/30"
                 }`}
               >
                 {loading ? (
                   <>
-                    <RefreshCw className="w-4 h-4 animate-spin text-slate-500" />
+                    <RefreshCw className="w-4 h-4 animate-spin text-slate-400" />
                     Authenticating...
                   </>
                 ) : isSuperAdminEmail ? (

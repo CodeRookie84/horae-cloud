@@ -64,6 +64,10 @@ export interface User {
   fcmToken?: string;
   /** Last seen timestamp for anti-spam (skip if online recently) */
   lastSeenAt?: string;
+  /** CLIT (Equipment Maintenance) access — off by default; gates the maintenance tab */
+  clitAccess?: boolean;
+  /** CLIT role (separate from the staff `role`): technician | qc_executive | qc_lead | maintenance_manager | clit_admin */
+  clitRole?: string;
 }
 
 export interface Notice {
@@ -366,6 +370,63 @@ export interface SOPReadStatus {
   userName: string;
   userRole: string;
   readAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Training — upload a document, attach an (AI-drafted, admin-reviewed) test,
+// target it to outlets/departments/roles, and track staff scores.
+// ─────────────────────────────────────────────────────────────
+
+export interface TrainingQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  correctIndex: number;
+}
+
+export interface Training {
+  id: string;
+  clientId: string;
+  tenantId: string;
+  title: string;
+  description: string;
+  docUrl?: string;
+  docName?: string;
+  docType?: string;
+  sourceNotes?: string;
+  /** Target tenant ids; empty = all outlets of the client. */
+  outlets: string[];
+  department: Department | string;
+  role: Role | string;
+  passPct: number;
+  allowRetest: boolean;
+  maxAttempts: number;   // 0 = unlimited
+  shuffle: boolean;
+  dueDate?: string;
+  questions: TrainingQuestion[];
+  retestGrants: string[];
+  published: boolean;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+}
+
+export interface TrainingAttempt {
+  id: string;
+  trainingId: string;
+  trainingTitle: string;
+  userId: string;
+  userName: string;
+  userRole: string;
+  department: string;
+  tenantId: string;
+  score: number;
+  total: number;
+  pct: number;
+  passed: boolean;
+  answers: number[];
+  attemptNo: number;
+  submittedAt: string;
 }
 
 export function isTargetMatched(

@@ -32,6 +32,8 @@ function mapEquip(r: any): Equipment {
     checklist: r.checklist || [],
     isCustom: !!r.is_custom,
     sortOrder: r.sort_order ?? 0,
+    floor: r.floor || "",
+    location: r.location || "",
   };
 }
 
@@ -72,6 +74,8 @@ export async function addEquipment(
   group: string,
   icon: string,
   checklist: { c: string; p: string; std: string; freq: string; method: string }[],
+  floor = "",
+  location = "",
 ): Promise<void> {
   const code = `custom-${Date.now().toString(36)}`;
   await supabase.from("maintenance_equipment").insert({
@@ -81,7 +85,25 @@ export async function addEquipment(
     checklist,
     sort_order: 999,
     is_custom: true,
+    floor, location,
   });
+}
+
+export async function updateEquipment(
+  equipmentId: string,
+  patch: {
+    name: string; group: string; icon: string; floor: string; location: string;
+    checklist: { c: string; p: string; std: string; freq: string; method: string }[];
+  },
+): Promise<void> {
+  await supabase.from("maintenance_equipment").update({
+    name: patch.name,
+    group_name: patch.group,
+    icon: patch.icon,
+    floor: patch.floor,
+    location: patch.location,
+    checklist: patch.checklist,
+  }).eq("id", equipmentId);
 }
 
 export async function deleteEquipment(equipmentId: string): Promise<void> {
@@ -90,16 +112,17 @@ export async function deleteEquipment(equipmentId: string): Promise<void> {
   await supabase.from("maintenance_checklist_state").delete().eq("equipment_id", equipmentId);
 }
 
-// ── Checklist state (with automatic day-rollover archival) ──────────────────
+// ── Checklist state (in-progress draft marks) ───────────────────────────────
 /**
- * Returns { [equipmentId]: responses } and, as a side-effect, archives any
- * round whose last update was on an earlier facility-day into history and clears
- * it — mirroring the original's "clears back to blank at the start of a new day,
- * every completed round preserved first" behaviour.
+ * Returns { [equipmentId]: responses } — the current in-progress toggles that
+ * haven't been submitted yet. Drafts left from an earlier facility-day are
+ * cleared (deleted), so the checklist starts blank each new day. Completed rounds
+ * live in history (recorded only on an explicit submit), never here.
+ * `equipNameById` is unused now but kept for signature stability.
  */
 export async function getChecklistStates(
   tenantId: string,
-  equipNameById: Record<string, string>,
+  _equipNameById: Record<string, string>,
 ): Promise<Record<string, ChecklistResponses>> {
   const { data } = await supabase
     .from("maintenance_checklist_state")
@@ -108,36 +131,22 @@ export async function getChecklistStates(
 
   const today = getFacilityTodayString();
   const out: Record<string, ChecklistResponses> = {};
-  const staleToArchive: any[] = [];
   const staleIds: string[] = [];
 
   for (const row of data || []) {
-    const responses = row.responses || {};
-    const hasMarks = Object.keys(responses).length > 0;
     const rowDay = row.updated_at
       ? new Date(row.updated_at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })
       : today;
-
-    if (rowDay < today && hasMarks) {
-      staleToArchive.push({
-        id: `HIST-${row.equipment_id}-${rowDay}-${Date.now().toString(36)}`,
-        tenant_id: tenantId,
-        equipment_id: row.equipment_id,
-        equipment_name: equipNameById[row.equipment_id] || row.equipment_id,
-        date: rowDay,
-        tech_name: row.tech_name || "",
-        items: responses,
-      });
-      staleIds.push(row.equipment_id);
-    } else {
-      const r: ChecklistResponses = { ...responses };
-      if (row.tech_name) (r as any)._tech = row.tech_name;
-      out[row.equipment_id] = r;
+    if (rowDay < today) {
+      staleIds.push(row.equipment_id);   // yesterday's un-submitted draft → clear
+      continue;
     }
+    const r: ChecklistResponses = { ...(row.responses || {}) };
+    if (row.tech_name) (r as any)._tech = row.tech_name;
+    out[row.equipment_id] = r;
   }
 
-  if (staleToArchive.length > 0) {
-    await supabase.from("maintenance_checklist_history").insert(staleToArchive);
+  if (staleIds.length > 0) {
     await supabase.from("maintenance_checklist_state").delete().in("equipment_id", staleIds);
   }
   return out;
@@ -159,15 +168,22 @@ export async function setChecklistMark(
   }, { onConflict: "equipment_id" });
 }
 
-/** Archive the current round to history and clear the in-progress state. */
-export async function completeRound(
+/**
+ * Archive one frequency's round (Daily / Weekly / Monthly) to history with the
+ * exact submission time (created_at), then clear just those items from the
+ * in-progress state — leaving other frequencies' marks intact. If nothing else
+ * remains for the machine, the state row is removed.
+ */
+export async function completeFrequencyRound(
   tenantId: string,
   equipmentId: string,
   equipmentName: string,
-  responses: { [idx: string]: string },
+  archiveItems: { [idx: string]: string },   // only this frequency's marks
+  remainingResponses: { [idx: string]: string }, // marks to keep in-progress
   techName: string,
+  frequency: string,
 ): Promise<void> {
-  if (Object.keys(responses).length > 0) {
+  if (Object.keys(archiveItems).length > 0) {
     await supabase.from("maintenance_checklist_history").insert({
       id: `HIST-${equipmentId}-${getFacilityTodayString()}-${Date.now().toString(36)}`,
       tenant_id: tenantId,
@@ -175,10 +191,21 @@ export async function completeRound(
       equipment_name: equipmentName,
       date: getFacilityTodayString(),
       tech_name: techName || "",
-      items: responses,
+      items: archiveItems,
+      frequency,
     });
   }
-  await supabase.from("maintenance_checklist_state").delete().eq("equipment_id", equipmentId);
+  if (Object.keys(remainingResponses).length > 0) {
+    await supabase.from("maintenance_checklist_state").upsert({
+      equipment_id: equipmentId,
+      tenant_id: tenantId,
+      responses: remainingResponses,
+      tech_name: techName || "",
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "equipment_id" });
+  } else {
+    await supabase.from("maintenance_checklist_state").delete().eq("equipment_id", equipmentId);
+  }
 }
 
 // ── Defects ──────────────────────────────────────────────────────────────────
@@ -227,7 +254,7 @@ export async function createDefect(
     equipment_name: equipmentName,
     item_idx: itemIdx,
     component,
-    description: `Failed specification benchmark: ${standard}`,
+    description: standard.trim() ? `Failed standard: ${standard}` : `Failed check: ${component}`,
     criticality,
     status: "Open",
     action: "", spares: "", target: null,
@@ -261,6 +288,7 @@ function mapAudit(r: any): AuditRow {
     id: r.id, machineId: r.equipment_id, machineName: r.equipment_name,
     date: r.date, inspector: r.inspector, totalScore: r.total_score,
     scores: r.scores || [], remarks: r.remarks || [],
+    submittedAt: r.created_at || "",
   };
 }
 
@@ -306,7 +334,26 @@ export async function getHistory(tenantId: string): Promise<HistoryRow[]> {
     .limit(500);
   return (data || []).map((r: any): HistoryRow => ({
     id: r.id, machineId: r.equipment_id, date: r.date, techName: r.tech_name || "", items: r.items || {},
+    frequency: r.frequency || "", submittedAt: r.created_at || "",
   }));
+}
+
+// ── SOP roster (per client — editable person names for the SOP framework) ─────
+export async function getSopRoster(clientId: string): Promise<Record<string, string>> {
+  const { data } = await supabase
+    .from("maintenance_sop_meta")
+    .select("roster")
+    .eq("client_id", clientId)
+    .maybeSingle();
+  return (data?.roster as Record<string, string>) || {};
+}
+
+export async function setSopRoster(clientId: string, roster: Record<string, string>): Promise<void> {
+  await supabase.from("maintenance_sop_meta").upsert({
+    client_id: clientId,
+    roster,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "client_id" });
 }
 
 // ── System reset (this outlet only) ──────────────────────────────────────────

@@ -13,25 +13,25 @@
   --font-display: "Fraunces", ui-serif, Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
-  /* Brand */
-  --color-brand: #6FC3CC;          /* light cyan */
-  --color-brand-soft: #93D4DA;
-  --color-brand-tint: #E8F8F9;     /* faintest brand wash */
-  --color-accent: #D4946A;         /* warm caramel */
-  --color-accent-soft: #E8B891;
-  --color-accent-tint: #FBEFE2;
+  /* Brand — pastel violet, matching the horae.cloud marketing site */
+  --color-brand: #8B7CF6;          /* violet */
+  --color-brand-soft: #A78BFA;
+  --color-brand-tint: #EDE9FE;     /* faintest brand wash */
+  --color-accent: #4FD6B0;         /* fresh mint */
+  --color-accent-soft: #7EE3C6;
+  --color-accent-tint: #D4F6EC;
 
   /* Supporting palette */
-  --color-sage: #9BB89F;
-  --color-rose: #E3B5BC;
-  --color-sky: #A6C0CE;
+  --color-sage: #6FE0C0;
+  --color-rose: #F49AD1;           /* blush */
+  --color-sky: #6FB7F7;            /* sky */
 
   /* Surfaces & ink */
-  --color-cream: #FAFAF9;
-  --color-cream-deep: #F4ECDD;
-  --color-ink: #2E2530;            /* deep mulberry-charcoal */
-  --color-ink-soft: #6B5D6E;
-  --color-line: #EFE5D5;           /* warm divider */
+  --color-cream: #FBFAFF;          /* near-white, cool tint */
+  --color-cream-deep: #EFEBFB;     /* soft lilac */
+  --color-ink: #241D4B;            /* deep indigo */
+  --color-ink-soft: #6A6390;
+  --color-line: #E7E3F5;           /* soft lilac divider */
 }
 
 /* ─── Base ──────────────────────────────────────────────────────────────── */
@@ -131,9 +131,27 @@ body {
 .hover\:bg-slate-50:hover  { background-color: var(--color-cream) !important; }
 .hover\:bg-slate-100:hover { background-color: var(--color-cream-deep) !important; }
 
-/* Slate-900 buttons → keep as primary CTA but use brand instead of black */
-.bg-slate-900  { background-color: var(--color-brand) !important; }
-.hover\:bg-slate-800:hover { background-color: color-mix(in srgb, var(--color-brand) 88%, var(--color-ink)) !important; }
+/* Slate-900 buttons → primary CTA as the site's violet→sky→mint gradient */
+.bg-slate-900  {
+  background-color: var(--color-brand) !important;
+  background-image: linear-gradient(120deg, var(--color-brand) 0%, var(--color-sky) 55%, var(--color-accent) 100%) !important;
+}
+.hover\:bg-slate-800:hover { filter: brightness(0.96) saturate(1.05); }
+
+/* Active nav / accent chips (legacy Tailwind blue) → on-brand violet */
+.bg-blue-50    { background-color: var(--color-brand-tint) !important; }
+.text-blue-700 { color: var(--color-brand) !important; }
+.text-blue-600 { color: var(--color-brand) !important; }
+
+/* Main scroll surface → soft pastel mesh, echoing the marketing site */
+.bg-\[\#F1F5F9\] {
+  background-color: var(--color-cream) !important;
+  background-image:
+    radial-gradient(38rem 26rem at 6% -8%,  color-mix(in srgb, var(--color-brand)  24%, transparent), transparent 60%),
+    radial-gradient(34rem 24rem at 104% 6%, color-mix(in srgb, var(--color-accent) 20%, transparent), transparent 60%),
+    radial-gradient(32rem 26rem at 50% 112%, color-mix(in srgb, var(--color-rose)  18%, transparent), transparent 62%) !important;
+  background-attachment: fixed !important;
+}
 
 /* ─── Soft elevation utility classes used by the new dashboard ──────────── */
 .shadow-warm {
@@ -145,6 +163,19 @@ body {
   box-shadow:
     0 2px 4px color-mix(in srgb, var(--color-brand) 8%, transparent),
     0 24px 48px -24px color-mix(in srgb, var(--color-brand) 22%, transparent);
+}
+
+/* ─── Frosted-glass card surfaces (match the marketing site) ────────────── */
+/* Target elevated white cards (rounded-2xl/3xl + shadow-warm) so the pastel
+   mesh whispers through — buttons use rounded-xl and are deliberately excluded. */
+.bg-white.shadow-warm.rounded-2xl,
+.bg-white.shadow-warm.rounded-3xl,
+.bg-white.shadow-warm-lg.rounded-2xl,
+.bg-white.shadow-warm-lg.rounded-3xl {
+  background-color: color-mix(in srgb, #ffffff 82%, transparent) !important;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border-color: rgba(255, 255, 255, 0.7) !important;
 }
 
 /* Decorative repeating "piped dots" pattern used as hero watermark */

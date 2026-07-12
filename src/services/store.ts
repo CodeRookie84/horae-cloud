@@ -155,6 +155,8 @@ export class StoreService {
       whatsappOptedIn: u.whatsapp_opted_in || false,
       fcmToken: u.fcm_token || undefined,
       lastSeenAt: u.last_seen_at || undefined,
+      clitAccess: u.clit_access || false,
+      clitRole: u.clit_role || undefined,
     };
   }
 
@@ -683,12 +685,28 @@ export class StoreService {
     }
   }
 
-  public async updateUser(userId: string, name: string, email: string, role: string, department: string): Promise<void> {
+  public async updateUser(
+    userId: string, name: string, email: string, role: string, department: string,
+    clitAccess?: boolean, clitRole?: string,
+  ): Promise<void> {
     const normRole = this.normalizeRole(role);
     const normDept = this.normalizeDept(department);
+    const patch: any = { name, email, role: normRole, department: normDept };
+    if (clitAccess !== undefined) {
+      patch.clit_access = !!clitAccess;
+      patch.clit_role = clitAccess ? (clitRole || 'technician') : null;
+    }
     await supabase
       .from('users')
-      .update({ name, email, role: normRole, department: normDept })
+      .update(patch)
+      .eq('id', userId);
+  }
+
+  /** Grant/revoke CLIT (Equipment Maintenance) access + role for a staff member. */
+  public async setClitAccess(userId: string, clitAccess: boolean, clitRole?: string): Promise<void> {
+    await supabase
+      .from('users')
+      .update({ clit_access: !!clitAccess, clit_role: clitAccess ? (clitRole || 'technician') : null })
       .eq('id', userId);
   }
 
@@ -728,7 +746,9 @@ export class StoreService {
     department: Department | string,
     avatar: string,
     phoneNumber?: string,
-    whatsappOptedIn?: boolean
+    whatsappOptedIn?: boolean,
+    clitAccess?: boolean,
+    clitRole?: string
   ): Promise<User> {
     // ── Duplicate email guard ──────────────────────────────────
     const { data: existing, error: lookupError } = await supabase
@@ -763,6 +783,8 @@ export class StoreService {
 
     if (phoneNumber) newUser.phone_number = phoneNumber.trim();
     if (whatsappOptedIn !== undefined) newUser.whatsapp_opted_in = whatsappOptedIn;
+    newUser.clit_access = !!clitAccess;
+    newUser.clit_role = clitAccess ? (clitRole || 'technician') : null;
 
     await supabase.from('users').insert([newUser]);
     
@@ -782,6 +804,8 @@ export class StoreService {
       avatar: baseAvatar,
       phoneNumber: phoneNumber,
       whatsappOptedIn: whatsappOptedIn || false,
+      clitAccess: !!clitAccess,
+      clitRole: clitAccess ? (clitRole || 'technician') : undefined,
     };
   }
 

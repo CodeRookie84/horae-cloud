@@ -21,6 +21,7 @@ import {
   MessageCircle,
   GraduationCap,
   Sparkles,
+  Award,
 } from "lucide-react";
 import {
   Tenant,
@@ -32,8 +33,11 @@ import {
   Department,
   Quiz,
   QuizAttempt,
+  Training as TrainingT,
+  TrainingAttempt,
   isTargetMatched,
 } from "../types";
+import { trainingMatchesUser, trainingStatus } from "../services/trainingService";
 import PWAInstallPrompt from "./PWAInstallPrompt";
 
 interface DashboardProps {
@@ -49,6 +53,8 @@ interface DashboardProps {
   onAddTask: (title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[]) => void;
   quizzes?: Quiz[];
   quizAttempts?: QuizAttempt[];
+  trainings?: TrainingT[];
+  trainingAttempts?: TrainingAttempt[];
 }
 
 export default function Dashboard({
@@ -64,6 +70,8 @@ export default function Dashboard({
   onAddTask,
   quizzes: rawQuizzes = [],
   quizAttempts: rawQuizAttempts = [],
+  trainings: rawTrainings = [],
+  trainingAttempts: rawTrainingAttempts = [],
 }: DashboardProps) {
   // ── State (unchanged from previous Dashboard) ──────────────────────────
   const [teamTalkUnread, setTeamTalkUnread] = React.useState(0);
@@ -130,6 +138,13 @@ export default function Dashboard({
   const myAttempts = rawQuizAttempts.filter((a) => a.userId === activeUser.id);
   const unattemptedQuizzes = myQuizzes.filter((q) => !myAttempts.some((a) => a.quizId === q.id));
   const unattemptedQuizzesCount = unattemptedQuizzes.length;
+
+  // Pending training assessments assigned to this user (published + targeted + not yet passed).
+  const pendingTrainingCount = rawTrainings.filter((t) =>
+    t.published && (t.questions?.length || 0) > 0 &&
+    trainingMatchesUser(t, { tenantId: activeUser.tenantId, department: String(activeUser.department), role: String(activeUser.role) }) &&
+    trainingStatus(t, activeUser.id, rawTrainingAttempts).status !== "passed",
+  ).length;
 
   const tasksFiltered = rawTasks;
   const assignedToMe = tasksFiltered.filter(
@@ -252,7 +267,7 @@ export default function Dashboard({
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: "auto", opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
-                  className="grid grid-cols-3 gap-0 border-t border-[var(--color-line)] divide-x divide-[var(--color-line)]"
+                  className="grid grid-cols-4 gap-0 border-t border-[var(--color-line)] divide-x divide-[var(--color-line)]"
                 >
                   <button
                     onClick={() => onNavigate("notices")}
@@ -300,6 +315,22 @@ export default function Dashboard({
                       )}
                     </div>
                     <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Quizzes</span>
+                  </button>
+
+                  <button
+                    onClick={() => onNavigate("training")}
+                    className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
+                    title="Pending training assessments"
+                  >
+                    <div className="relative">
+                      <Award className="w-5 h-5 text-[var(--color-brand)] group-hover:scale-110 transition-transform" />
+                      {pendingTrainingCount > 0 && (
+                        <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
+                          {pendingTrainingCount}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Training Assessment</span>
                   </button>
                 </motion.div>
               )}
