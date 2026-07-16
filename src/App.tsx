@@ -899,6 +899,12 @@ function AppInner() {
       <>
         <Login
           onLoginSuccess={async (usr) => {
+            // Gate the whole post-login repopulation behind the loading screen —
+            // otherwise the portal renders through several half-updated states
+            // (old persona → new persona, features settling) and visibly flickers
+            // until it stabilizes. A hard refresh doesn't flicker because `loading`
+            // starts true and covers the first full load; mirror that here.
+            setLoading(true);
             setLoggedInEmail(usr.email || usr.phoneNumber || usr.id);
             await refreshLocalState();
             // Request FCM permission immediately after login
