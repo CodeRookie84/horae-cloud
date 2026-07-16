@@ -291,7 +291,12 @@ export default function Dashboard({
                       title={label}
                     >
                       <div className="relative">
-                        <Icon className="w-5 h-5 group-hover:scale-110 transition-transform" style={{ color }} />
+                        <div
+                          className="w-10 h-10 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-sm"
+                          style={{ backgroundImage: `linear-gradient(135deg, color-mix(in srgb, ${color} 22%, white) 0%, color-mix(in srgb, ${color} 8%, white) 100%)` }}
+                        >
+                          <Icon className="w-5 h-5" style={{ color }} />
+                        </div>
                         {count > 0 && (
                           <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
                             {count}
@@ -384,21 +389,24 @@ export default function Dashboard({
               </button>
             </div>
           </header>
-          <div className="px-6 py-5 grid grid-cols-3 gap-4">
-            <div>
-              <div className="font-display text-2xl font-semibold text-[var(--color-ink)]">
+          <div className="px-6 py-5 grid grid-cols-3 gap-3">
+            <div className="rounded-2xl p-3 border border-[var(--color-line)]"
+                 style={{ backgroundImage: "linear-gradient(135deg, var(--color-brand-tint) 0%, color-mix(in srgb, var(--color-sky) 18%, white) 100%)" }}>
+              <div className="font-display text-2xl font-semibold text-[var(--color-brand)]">
                 {pendingAssignedToMe.length}
               </div>
               <div className="text-xs text-[var(--color-ink-soft)] mt-1">For you</div>
             </div>
-            <div>
-              <div className="font-display text-2xl font-semibold text-[var(--color-ink)]">
+            <div className="rounded-2xl p-3 border border-[var(--color-line)]"
+                 style={{ backgroundImage: "linear-gradient(135deg, var(--color-accent-tint) 0%, color-mix(in srgb, var(--color-sage) 20%, white) 100%)" }}>
+              <div className="font-display text-2xl font-semibold" style={{ color: "color-mix(in srgb, var(--color-accent) 70%, var(--color-ink))" }}>
                 {newlyAssignedToMeCount}
               </div>
               <div className="text-xs text-[var(--color-ink-soft)] mt-1">New</div>
             </div>
-            <div>
-              <div className="font-display text-2xl font-semibold text-[var(--color-ink)]">
+            <div className="rounded-2xl p-3 border border-[var(--color-line)]"
+                 style={{ backgroundImage: "linear-gradient(135deg, color-mix(in srgb, var(--color-rose) 22%, white) 0%, color-mix(in srgb, var(--color-rose) 8%, white) 100%)" }}>
+              <div className="font-display text-2xl font-semibold" style={{ color: "color-mix(in srgb, var(--color-rose) 60%, var(--color-ink))" }}>
                 {totalUnreadChats}
               </div>
               <div className="text-xs text-[var(--color-ink-soft)] mt-1 flex items-center gap-1">

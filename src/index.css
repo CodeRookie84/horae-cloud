@@ -143,14 +143,56 @@ body {
 .text-blue-700 { color: var(--color-brand) !important; }
 .text-blue-600 { color: var(--color-brand) !important; }
 
-/* Main scroll surface → soft pastel mesh, echoing the marketing site */
+/* Main scroll surface → soft pastel mesh, echoing the marketing site.
+   NOTE: `background-attachment: fixed` is deliberately NOT used — iOS/Android
+   browsers don't paint fixed backgrounds on scroll containers, which left the
+   whole mobile app looking flat/white. Default `scroll` attachment keeps the
+   mesh anchored to the panel (always in view) AND renders on mobile. */
 .bg-\[\#F1F5F9\] {
   background-color: var(--color-cream) !important;
   background-image:
-    radial-gradient(38rem 26rem at 6% -8%,  color-mix(in srgb, var(--color-brand)  24%, transparent), transparent 60%),
-    radial-gradient(34rem 24rem at 104% 6%, color-mix(in srgb, var(--color-accent) 20%, transparent), transparent 60%),
-    radial-gradient(32rem 26rem at 50% 112%, color-mix(in srgb, var(--color-rose)  18%, transparent), transparent 62%) !important;
-  background-attachment: fixed !important;
+    radial-gradient(38rem 26rem at 4% -8%,   color-mix(in srgb, var(--color-brand)  30%, transparent), transparent 60%),
+    radial-gradient(34rem 24rem at 104% 4%,  color-mix(in srgb, var(--color-accent) 26%, transparent), transparent 60%),
+    radial-gradient(30rem 22rem at 92% 78%,  color-mix(in srgb, var(--color-sky)    22%, transparent), transparent 62%),
+    radial-gradient(32rem 26rem at 30% 118%, color-mix(in srgb, var(--color-rose)   22%, transparent), transparent 62%) !important;
+}
+
+/* ─── More color: pastel-gradient CTAs (element bgs → render on mobile too) ── */
+/* The flat primary/positive/brand fills pick up the site's violet→sky→mint
+   sheen. Unlike the hero mesh these are element backgrounds, so they show
+   reliably on phones — which is where the UI read flattest. */
+.bg-indigo-600,
+.bg-\[var\(--color-brand\)\] {
+  background-image: linear-gradient(125deg,
+    var(--color-brand) 0%,
+    color-mix(in srgb, var(--color-sky) 88%, var(--color-brand)) 55%,
+    var(--color-accent) 122%) !important;
+}
+.bg-emerald-600 {
+  background-image: linear-gradient(125deg,
+    var(--color-accent) 0%,
+    var(--color-sage) 48%,
+    var(--color-sky) 120%) !important;
+}
+.bg-amber-500 {
+  background-image: linear-gradient(125deg,
+    var(--color-rose) 0%,
+    color-mix(in srgb, var(--color-accent) 70%, var(--color-rose)) 120%) !important;
+}
+.hover\:bg-indigo-700:hover,
+.hover\:bg-emerald-700:hover,
+.hover\:bg-amber-600:hover { filter: brightness(0.97) saturate(1.08); }
+
+/* Soft pastel chips / tint surfaces get a gentle two-tone wash for depth */
+.bg-\[var\(--color-brand-tint\)\] {
+  background-image: linear-gradient(135deg,
+    var(--color-brand-tint) 0%,
+    color-mix(in srgb, var(--color-accent-tint) 65%, transparent) 100%) !important;
+}
+.bg-\[var\(--color-accent-tint\)\] {
+  background-image: linear-gradient(135deg,
+    var(--color-accent-tint) 0%,
+    color-mix(in srgb, var(--color-brand-tint) 70%, transparent) 100%) !important;
 }
 
 /* ─── Soft elevation utility classes used by the new dashboard ──────────── */
