@@ -882,14 +882,14 @@ export class StoreService {
   // --- BUSINESS ENTITY CRUD ---
 
   // Notices Board
-  public async getNotices(): Promise<Notice[]> {
+  public async getNotices(since?: string): Promise<Notice[]> {
     const curUser = await this.getActiveUser();
     const tenants = await this.getTenantsByClient(this.activeClientId);
     const tenantIds = tenants.map(t => t.id);
-    const { data } = await supabase
-      .from('notices')
-      .select('*')
-      .in('tenant_id', tenantIds);
+    let noticesQuery = supabase.from('notices').select('*').in('tenant_id', tenantIds);
+    if (since) noticesQuery = noticesQuery.gt('updated_at', since);
+    const { data, error } = await noticesQuery;
+    if (since && error) throw error;
 
     const list = (data || []).map(notice => {
       let cleanContent = notice.content || "";
@@ -1008,16 +1008,16 @@ export class StoreService {
   }
 
   // Checklist Routines
-  public async getChecklists(): Promise<Checklist[]> {
+  public async getChecklists(since?: string): Promise<Checklist[]> {
     const curUser = await this.getActiveUser();
     const tenants = await this.getTenantsByClient(this.activeClientId);
     const tenantIds = tenants.map(t => t.id);
 
-    const { data: checklistsData } = await supabase
-      .from('checklists')
-      .select('*')
-      .in('tenant_id', tenantIds);
-    
+    let checklistsQuery = supabase.from('checklists').select('*').in('tenant_id', tenantIds);
+    if (since) checklistsQuery = checklistsQuery.gt('updated_at', since);
+    const { data: checklistsData, error: checklistsError } = await checklistsQuery;
+    if (since && checklistsError) throw checklistsError;
+
     if (!checklistsData || checklistsData.length === 0) return [];
 
     // Pre-parse to build group submissions map and filter out non-compliance checklists
@@ -1560,21 +1560,25 @@ export class StoreService {
   }
 
   // Task Manager
-  public async getTasks(): Promise<Task[]> {
+  /**
+   * @param opts.withMessages  include each task's chat (default true). The light
+   *   background sync passes `false` to skip the whole `task_messages` fetch.
+   */
+  public async getTasks(opts?: { withMessages?: boolean; since?: string }): Promise<Task[]> {
+    const withMessages = opts?.withMessages !== false;
     const curUser = await this.getActiveUser();
     const tenants = await this.getTenantsByClient(this.activeClientId);
     const tenantIds = tenants.map(t => t.id);
-    const { data: tasksData } = await supabase
-      .from('tasks')
-      .select('*')
-      .in('tenant_id', tenantIds);
+    let tasksQuery = supabase.from('tasks').select('*').in('tenant_id', tenantIds);
+    if (opts?.since) tasksQuery = tasksQuery.gt('updated_at', opts.since);
+    const { data: tasksData, error: tasksError } = await tasksQuery;
+    if (opts?.since && tasksError) throw tasksError; // let the caller fall back to a full sync
 
     if (!tasksData || tasksData.length === 0) return [];
 
-    const { data: chatData } = await supabase
-      .from('task_messages')
-      .select('*')
-      .in('task_id', tasksData.map(t => t.id));
+    const chatData = withMessages
+      ? (await supabase.from('task_messages').select('*').in('task_id', tasksData.map(t => t.id))).data
+      : null;
 
     const combined: Task[] = tasksData.map(t => {
       const chat: ChatMessage[] = (chatData || [])
@@ -1894,14 +1898,14 @@ export class StoreService {
   }
 
   // Notifications
-  public async getNotifications(): Promise<OperationalNotification[]> {
+  public async getNotifications(since?: string): Promise<OperationalNotification[]> {
     const curUser = await this.getActiveUser();
     const tenants = await this.getTenantsByClient(this.activeClientId);
     const tenantIds = tenants.map(t => t.id);
-    const { data } = await supabase
-      .from('notifications')
-      .select('*')
-      .in('tenant_id', tenantIds);
+    let notifQuery = supabase.from('notifications').select('*').in('tenant_id', tenantIds);
+    if (since) notifQuery = notifQuery.gt('updated_at', since);
+    const { data, error } = await notifQuery;
+    if (since && error) throw error;
 
     const list: OperationalNotification[] = (data || []).map(n => ({
       id: n.id,
@@ -2466,13 +2470,27 @@ This guide ensures that cash flows are reconciled correctly at the close of ever
   }
 
   // --- Real-time Sync Subscriptions ---
-  public subscribeToChanges(onUpdate: () => void) {
-    const channel = supabase.channel('horae-postgres-changes')
-      .on('postgres_changes', { event: '*', schema: 'public' }, () => {
-        onUpdate();
-      })
-      .subscribe();
-    
+  /**
+   * Realtime updates for the operational tables. Scoped two ways to keep cost
+   * sane at fleet scale (see the cost-optimization notes):
+   *   1. only the four collaborative tables — not every table in `public`;
+   *   2. filtered to the caller's tenant IDs, so one client never wakes on
+   *      another client's changes (cuts cross-tenant realtime-message fan-out).
+   * With no tenantIds it falls back to an unfiltered listen on those tables.
+   */
+  public subscribeToChanges(onUpdate: () => void, tenantIds?: string[]) {
+    const tables = ['tasks', 'notices', 'checklists', 'notifications'];
+    const filter = tenantIds && tenantIds.length ? `tenant_id=in.(${tenantIds.join(',')})` : undefined;
+    const channel = supabase.channel('horae-postgres-changes');
+    for (const table of tables) {
+      channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table, ...(filter ? { filter } : {}) },
+        () => onUpdate(),
+      );
+    }
+    channel.subscribe();
+
     return () => {
       supabase.removeChannel(channel);
     };

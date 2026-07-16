@@ -109,6 +109,15 @@ function NotificationRow({
   );
 }
 
+/** Merge a delta batch into an existing list by id (upsert), newest-first. */
+function upsertById<T extends { id: string; createdAt?: string }>(prev: T[], delta: T[]): T[] {
+  if (delta.length === 0) return prev;
+  const byId = new Map(prev.map(x => [x.id, x]));
+  for (const d of delta) byId.set(d.id, d);
+  return Array.from(byId.values())
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -362,71 +371,128 @@ function AppInner() {
     }
   };
 
-  // Initial load & real-time sync subscription
-  useEffect(() => {
-    refreshLocalState();
-
-    const unsubscribe = store.subscribeToChanges(() => {
-      refreshLocalState();
-    });
-
-    return () => {
-      unsubscribe();
+  // Light background sync — refetches only the four collaborative tables
+  // (notifications, tasks, notices, checklists), skips the task_messages join,
+  // and does NOT touch chat/quiz/SOP/users or trigger tab side effects. Shared
+  // by the realtime handler, the focus/visibility catch-up, and the interval.
+  const lightSync = useCallback(async (mode: 'full' | 'delta' = 'full') => {
+    // Raise a toast for any notifications we haven't seen before.
+    const alertUnseen = (list: any[]) => {
+      const unseen = seenNotifIdsRef.current
+        ? list.filter((n: any) => !seenNotifIdsRef.current!.has(n.id))
+        : [];
+      if (seenNotifIdsRef.current === null) {
+        seenNotifIdsRef.current = new Set(list.map((n: any) => n.id));
+      } else {
+        if (unseen.length > 0) {
+          setNewAlertMessage(unseen[0].title || "New notification");
+          setTimeout(() => setNewAlertMessage(""), 4500);
+        }
+        unseen.forEach((n: any) => seenNotifIdsRef.current!.add(n.id));
+      }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  // Cross-device sync fallback.
-  //
-  // Live updates come from the realtime postgres_changes subscription, but that
-  // silently drops events: a mobile PWA's websocket is suspended while it's
-  // backgrounded and missed events are never replayed, so a change made on
-  // another device (assign/delete a task, post a notice) stayed invisible until
-  // a manual refresh. This re-fetches the collaborative data whenever the app
-  // regains focus — the instant catch-up when you look at your phone — and on a
-  // light interval as a safety net. It also covers the 'notifications' table.
-  //
-  // Deliberately lighter than refreshLocalState: no chat/quiz/SOP fetch and no
-  // tab-navigation side effects, so it's safe to run frequently.
-  useEffect(() => {
-    if (!activeUser) return;
-    const syncFromServer = async () => {
-      try {
-        const [notificationsList, tasksList, noticesList, checklistsList] = await Promise.all([
-          store.getNotifications(),
-          store.getTasks(),
-          store.getNotices(),
-          store.getChecklists(),
-        ]);
+    // 'full' replaces each list; 'delta' fetches only rows changed in the recent
+    // window and merges them in — a fraction of the payload for foreground polls.
+    const DELTA_WINDOW_MS = 60_000;
+    const since = mode === 'delta' ? new Date(Date.now() - DELTA_WINDOW_MS).toISOString() : undefined;
+    try {
+      const [notificationsList, tasksList, noticesList, checklistsList] = await Promise.all([
+        store.getNotifications(since),
+        store.getTasks({ withMessages: false, since }),
+        store.getNotices(since),
+        store.getChecklists(since),
+      ]);
+      if (mode === 'full') {
         setTasks(tasksList);
         setNotices(noticesList);
         setChecklists(checklistsList);
-        if (seenNotifIdsRef.current === null) {
-          seenNotifIdsRef.current = new Set(notificationsList.map((n: any) => n.id));
-        } else {
-          const newItems = notificationsList.filter((n: any) => !seenNotifIdsRef.current!.has(n.id));
-          if (newItems.length > 0) {
-            const msg = newItems[0].title || "New notification";
-            setNewAlertMessage(msg);
-            setTimeout(() => setNewAlertMessage(""), 4500);
-          }
-          seenNotifIdsRef.current = new Set(notificationsList.map((n: any) => n.id));
-        }
+        alertUnseen(notificationsList);
         setNotifications(notificationsList);
-      } catch { /* silent — next sync will retry */ }
-    };
+      } else {
+        if (tasksList.length) setTasks(prev => upsertById(prev, tasksList));
+        if (noticesList.length) setNotices(prev => upsertById(prev, noticesList));
+        if (checklistsList.length) setChecklists(prev => upsertById(prev, checklistsList));
+        if (notificationsList.length) {
+          alertUnseen(notificationsList);
+          setNotifications(prev => upsertById(prev, notificationsList));
+        }
+      }
+    } catch {
+      // A delta fetch can fail if `updated_at` isn't migrated yet — fall back to
+      // a full sync so updates keep flowing. Full-mode errors are just ignored
+      // (the next tick retries).
+      if (mode === 'delta') {
+        try {
+          const [n, t, no, c] = await Promise.all([
+            store.getNotifications(),
+            store.getTasks({ withMessages: false }),
+            store.getNotices(),
+            store.getChecklists(),
+          ]);
+          setTasks(t); setNotices(no); setChecklists(c);
+          alertUnseen(n); setNotifications(n);
+        } catch { /* silent — next sync will retry */ }
+      }
+    }
+  }, []);
 
-    const onVisible = () => { if (document.visibilityState === 'visible') syncFromServer(); };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', syncFromServer);
-    const interval = setInterval(syncFromServer, 15000);
+  // Coalesce a burst of realtime events into at most one light sync per window,
+  // so a flurry of changes doesn't fire a fetch per event.
+  const syncDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleSync = useCallback(() => {
+    if (syncDebounceRef.current) return;
+    syncDebounceRef.current = setTimeout(() => {
+      syncDebounceRef.current = null;
+      lightSync('delta');
+    }, 4000);
+  }, [lightSync]);
+
+  // Initial full load.
+  useEffect(() => {
+    refreshLocalState();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Scoped realtime subscription. Only the active client's outlets are listened
+  // to (tenantKey is a stable primitive, so ordinary refreshes that re-create
+  // the tenants array don't churn the socket), and a burst debounces into one
+  // light sync — instead of every client re-running a full refresh on every
+  // change anywhere in the database.
+  const tenantKey = tenants.map(t => t.id).sort().join(',');
+  useEffect(() => {
+    if (!activeUser || !tenantKey) return;
+    const unsubscribe = store.subscribeToChanges(scheduleSync, tenantKey.split(','));
+    return () => { unsubscribe(); };
+  }, [activeUser?.id, tenantKey, scheduleSync]);
+
+  // Cross-device sync fallback (foreground only).
+  //
+  // Live updates come from the scoped realtime subscription above, but that
+  // silently drops events: a mobile PWA's websocket is suspended while it's
+  // backgrounded and missed events are never replayed. This is the safety net —
+  // it catches up instantly on focus/visibility when you reopen the app, and on
+  // a light interval WHILE THE APP IS FOREGROUND. Backgrounded clients don't run
+  // the interval (they catch up on the focus/visibility events), so idle users
+  // stop generating steady polling load.
+  useEffect(() => {
+    if (!activeUser) return;
+    // Reopening the app does a FULL reconcile (covers anything missed while
+    // backgrounded, including deletions); the foreground interval does a light
+    // DELTA merge.
+    const onFull = () => { if (document.visibilityState === 'visible') lightSync('full'); };
+    document.addEventListener('visibilitychange', onFull);
+    window.addEventListener('focus', onFull);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') lightSync('delta');
+    }, 15000);
 
     return () => {
-      document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('focus', syncFromServer);
+      document.removeEventListener('visibilitychange', onFull);
+      window.removeEventListener('focus', onFull);
       clearInterval(interval);
     };
-  }, [activeUser?.id]);
+  }, [activeUser?.id, lightSync]);
 
   // Poll for chat unread counts to keep sidebar updated
   useEffect(() => {
@@ -451,7 +517,9 @@ function AppInner() {
       });
     };
     fetchUnread();
-    const interval = setInterval(fetchUnread, 15000);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') fetchUnread();
+    }, 15000);
     return () => clearInterval(interval);
   }, [activeUser, activeTenant, tenants]);
 
