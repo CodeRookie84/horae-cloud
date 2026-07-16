@@ -241,6 +241,10 @@ function AppInner() {
   const homeTab = dashboardMeaningful ? "dashboard"
     : clientFeatures.includes("training") ? "training"
     : "dashboard";
+  // The tab actually rendered. When the plan has no dashboard, "dashboard"
+  // resolves to the home tab SYNCHRONOUSLY here — so the dashboard never paints
+  // and there's no reactive redirect bouncing between the two (which flickered).
+  const effectiveTab = (activeTab === "dashboard" && !dashboardMeaningful) ? homeTab : activeTab;
   
   // Loading state
   const [loading, setLoading] = useState<boolean>(true);
@@ -555,15 +559,6 @@ function AppInner() {
       deepLinkRef.current = null;
     }
   }, [loading, handleSetActiveTab]);
-
-  // Land plans without a dashboard (e.g. Training-only) on their home tab, and
-  // bounce off the dashboard if it isn't part of the plan.
-  useEffect(() => {
-    if (loading || !activeUser || activeUser.role === Role.SUPER_ADMIN) return;
-    if (activeTab === "dashboard" && !dashboardMeaningful) {
-      handleSetActiveTab(homeTab);
-    }
-  }, [loading, activeTab, dashboardMeaningful, homeTab, activeUser?.id, handleSetActiveTab]);
 
   // ── SW Navigation listener (for when app is already open + notification tapped) ─
   useEffect(() => {
@@ -1020,7 +1015,7 @@ function AppInner() {
         tenantUsers={tenantUsers}
         activeUser={activeUser}
         onSelectUser={handleSelectUser}
-        activeTab={activeTab}
+        activeTab={effectiveTab}
         onSelectTab={(tab) => handleSetActiveTab(tab)}
         notificationsCount={notifications.length}
         chatUnreadCount={chatUnreadCount}
@@ -1162,7 +1157,7 @@ function AppInner() {
         <main className={`flex-1 overflow-y-auto ${activeTab === 'team-talk' ? 'bg-white p-0' : 'bg-[#F1F5F9] p-4 md:p-5 lg:p-6'}`} id="scrolling-main-box">
           <AnimatePresence mode="wait">
             <motion.div
-              key={activeTab}
+              key={effectiveTab}
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
@@ -1219,7 +1214,7 @@ function AppInner() {
                 />
               ) : (
                 <>
-                  {activeTab === "dashboard" && (
+                  {effectiveTab === "dashboard" && (
                     <Dashboard
                       activeTenant={activeTenant}
                       activeUser={activeUser}
@@ -1299,7 +1294,7 @@ function AppInner() {
                     />
                   )}
 
-                  {activeTab === "training" && hasFeature("training") && (
+                  {effectiveTab === "training" && hasFeature("training") && (
                     [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role) ? (
                       <TrainingAdmin
                         trainings={trainings}
