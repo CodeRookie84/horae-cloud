@@ -55,6 +55,8 @@ interface DashboardProps {
   quizAttempts?: QuizAttempt[];
   trainings?: TrainingT[];
   trainingAttempts?: TrainingAttempt[];
+  /** Feature keys the client's plan grants — gates which dashboard sections show. */
+  features?: string[];
 }
 
 export default function Dashboard({
@@ -72,7 +74,9 @@ export default function Dashboard({
   quizAttempts: rawQuizAttempts = [],
   trainings: rawTrainings = [],
   trainingAttempts: rawTrainingAttempts = [],
+  features = [],
 }: DashboardProps) {
+  const has = (key: string) => features.includes(key);
   // ── State (unchanged from previous Dashboard) ──────────────────────────
   const [teamTalkUnread, setTeamTalkUnread] = React.useState(0);
   const [isToolsExpanded, setIsToolsExpanded] = React.useState(true);
@@ -196,6 +200,14 @@ export default function Dashboard({
     month: "long",
   });
 
+  // Workspace-tools strip — only the tools the client's plan grants.
+  const tools = [
+    has("notices")    && { key: "notices",    label: "Notices",             Icon: Megaphone,      color: "var(--color-accent)",     count: unreadNoticesCount,        target: "notices" },
+    has("checklists") && { key: "checklists", label: "Checklists",          Icon: ClipboardCheck, color: "#5C8567",                 count: unsubmittedChecklistsCount, target: "checklists" },
+    has("quizzes")    && { key: "quizzes",    label: "Quizzes",             Icon: GraduationCap,  color: "var(--color-brand-soft)", count: unattemptedQuizzesCount,   target: "quizzes" },
+    has("training")   && { key: "training",   label: "Training Assessment", Icon: Award,          color: "var(--color-brand)",      count: pendingTrainingCount,      target: "training" },
+  ].filter(Boolean) as { key: string; label: string; Icon: any; color: string; count: number; target: string }[];
+
   return (
     <div className="space-y-6 pb-28" id="dashboard-wrapper">
       <PWAInstallPrompt activeTab="dashboard" />
@@ -246,6 +258,7 @@ export default function Dashboard({
             {todayLabel}
           </div>
 
+          {tools.length > 0 && (
           <div className="mt-5 bg-white/70 backdrop-blur-sm border border-[var(--color-line)] rounded-2xl overflow-hidden">
             <button
               onClick={() => setIsToolsExpanded(!isToolsExpanded)}
@@ -267,81 +280,40 @@ export default function Dashboard({
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: "auto", opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
-                  className="grid grid-cols-4 gap-0 border-t border-[var(--color-line)] divide-x divide-[var(--color-line)]"
+                  className="grid gap-0 border-t border-[var(--color-line)] divide-x divide-[var(--color-line)]"
+                  style={{ gridTemplateColumns: `repeat(${tools.length}, minmax(0, 1fr))` }}
                 >
-                  <button
-                    onClick={() => onNavigate("notices")}
-                    className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
-                    title="Unopened notices"
-                  >
-                    <div className="relative">
-                      <Megaphone className="w-5 h-5 text-[var(--color-accent)] group-hover:scale-110 transition-transform" />
-                      {unreadNoticesCount > 0 && (
-                        <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
-                          {unreadNoticesCount}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Notices</span>
-                  </button>
-
-                  <button
-                    onClick={() => onNavigate("checklists")}
-                    className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
-                    title="Unsubmitted checklists"
-                  >
-                    <div className="relative">
-                      <ClipboardCheck className="w-5 h-5 text-[#5C8567] group-hover:scale-110 transition-transform" />
-                      {unsubmittedChecklistsCount > 0 && (
-                        <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
-                          {unsubmittedChecklistsCount}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Checklists</span>
-                  </button>
-
-                  <button
-                    onClick={() => onNavigate("quizzes")}
-                    className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
-                    title="Unattempted quizzes"
-                  >
-                    <div className="relative">
-                      <GraduationCap className="w-5 h-5 text-[var(--color-brand-soft)] group-hover:scale-110 transition-transform" />
-                      {unattemptedQuizzesCount > 0 && (
-                        <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
-                          {unattemptedQuizzesCount}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Quizzes</span>
-                  </button>
-
-                  <button
-                    onClick={() => onNavigate("training")}
-                    className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
-                    title="Pending training assessments"
-                  >
-                    <div className="relative">
-                      <Award className="w-5 h-5 text-[var(--color-brand)] group-hover:scale-110 transition-transform" />
-                      {pendingTrainingCount > 0 && (
-                        <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
-                          {pendingTrainingCount}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none">Training Assessment</span>
-                  </button>
+                  {tools.map(({ key, label, Icon, color, count, target }) => (
+                    <button
+                      key={key}
+                      onClick={() => onNavigate(target)}
+                      className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
+                      title={label}
+                    >
+                      <div className="relative">
+                        <Icon className="w-5 h-5 group-hover:scale-110 transition-transform" style={{ color }} />
+                        {count > 0 && (
+                          <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
+                            {count}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none text-center px-1">{label}</span>
+                    </button>
+                  ))}
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
+          )}
         </div>
       </section>
 
       {/* ── Two action cards: Team Talk preview + Tasks summary ───────── */}
-      <section id="dashboard-action-cards" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {(has("teamtalk") || has("tasks")) && (
+      <section id="dashboard-action-cards" className={`grid grid-cols-1 gap-6 ${has("teamtalk") && has("tasks") ? "lg:grid-cols-2" : ""}`}>
         {/* Team Talk */}
+        {has("teamtalk") && (
         <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-hidden">
           <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-line)]">
             <div className="flex items-center gap-3">
@@ -373,8 +345,10 @@ export default function Dashboard({
             )}
           </div>
         </div>
+        )}
 
         {/* Tasks */}
+        {has("tasks") && (
         <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-hidden">
           <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-line)]">
             <div className="flex items-center gap-3">
@@ -434,7 +408,9 @@ export default function Dashboard({
             </div>
           </div>
         </div>
+        )}
       </section>
+      )}
 
     </div>
   );

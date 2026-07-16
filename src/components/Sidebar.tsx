@@ -150,6 +150,9 @@ export default function Sidebar({
   const showTraining = clientServices.includes("training");
   const showMaintenance = clientServices.includes("maintenance") &&
     (activeUser.clitAccess || activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN);
+  // Dashboard only appears when the plan surfaces something on it (Training-only
+  // clients land on Training instead).
+  const showDashboard = ["tasks", "teamtalk", "notices", "checklists", "quizzes"].some(f => clientServices.includes(f));
 
   return (
     <>
@@ -318,6 +321,7 @@ export default function Sidebar({
                 Operations
               </div>
               
+              {showDashboard && (
               <button
                 id="btn-dashboard"
                 onClick={() => handleTabClick("dashboard")}
@@ -332,6 +336,7 @@ export default function Sidebar({
                   <span>Dashboard Overview</span>
                 </div>
               </button>
+              )}
 
               {showNotices && (
                 <button

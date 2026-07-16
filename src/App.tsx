@@ -232,6 +232,15 @@ function AppInner() {
   const isTrialExpired = !!activeClient && plans.isTrialExpired(activeClient.plan, activeClient.createdAt);
   const clientFeatures = activeClient?.services ?? [];
   const hasFeature = (key: string) => clientFeatures.includes(key);
+
+  // The dashboard is only worth showing when the plan grants something it
+  // surfaces. A Training-only client has an empty dashboard, so Training becomes
+  // their landing page and the Dashboard tab is hidden.
+  const DASHBOARD_FEATURES = ["tasks", "teamtalk", "notices", "checklists", "quizzes"];
+  const dashboardMeaningful = clientFeatures.some(f => DASHBOARD_FEATURES.includes(f));
+  const homeTab = dashboardMeaningful ? "dashboard"
+    : clientFeatures.includes("training") ? "training"
+    : "dashboard";
   
   // Loading state
   const [loading, setLoading] = useState<boolean>(true);
@@ -531,6 +540,15 @@ function AppInner() {
       deepLinkRef.current = null;
     }
   }, [loading, handleSetActiveTab]);
+
+  // Land plans without a dashboard (e.g. Training-only) on their home tab, and
+  // bounce off the dashboard if it isn't part of the plan.
+  useEffect(() => {
+    if (loading || !activeUser || activeUser.role === Role.SUPER_ADMIN) return;
+    if (activeTab === "dashboard" && !dashboardMeaningful) {
+      handleSetActiveTab(homeTab);
+    }
+  }, [loading, activeTab, dashboardMeaningful, homeTab, activeUser?.id, handleSetActiveTab]);
 
   // ── SW Navigation listener (for when app is already open + notification tapped) ─
   useEffect(() => {
@@ -1197,6 +1215,7 @@ function AppInner() {
                       quizAttempts={quizAttempts}
                       trainings={trainings}
                       trainingAttempts={trainingAttempts}
+                      features={clientFeatures}
                     />
                   )}
 
