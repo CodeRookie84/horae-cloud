@@ -98,8 +98,8 @@ interface ClientAdminPanelProps {
   activeUser: AppUser;
   activeClient: Client;
   
-  onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise") => void;
-  onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise") => void;
+  onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
+  onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
   onDeleteTenant: (tenantId: string) => void;
   
   onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean, clitAccess?: boolean, clitRole?: string) => void;
@@ -179,7 +179,7 @@ export default function ClientAdminPanel({
   const [editTenantName, setEditTenantName] = useState("");
   const [editTenantSubdomain, setEditTenantSubdomain] = useState("");
   const [editTenantLogo, setEditTenantLogo] = useState("");
-  const [editTenantPlan, setEditTenantPlan] = useState<"Free" | "Essential" | "Pro" | "Enterprise">("Pro");
+  const [editTenantPlan, setEditTenantPlan] = useState<"Free" | "Essential" | "Pro" | "Enterprise" | "Training">("Pro");
   const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
 
   const handleCreateOutlet = (e: React.FormEvent) => {
@@ -284,7 +284,7 @@ export default function ClientAdminPanel({
   const handleOnboardStaff = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetTenant = staffTenantId || tenants[0]?.id;
-    if (!targetTenant || !staffName.trim() || !staffEmail.trim()) return;
+    if (!targetTenant || !staffName.trim() || (!staffEmail.trim() && !staffPhone.trim())) return;
 
     const roleToOnboard = staffRole === "+ Create custom..." ? customRole.trim() : staffRole;
     const deptToOnboard = staffDept === "+ Create custom..." ? customDept.trim() : staffDept;
@@ -299,7 +299,7 @@ export default function ClientAdminPanel({
     try {
       setStaffErrorMsg("");
       await onOnboardUser(targetTenant, staffName, staffEmail, roleToOnboard as Role, deptToOnboard as Department, avatarUrl, staffPhone, !!staffPhone);
-      const generatedPwd = store.getPasswordForEmail(staffEmail);
+      const generatedPwd = store.getPasswordForEmail(staffEmail.trim().toLowerCase() || staffPhone.trim().replace(/\s+/g, ''));
       setStaffSuccessMsg(`Staff member ${staffName} onboarded! Generated Password: ${generatedPwd}`);
       setStaffName("");
       setStaffEmail("");
@@ -329,7 +329,7 @@ export default function ClientAdminPanel({
       const tenant = `"${tenants.find(t => t.id === usr.tenantId)?.name || usr.tenantId}"`;
       const role = `"${usr.role}"`;
       const dept = `"${usr.department}"`;
-      const pwd = `"${store.getPasswordForEmail(usr.email)}"`;
+      const pwd = `"${store.getPasswordForEmail(store.loginKeyFor(usr))}"`;
       csvContent += `${name},${email},${tenant},${role},${dept},${pwd}\n`;
     });
     const link = document.createElement("a");
@@ -2408,11 +2408,10 @@ export default function ClientAdminPanel({
 
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                    Email Address
+                    Email Address <span className="text-slate-400 font-medium normal-case">(optional if mobile is given)</span>
                   </label>
                   <input
                     type="email"
-                    required
                     placeholder="e.g. vikram@cakewala.com"
                     value={staffEmail}
                     onChange={(e) => { setStaffEmail(e.target.value); setStaffErrorMsg(""); }}
@@ -2422,7 +2421,7 @@ export default function ClientAdminPanel({
 
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                    WhatsApp Number
+                    Mobile Number <span className="text-slate-400 font-medium normal-case">(WhatsApp + login)</span>
                   </label>
                   <input
                     type="tel"
@@ -2548,9 +2547,9 @@ export default function ClientAdminPanel({
                               />
                               <div>
                                 <span className="font-semibold block text-slate-800">{usr.name}</span>
-                                <span className="text-[10px] text-slate-400 block font-mono">{usr.email}</span>
+                                <span className="text-[10px] text-slate-400 block font-mono">{usr.email || usr.phoneNumber || "—"}</span>
                                 <span className="text-[9px] text-slate-500 font-mono font-bold bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded w-fit block mt-0.5" title="Login Password">
-                                  🔑 {store.getPasswordForEmail(usr.email)}
+                                  🔑 {store.getPasswordForEmail(store.loginKeyFor(usr))}
                                 </span>
                               </div>
                             </td>
@@ -3044,7 +3043,7 @@ export default function ClientAdminPanel({
                   targetPassword = store.generateRandomPassword();
                 }
                 try {
-                  await store.updateUserPassword(resetPwdUser.email, targetPassword);
+                  await store.updateUserPassword(store.loginKeyFor(resetPwdUser), targetPassword);
                   alert(`Password for ${resetPwdUser.name} has been reset to: ${targetPassword}`);
                   setResetPwdUser(null);
                 } catch (err) {

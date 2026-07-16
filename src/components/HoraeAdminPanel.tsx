@@ -24,18 +24,58 @@ import {
 import { Client, Tenant, User, Role, Department } from "../types";
 import HoraeLogoIcon from "./HoraeLogoIcon";
 import { store } from "../services/store";
+import * as plans from "../services/plans";
+
+/** Read-only preview of the features a plan (+ Training add-on) grants. */
+function PlanFeaturePreview({ plan, trainingAddon }: { plan: plans.PlanId; trainingAddon: boolean }) {
+  const feats = plans.planFeatures(plan, { trainingAddon, createdAt: new Date().toISOString() });
+  return (
+    <div className="space-y-2 text-left border border-slate-100 p-3 rounded-xl bg-slate-50/50">
+      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+        Included Features {plan === "Free" && <span className="text-emerald-600">(all — 15-day trial)</span>}
+      </label>
+      {feats.length === 0 ? (
+        <p className="text-[10px] text-slate-400 font-semibold">No features (trial expired).</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {feats.map(f => (
+            <span key={f} className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">
+              {plans.FEATURE_LABELS[f]}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Training add-on toggle — only meaningful for Essential/Pro. */
+function TrainingAddonToggle({ plan, value, onChange }: { plan: plans.PlanId; value: boolean; onChange: (v: boolean) => void }) {
+  if (!plans.trainingAddonApplies(plan)) return null;
+  return (
+    <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-700 cursor-pointer select-none border border-slate-100 p-3 rounded-xl bg-slate-50/50">
+      <input
+        type="checkbox"
+        checked={value}
+        onChange={(e) => onChange(e.target.checked)}
+        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
+      />
+      <span>Add <span className="text-indigo-700">Training</span> as a combo add-on</span>
+    </label>
+  );
+}
 
 interface HoraeAdminPanelProps {
   clients: Client[];
   tenants: Tenant[];
   users: User[];
-  onAddClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise", services: string[]) => void;
-  onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise") => void;
+  onAddClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean) => void;
+  onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
   onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean) => void;
   onSelectUser: (userId: string) => void;
-  onUpdateClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise", services: string[]) => void;
+  onUpdateClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean) => void;
   onDeleteClient: (id: string) => void;
-  onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise") => void;
+  onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
   onDeleteTenant: (tenantId: string) => void;
   onUpdateUser: (userId: string, name: string, email: string, role: string, department: string) => void;
   onDeleteUser: (userId: string) => void;
@@ -63,37 +103,16 @@ export default function HoraeAdminPanel({
   const [clientId, setClientId] = useState("");
   const [clientName, setClientName] = useState("");
   const [clientLogo, setClientLogo] = useState("🍰");
-  const [clientPlan, setClientPlan] = useState<"Free" | "Essential" | "Pro" | "Enterprise">("Pro");
-  const [clientServices, setClientServices] = useState<string[]>(["notices", "checklists", "tasks"]);
+  const [clientPlan, setClientPlan] = useState<plans.PlanId>("Pro");
+  const [clientTrainingAddon, setClientTrainingAddon] = useState<boolean>(false);
   const [clientSuccessMsg, setClientSuccessMsg] = useState("");
 
   // State for editing a client
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [editName, setEditName] = useState("");
   const [editLogo, setEditLogo] = useState("");
-  const [editPlan, setEditPlan] = useState<"Free" | "Essential" | "Pro" | "Enterprise">("Pro");
-  const [editServices, setEditServices] = useState<string[]>([]);
-
-  // Auto-set services based on clientPlan
-  React.useEffect(() => {
-    if (clientPlan === "Free") {
-      setClientServices(["notices", "checklists", "tasks", "quizzes", "sops"]);
-    } else if (clientPlan === "Essential") {
-      setClientServices(["notices", "tasks"]);
-    } else if (clientPlan === "Pro") {
-      setClientServices(["notices", "tasks", "quizzes", "sops"]);
-    } else {
-      setClientServices(["notices", "checklists", "tasks", "quizzes", "sops"]);
-    }
-  }, [clientPlan]);
-
-  // Set editServices when edit client starts
-  React.useEffect(() => {
-    if (editingClient) {
-      const curServices = editingClient.services || store.getClientServicesSync(editingClient.id, editingClient.plan);
-      setEditServices(curServices);
-    }
-  }, [editingClient]);
+  const [editPlan, setEditPlan] = useState<plans.PlanId>("Pro");
+  const [editTrainingAddon, setEditTrainingAddon] = useState<boolean>(false);
 
   // State for deleting a client
   const [deletingClientId, setDeletingClientId] = useState<string | null>(null);
@@ -103,7 +122,7 @@ export default function HoraeAdminPanel({
   const [editTenantName, setEditTenantName] = useState("");
   const [editTenantSubdomain, setEditTenantSubdomain] = useState("");
   const [editTenantLogo, setEditTenantLogo] = useState("");
-  const [editTenantPlan, setEditTenantPlan] = useState<"Free" | "Essential" | "Pro" | "Enterprise">("Pro");
+  const [editTenantPlan, setEditTenantPlan] = useState<plans.PlanId>("Pro");
 
   // State for deleting a tenant
   const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
@@ -185,7 +204,7 @@ export default function HoraeAdminPanel({
   const handleCreateClient = (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientId.trim() || !clientName.trim()) return;
-    onAddClient(clientId.toLowerCase().replace(/[^a-z0-9-]/g, ''), clientName, clientLogo, clientPlan, clientServices);
+    onAddClient(clientId.toLowerCase().replace(/[^a-z0-9-]/g, ''), clientName, clientLogo, clientPlan, plans.trainingAddonApplies(clientPlan) && clientTrainingAddon);
     setClientSuccessMsg(`Successfully onboarded Client: ${clientName} (ID: ${clientId.toLowerCase().replace(/[^a-z0-9-]/g, '')})!`);
     setClientId("");
     setClientName("");
@@ -212,7 +231,7 @@ export default function HoraeAdminPanel({
   const handleOnboardStaff = (e: React.FormEvent) => {
     e.preventDefault();
     const targetTenant = staffTenantId || clientOutlets[0]?.id;
-    if (!targetTenant || !staffName.trim() || !staffEmail.trim()) return;
+    if (!targetTenant || !staffName.trim() || (!staffEmail.trim() && !staffPhone.trim())) return;
 
     const finalRole = isCustomRole ? customRole.trim() : staffRole;
     const finalDept = isCustomDept ? customDept.trim() : staffDept;
@@ -225,7 +244,7 @@ export default function HoraeAdminPanel({
     const avatarUrl = `https://i.pravatar.cc/150?img=${randomAvatarId}`;
 
     onOnboardUser(targetTenant, staffName, staffEmail, finalRole, finalDept, avatarUrl, staffPhone, !!staffPhone);
-    const generatedPwd = store.getPasswordForEmail(staffEmail);
+    const generatedPwd = store.getPasswordForEmail(staffEmail.trim().toLowerCase() || staffPhone.trim().replace(/\s+/g, ''));
     setStaffSuccessMsg(`Staff member ${staffName} onboarded successfully! Generated Password: ${generatedPwd}`);
     setStaffName("");
     setStaffEmail("");
@@ -403,44 +422,14 @@ export default function HoraeAdminPanel({
                         <option value="Essential">Essential</option>
                         <option value="Pro">Pro</option>
                         <option value="Enterprise">Enterprise</option>
+                        <option value="Training">Training</option>
                       </select>
                     </div>
                   </div>
 
-                  {/* Services Selection */}
-                  <div className="space-y-2 text-left border border-slate-100 p-3 rounded-xl bg-slate-50/50">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                      Services Access Selection
-                    </label>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      {[
-                        { id: "notices", label: "Notices Board" },
-                        { id: "checklists", label: "Checklists & Reports" },
-                        { id: "tasks", label: "Task Manager" },
-                        { id: "quizzes", label: "Quizzes Assessment" },
-                        { id: "sops", label: "SOP Documentation" }
-                      ].map(srv => {
-                        const checked = clientServices.includes(srv.id);
-                        return (
-                          <label key={srv.id} className="flex items-center gap-1.5 font-semibold text-slate-700 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => {
-                                if (checked) {
-                                  setClientServices(clientServices.filter(s => s !== srv.id));
-                                } else {
-                                  setClientServices([...clientServices, srv.id]);
-                                }
-                              }}
-                              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
-                            />
-                            <span className="text-[10px]">{srv.label}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  {/* Training add-on + derived feature preview */}
+                  <TrainingAddonToggle plan={clientPlan} value={clientTrainingAddon} onChange={setClientTrainingAddon} />
+                  <PlanFeaturePreview plan={clientPlan} trainingAddon={clientTrainingAddon} />
 
                   {clientSuccessMsg && (
                     <div className="p-2.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-xl text-[10px] font-semibold flex items-center gap-1.5">
@@ -500,6 +489,7 @@ export default function HoraeAdminPanel({
                                 setEditName(client.name);
                                 setEditLogo(client.logo);
                                 setEditPlan(client.plan);
+                                setEditTrainingAddon(!!client.trainingAddon);
                               }}
                               className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
                               title="Edit Client"
@@ -763,11 +753,10 @@ export default function HoraeAdminPanel({
 
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                      Email Address
+                      Email Address <span className="text-slate-400 font-medium normal-case">(optional if mobile is given)</span>
                     </label>
                     <input
                       type="email"
-                      required
                       placeholder="e.g. vikram@cakewala.com"
                       value={staffEmail}
                       onChange={(e) => setStaffEmail(e.target.value)}
@@ -777,7 +766,7 @@ export default function HoraeAdminPanel({
 
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                      WhatsApp Number
+                      Mobile Number <span className="text-slate-400 font-medium normal-case">(WhatsApp + login)</span>
                     </label>
                     <input
                       type="tel"
@@ -931,7 +920,7 @@ export default function HoraeAdminPanel({
                                   <span className="font-semibold block text-slate-800">{usr.name}</span>
                                   <span className="text-[10px] text-slate-400 block font-mono">{usr.email}</span>
                                   <span className="text-[9px] text-slate-500 font-mono font-bold bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded w-fit block mt-0.5" title="Login Password">
-                                    🔑 {store.getPasswordForEmail(usr.email)}
+                                    🔑 {store.getPasswordForEmail(store.loginKeyFor(usr))}
                                   </span>
                                 </div>
                               </td>
@@ -1003,7 +992,7 @@ export default function HoraeAdminPanel({
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  onUpdateClient(editingClient.id, editName, editLogo, editPlan, editServices);
+                  onUpdateClient(editingClient.id, editName, editLogo, editPlan, plans.trainingAddonApplies(editPlan) && editTrainingAddon);
                   setEditingClient(null);
                 }}
                 className="space-y-4"
@@ -1055,63 +1044,21 @@ export default function HoraeAdminPanel({
                     </label>
                     <select
                       value={editPlan}
-                      onChange={(e) => {
-                        const newPlan = e.target.value as any;
-                        setEditPlan(newPlan);
-                        if (newPlan === "Free") {
-                          setEditServices(["notices", "checklists", "tasks", "quizzes", "sops"]);
-                        } else if (newPlan === "Essential") {
-                          setEditServices(["notices", "tasks"]);
-                        } else if (newPlan === "Pro") {
-                          setEditServices(["notices", "tasks", "quizzes", "sops"]);
-                        } else {
-                          setEditServices(["notices", "checklists", "tasks", "quizzes", "sops"]);
-                        }
-                      }}
+                      onChange={(e) => setEditPlan(e.target.value as any)}
                       className="w-full text-xs px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white cursor-pointer"
                     >
                       <option value="Free">Free (15 Days Trial)</option>
                       <option value="Essential">Essential</option>
                       <option value="Pro">Pro</option>
                       <option value="Enterprise">Enterprise</option>
+                      <option value="Training">Training</option>
                     </select>
                   </div>
                 </div>
 
-                {/* Services Access Selection */}
-                <div className="space-y-2 text-left border border-slate-100 p-3 rounded-xl bg-slate-50/50">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                    Services Access Selection
-                  </label>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    {[
-                      { id: "notices", label: "Notices Board" },
-                      { id: "checklists", label: "Checklists & Reports" },
-                      { id: "tasks", label: "Task Manager" },
-                      { id: "quizzes", label: "Quizzes Assessment" },
-                      { id: "sops", label: "SOP Documentation" }
-                    ].map(srv => {
-                      const checked = editServices.includes(srv.id);
-                      return (
-                        <label key={srv.id} className="flex items-center gap-1.5 font-semibold text-slate-700 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => {
-                              if (checked) {
-                                setEditServices(editServices.filter(s => s !== srv.id));
-                              } else {
-                                setEditServices([...editServices, srv.id]);
-                              }
-                            }}
-                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
-                          />
-                          <span className="text-[10px]">{srv.label}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
+                {/* Training add-on + derived feature preview */}
+                <TrainingAddonToggle plan={editPlan} value={editTrainingAddon} onChange={setEditTrainingAddon} />
+                <PlanFeaturePreview plan={editPlan} trainingAddon={editTrainingAddon} />
 
                 <div className="flex gap-3 pt-2">
                   <button
@@ -1265,6 +1212,7 @@ export default function HoraeAdminPanel({
                       <option value="Essential">Essential</option>
                       <option value="Pro">Pro</option>
                       <option value="Enterprise">Enterprise</option>
+                      <option value="Training">Training</option>
                     </select>
                   </div>
                 </div>

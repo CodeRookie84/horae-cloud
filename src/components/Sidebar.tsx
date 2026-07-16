@@ -140,12 +140,16 @@ export default function Sidebar({
   const isSuperAdminLoggedIn = loggedInEmail === 'coderookie84@gmail.com';
   const isImpersonating = isSuperAdminLoggedIn && activeUser.id !== 'user-superadmin';
   const isSystemActive = activeClient.id === 'client-system' || activeClient.id === 'client-hq';
-  const clientServices = activeClient.services || ["notices", "checklists", "tasks", "quizzes", "sops"];
+  const clientServices = activeClient.services || [];
   const showNotices = clientServices.includes("notices");
   const showChecklists = clientServices.includes("checklists");
   const showTasks = clientServices.includes("tasks");
   const showQuizzes = clientServices.includes("quizzes");
   const showSOPs = clientServices.includes("sops");
+  const showTeamTalk = clientServices.includes("teamtalk");
+  const showTraining = clientServices.includes("training");
+  const showMaintenance = clientServices.includes("maintenance") &&
+    (activeUser.clitAccess || activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN);
 
   return (
     <>
@@ -363,7 +367,7 @@ export default function Sidebar({
                 </button>
               )}
 
-              {(activeUser.clitAccess || activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN) && (
+              {showMaintenance && (
                 <button
                   id="btn-maintenance"
                   onClick={() => handleTabClick("maintenance")}
@@ -380,6 +384,7 @@ export default function Sidebar({
                 </button>
               )}
 
+              {showTraining && (
               <button
                 id="btn-training"
                 onClick={() => handleTabClick("training")}
@@ -394,6 +399,7 @@ export default function Sidebar({
                   <span>Training</span>
                 </div>
               </button>
+              )}
 
               {showTasks && (
                 <button
@@ -447,6 +453,7 @@ export default function Sidebar({
               )}
 
               {/* ── Team Talk ── */}
+              {showTeamTalk && (<>
               <div className="text-sm text-slate-500 font-medium tracking-wide mt-4 mb-1 px-1">
                 Communication
               </div>
@@ -469,6 +476,7 @@ export default function Sidebar({
                   </span>
                 )}
               </button>
+              </>)}
 
               {/* ── Growth Compass (personal SWOT) ── */}
               <div className="text-sm text-slate-500 font-medium tracking-wide mt-4 mb-1 px-1">
@@ -586,14 +594,15 @@ export default function Sidebar({
                <button
                  type="button"
                  onClick={() => {
-                   const currentPwd = store.getPasswordForEmail(activeUser.email);
+                   const loginKey = store.loginKeyFor(activeUser);
+                   const currentPwd = store.getPasswordForEmail(loginKey);
                    const newPwd = prompt(`Change Password for ${activeUser.name}:\n\nCurrent Password: ${currentPwd}\n\nEnter new password (min 6 characters):`);
                    if (newPwd !== null) {
                      const trimmed = newPwd.trim();
                      if (trimmed.length < 6) {
                        alert("Password must be at least 6 characters long.");
                      } else {
-                       store.updateUserPassword(activeUser.email, trimmed).then(() => {
+                       store.updateUserPassword(loginKey, trimmed).then(() => {
                         alert("Password updated successfully!");
                       }).catch((err) => {
                         console.error("Failed to sync password to DB:", err);

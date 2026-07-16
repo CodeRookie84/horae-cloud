@@ -43,7 +43,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) {
-      setErrorMsg("Email address is required.");
+      setErrorMsg("Email address or mobile number is required.");
       return;
     }
     if (!password.trim()) {
@@ -62,7 +62,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       // If Super Admin, companyId is ignored by verifyLogin
       const user = await store.verifyLogin(isSuperAdminEmail ? "" : companyId, email, password);
       if (user) {
-        const hasChangedPwd = localStorage.getItem(`horae_pwd_changed_${email.toLowerCase().trim()}`);
+        const loginKey = store.loginKeyFor(user);
+        const hasChangedPwd = localStorage.getItem(`horae_pwd_changed_${loginKey}`);
         if (!hasChangedPwd) {
           setTempLoggedInUser(user);
           setShowFirstLoginPrompt(true);
@@ -98,8 +99,9 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     setLoading(true);
     setPwdError("");
     try {
-      await store.updateUserPassword(tempLoggedInUser!.email, newPassword.trim());
-      localStorage.setItem(`horae_pwd_changed_${tempLoggedInUser!.email.toLowerCase().trim()}`, "true");
+      const loginKey = store.loginKeyFor(tempLoggedInUser!);
+      await store.updateUserPassword(loginKey, newPassword.trim());
+      localStorage.setItem(`horae_pwd_changed_${loginKey}`, "true");
       onLoginSuccess(tempLoggedInUser!);
     } catch (err) {
       console.error("Password update failed:", err);
@@ -111,7 +113,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
   const handleSkipPasswordChange = () => {
     if (tempLoggedInUser) {
-      localStorage.setItem(`horae_pwd_changed_${tempLoggedInUser.email.toLowerCase().trim()}`, "true");
+      localStorage.setItem(`horae_pwd_changed_${store.loginKeyFor(tempLoggedInUser)}`, "true");
       onLoginSuccess(tempLoggedInUser);
     }
   };
@@ -303,17 +305,19 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                 )}
               </AnimatePresence>
 
-              {/* Email Input */}
+              {/* Email or Mobile Input */}
               <div className="space-y-1.5 text-left">
                 <label className="text-[10px] font-bold text-[#6A6390] uppercase tracking-widest block px-1">
-                  Registered Email
+                  {isSuperAdminEmail ? "Registered Email" : "Email or Mobile Number"}
                 </label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-3 w-4 h-4 text-[#8B7CF6]" />
                   <input
-                    type="email"
+                    type="text"
+                    inputMode="email"
+                    autoComplete="username"
                     required
-                    placeholder="e.g. karan@cakewala.com"
+                    placeholder="e.g. karan@cakewala.com or +91 98…"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className={`${inputBase} ${isSuperAdminEmail ? inputAdmin : inputBrand} pl-10 pr-4`}

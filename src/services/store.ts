@@ -23,6 +23,7 @@ import {
 } from "../types";
 import supabase from "./supabaseClient";
 import * as chatService from "./chatService";
+import * as plans from "./plans";
 
 export class StoreService {
   // Active Simulated States (Client & Tenant focus & acting user role validation)
@@ -56,14 +57,20 @@ export class StoreService {
       const clients = await this.getAllClients();
       return clients[0];
     }
-    const services = this.getClientServicesSync(data.id, data.plan, data.created_at);
+    return this.mapClient(data);
+  }
+
+  /** Map a raw `clients` row → Client, deriving feature entitlements from the plan. */
+  private mapClient(c: any): Client {
+    const trainingAddon = !!c.training_addon;
     return {
-      id: data.id,
-      name: data.name,
-      logo: data.logo,
-      plan: data.plan,
-      createdAt: data.created_at,
-      services
+      id: c.id,
+      name: c.name,
+      logo: c.logo,
+      plan: c.plan,
+      createdAt: c.created_at,
+      trainingAddon,
+      services: plans.planFeatures(c.plan, { trainingAddon, createdAt: c.created_at }),
     };
   }
 
@@ -72,18 +79,8 @@ export class StoreService {
       .from('clients')
       .select('*')
       .order('name');
-    
-    return (data || []).map(c => {
-      const services = this.getClientServicesSync(c.id, c.plan, c.created_at);
-      return {
-        id: c.id,
-        name: c.name,
-        logo: c.logo,
-        plan: c.plan,
-        createdAt: c.created_at,
-        services
-      };
-    });
+
+    return (data || []).map(c => this.mapClient(c));
   }
 
   public async getActiveTenant(): Promise<Tenant> {
@@ -108,17 +105,27 @@ export class StoreService {
     };
   }
 
+  /**
+   * The key a user's password is cached under (and the value stored in the login
+   * session). Email when present, else phone number, else the user id — so
+   * phone-only staff (no email) still resolve to a stable, collision-free key.
+   */
+  public loginKeyFor(u: { email?: string | null; phoneNumber?: string | null; phone_number?: string | null; id?: string }): string {
+    return String(u.email || u.phoneNumber || (u as any).phone_number || u.id || "").toLowerCase().trim();
+  }
+
   private mapUserRecord(u: any): User {
     let avatar = u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
     let pwd = "";
+    const pwdKey = this.loginKeyFor(u);
     if (avatar.includes("#pwd=")) {
       const parts = avatar.split("#pwd=");
       avatar = parts[0];
       pwd = parts[1];
-      this.saveStaffPassword(u.email, pwd);
+      this.saveStaffPassword(pwdKey, pwd);
     } else {
       const passwords = this.getStaffPasswords();
-      const localPwd = passwords[u.email.toLowerCase().trim()];
+      const localPwd = passwords[pwdKey];
       if (localPwd) {
         pwd = localPwd;
         const updatedAvatar = (u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150") + "#pwd=" + localPwd;
@@ -131,7 +138,7 @@ export class StoreService {
           });
       } else {
         pwd = this.generateRandomPassword();
-        this.saveStaffPassword(u.email, pwd);
+        this.saveStaffPassword(pwdKey, pwd);
         const updatedAvatar = (u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150") + "#pwd=" + pwd;
         supabase
           .from('users')
@@ -145,7 +152,7 @@ export class StoreService {
     return {
       id: u.id,
       name: u.name,
-      email: u.email,
+      email: u.email || "",
       role: this.normalizeRole(u.role),
       department: this.normalizeDept(u.department),
       tenantId: u.tenant_id,
@@ -361,15 +368,17 @@ export class StoreService {
     return passwords[cleanEmail];
   }
 
-  public async updateUserPassword(email: string, newPassword: string): Promise<void> {
-    this.saveStaffPassword(email, newPassword);
-    
-    // Fetch all users with this email
+  public async updateUserPassword(identifier: string, newPassword: string): Promise<void> {
+    this.saveStaffPassword(identifier, newPassword);
+
+    // `identifier` is an email or a mobile number — match the right column.
+    const clean = identifier.trim();
+    const isEmail = clean.includes('@');
     const { data: matchedUsers } = await supabase
       .from('users')
       .select('*')
-      .eq('email', email.toLowerCase().trim());
-    
+      .eq(isEmail ? 'email' : 'phone_number', isEmail ? clean.toLowerCase() : clean.replace(/\s+/g, ''));
+
     if (matchedUsers && matchedUsers.length > 0) {
       for (const u of matchedUsers) {
         let baseAvatar = u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
@@ -385,38 +394,27 @@ export class StoreService {
     }
   }
 
-  public getClientServicesSync(clientId: string, plan: string, createdAt?: string): string[] {
-    const data = localStorage.getItem(`horae_client_services_${clientId}`);
-    if (data) {
-      try {
-        return JSON.parse(data);
-      } catch (e) {}
-    }
-    if (plan === "Free") {
-      const createdTime = createdAt ? new Date(createdAt).getTime() : Date.now();
-      const elapsedMs = Date.now() - createdTime;
-      const trialDurationMs = 15 * 24 * 60 * 60 * 1000;
-      if (elapsedMs > trialDurationMs) {
-        return []; // Trial expired
-      } else {
-        return ["notices", "checklists", "tasks", "quizzes", "sops"]; // All services during active trial
-      }
-    } else if (plan === "Essential") {
-      return ["notices", "tasks"];
-    } else if (plan === "Pro") {
-      return ["notices", "tasks", "quizzes", "sops"];
-    } else {
-      return ["notices", "checklists", "tasks", "quizzes", "sops"];
-    }
-  }
-
-  public saveClientServices(clientId: string, services: string[]) {
-    localStorage.setItem(`horae_client_services_${clientId}`, JSON.stringify(services));
+  /**
+   * Feature entitlements are DERIVED from the plan (+ Training add-on) — see
+   * plans.ts. This wrapper keeps the old signature; the add-on flag is read from
+   * the client row by mapClient, so callers that only have a plan get the base set.
+   */
+  public getClientServicesSync(_clientId: string, plan: string, createdAt?: string, trainingAddon?: boolean): string[] {
+    return plans.planFeatures(plan, { trainingAddon, createdAt });
   }
 
   // --- Horae LOGIN / AUTHENTICATION METHODS ---
-  public async verifyLogin(companyId: string, email: string, password?: string): Promise<User | null> {
-    const cleanEmail = email.toLowerCase().trim();
+  /**
+   * `identifier` may be an email OR a mobile number. Emails match the `email`
+   * column; anything without an "@" is treated as a phone number and matched
+   * against `phone_number`. Passwords live on the user row (`avatar#pwd=`), so
+   * phone-only staff (no email) authenticate the same way.
+   */
+  public async verifyLogin(companyId: string, identifier: string, password?: string): Promise<User | null> {
+    const cleanId = identifier.trim();
+    const isEmail = cleanId.includes('@');
+    const cleanEmail = cleanId.toLowerCase();
+    const cleanPhone = cleanId.replace(/\s+/g, '');
     const cleanCompanyId = companyId.toLowerCase().trim().replace(/\s+/g, '-');
 
     if (cleanEmail === 'coderookie84@gmail.com') {
@@ -459,32 +457,33 @@ export class StoreService {
 
     const tenantIds = tenants.map(t => t.id);
 
-    // 3. Find the user with matching email belonging to one of these tenants
+    // 3. Find the user by email OR phone number belonging to one of these tenants
     const { data: matchedUsers } = await supabase
       .from('users')
       .select('*')
-      .eq('email', cleanEmail)
+      .eq(isEmail ? 'email' : 'phone_number', isEmail ? cleanEmail : cleanPhone)
       .in('tenant_id', tenantIds);
 
     if (!matchedUsers || matchedUsers.length === 0) return null;
 
     // Found! Use the first matching user persona
     const user = matchedUsers[0];
+    const pwdKey = this.loginKeyFor(user);
 
     // Now extract correct password from user record or local storage
     let correctPassword = "Horae1";
     if (user.avatar && user.avatar.includes("#pwd=")) {
       correctPassword = user.avatar.split("#pwd=")[1];
-      this.saveStaffPassword(cleanEmail, correctPassword);
+      this.saveStaffPassword(pwdKey, correctPassword);
     } else {
-      correctPassword = this.getPasswordForEmail(cleanEmail);
+      correctPassword = this.getPasswordForEmail(pwdKey);
     }
 
     if (!password || password !== correctPassword) {
       return null;
     }
 
-    localStorage.setItem("horae_logged_in_email", cleanEmail);
+    localStorage.setItem("horae_logged_in_email", pwdKey);
     // Clear stale client/tenant context from any previous session before setting the new user
     localStorage.removeItem("horae_active_client_id");
     localStorage.removeItem("horae_active_tenant_id");
@@ -504,30 +503,25 @@ export class StoreService {
   }
 
   // --- Horae ONBOARDING METHODS ---
-  public async addClient(id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise"): Promise<Client> {
+  public async addClient(id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false): Promise<Client> {
     const cleanId = id.toLowerCase().trim().replace(/\s+/g, '-');
     const newClient = {
       id: cleanId,
       name,
       logo,
       plan,
+      training_addon: trainingAddon,
       created_at: new Date().toISOString()
     };
     await supabase.from('clients').insert([newClient]);
-    return {
-      id: newClient.id,
-      name: newClient.name,
-      logo: newClient.logo,
-      plan: newClient.plan,
-      createdAt: newClient.created_at
-    };
+    return this.mapClient(newClient);
   }
 
-  public async updateClient(clientId: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise"): Promise<void> {
+  public async updateClient(clientId: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false): Promise<void> {
     const cleanId = clientId.toLowerCase().trim().replace(/\s+/g, '-');
     await supabase
       .from('clients')
-      .update({ name, logo, plan })
+      .update({ name, logo, plan, training_addon: trainingAddon })
       .eq('id', cleanId);
   }
 
@@ -601,7 +595,7 @@ export class StoreService {
     }
   }
 
-  public async addTenant(clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise"): Promise<Tenant> {
+  public async addTenant(clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training"): Promise<Tenant> {
     const newTenant = {
       id: "tenant-" + Date.now(),
       client_id: clientId,
@@ -623,7 +617,7 @@ export class StoreService {
     };
   }
 
-  public async updateTenant(tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise"): Promise<void> {
+  public async updateTenant(tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training"): Promise<void> {
     await supabase
       .from('tenants')
       .update({ name, subdomain, logo, plan })
@@ -750,20 +744,40 @@ export class StoreService {
     clitAccess?: boolean,
     clitRole?: string
   ): Promise<User> {
-    // ── Duplicate email guard ──────────────────────────────────
-    const { data: existing, error: lookupError } = await supabase
-      .from('users')
-      .select('id, email')
-      .ilike('email', email.trim())
-      .limit(1);
+    const cleanEmail = (email || "").trim();
+    const cleanPhone = (phoneNumber || "").trim();
 
-    if (!lookupError && existing && existing.length > 0) {
-      throw new Error(`A staff member with the email "${email.trim()}" is already registered. Please use a different email address.`);
+    // Email is optional, but a staff member needs at least one login identifier.
+    if (!cleanEmail && !cleanPhone) {
+      throw new Error("Provide an email address or a mobile number so this staff member can log in.");
+    }
+
+    // ── Duplicate identifier guard ─────────────────────────────
+    if (cleanEmail) {
+      const { data: existing, error: lookupError } = await supabase
+        .from('users')
+        .select('id, email')
+        .ilike('email', cleanEmail)
+        .limit(1);
+      if (!lookupError && existing && existing.length > 0) {
+        throw new Error(`A staff member with the email "${cleanEmail}" is already registered. Please use a different email address.`);
+      }
+    } else {
+      const { data: existing } = await supabase
+        .from('users')
+        .select('id, phone_number')
+        .eq('phone_number', cleanPhone.replace(/\s+/g, ''))
+        .limit(1);
+      if (existing && existing.length > 0) {
+        throw new Error(`A staff member with the mobile number "${cleanPhone}" is already registered. Please use a different number.`);
+      }
     }
     // ──────────────────────────────────────────────────────────
 
+    const userId = "user-" + Date.now();
     const pwd = this.generateRandomPassword();
-    this.saveStaffPassword(email, pwd);
+    // Cache the password under the same key login will use (email, else phone, else id).
+    this.saveStaffPassword(cleanEmail || cleanPhone.replace(/\s+/g, '') || userId, pwd);
 
     const baseAvatar = avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
     const avatarWithPwd = baseAvatar + "#pwd=" + pwd;
@@ -772,16 +786,16 @@ export class StoreService {
     const normDept = this.normalizeDept(department);
 
     const newUser: any = {
-      id: "user-" + Date.now(),
+      id: userId,
       name,
-      email,
+      email: cleanEmail || null,
       role: normRole,
       department: normDept,
       tenant_id: tenantId,
       avatar: avatarWithPwd,
     };
 
-    if (phoneNumber) newUser.phone_number = phoneNumber.trim();
+    if (cleanPhone) newUser.phone_number = cleanPhone.replace(/\s+/g, '');
     if (whatsappOptedIn !== undefined) newUser.whatsapp_opted_in = whatsappOptedIn;
     newUser.clit_access = !!clitAccess;
     newUser.clit_role = clitAccess ? (clitRole || 'technician') : null;
@@ -797,12 +811,12 @@ export class StoreService {
     return {
       id: newUser.id,
       name: newUser.name,
-      email: newUser.email,
+      email: cleanEmail || "",
       role: newUser.role,
       department: newUser.department,
       tenantId: newUser.tenant_id,
       avatar: baseAvatar,
-      phoneNumber: phoneNumber,
+      phoneNumber: cleanPhone || undefined,
       whatsappOptedIn: whatsappOptedIn || false,
       clitAccess: !!clitAccess,
       clitRole: clitAccess ? (clitRole || 'technician') : undefined,

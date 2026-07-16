@@ -120,6 +120,19 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
   onSubmit: Props["onSubmit"]; onExit: () => void;
 }) {
   const st = trainingStatus(training, activeUser.id, attempts);
+
+  // How many retakes remain, as human text — shown on the intro + result screens
+  // when the user hasn't passed yet. `st` already accounts for admin grants and
+  // recomputes after each submission (parent refreshes the attempts list).
+  const granted = (training.retestGrants || []).includes(activeUser.id);
+  const unlimited = training.maxAttempts === 0;
+  const remaining = unlimited ? Infinity : Math.max(0, training.maxAttempts - st.attemptsUsed);
+  const retakesLeftText =
+    granted ? "1 retake remaining (granted by your admin)"
+    : unlimited && training.allowRetest ? "Unlimited retakes remaining"
+    : training.allowRetest && remaining > 0 ? `${remaining} retake${remaining === 1 ? "" : "s"} remaining`
+    : "No retakes remaining — ask your admin to allow a retest";
+
   const [phase, setPhase] = useState<"intro" | "test" | "result">("intro");
   const [lang, setLang] = useState<"en" | "hi" | "kn" | "ta">("en");
   const [translated, setTranslated] = useState<Record<string, { q: string; options: string[] }>>({});
@@ -203,7 +216,10 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
             )}
           </div>
           {st.last && st.status !== "passed" && (
-            <p className="text-[11px] text-slate-500">Last attempt: <span className="font-bold">{st.last.pct}%</span> on {new Date(st.last.submittedAt).toLocaleDateString()}</p>
+            <div className="space-y-1">
+              <p className="text-[11px] text-slate-500">Last attempt: <span className="font-bold">{st.last.pct}%</span> on {new Date(st.last.submittedAt).toLocaleDateString()}</p>
+              <p className="text-[11px] font-semibold text-amber-700">{retakesLeftText}</p>
+            </div>
           )}
         </div>
       )}
@@ -257,7 +273,10 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
 
       {/* RESULT */}
       {phase === "result" && result && (
-        <ResultView training={training} activeUser={activeUser} result={result} onRetake={st.canTake && !result.passed ? () => { setAnswers({}); setPhase("test"); } : undefined} onDone={onExit} />
+        <ResultView training={training} activeUser={activeUser} result={result}
+          retakesLeftText={retakesLeftText}
+          onRetake={st.canTake && !result.passed ? () => { setAnswers({}); setPhase("test"); } : undefined}
+          onDone={onExit} />
       )}
     </div>
   );
@@ -279,8 +298,8 @@ function DocViewer({ url, name, type }: { url: string; name?: string; type?: str
   );
 }
 
-function ResultView({ training, activeUser, result, onRetake, onDone }: {
-  training: TrainingT; activeUser: AppUser; result: TrainingAttempt; onRetake?: () => void; onDone: () => void;
+function ResultView({ training, activeUser, result, retakesLeftText, onRetake, onDone }: {
+  training: TrainingT; activeUser: AppUser; result: TrainingAttempt; retakesLeftText?: string; onRetake?: () => void; onDone: () => void;
 }) {
   const passed = result.passed;
   return (
@@ -290,6 +309,9 @@ function ResultView({ training, activeUser, result, onRetake, onDone }: {
         <h4 className={`text-base font-bold ${passed ? "text-emerald-900" : "text-rose-900"}`}>{passed ? "Passed — you're certified!" : "Not passed yet"}</h4>
         <p className={`text-2xl font-extrabold ${passed ? "text-emerald-800" : "text-rose-800"}`}>{result.pct}%</p>
         <p className="text-[11px] font-mono font-semibold text-slate-500">{result.score} / {result.total} correct · pass mark {training.passPct}%</p>
+        {!passed && retakesLeftText && (
+          <p className="text-[11px] font-bold text-amber-700 pt-1">{retakesLeftText}</p>
+        )}
       </div>
 
       {passed && <Certificate userName={activeUser.name} title={training.title} pct={result.pct} date={result.submittedAt} />}
@@ -319,7 +341,7 @@ function ResultView({ training, activeUser, result, onRetake, onDone }: {
       </div>
 
       <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-        {onRetake && <button onClick={onRetake} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Retake</button>}
+        {onRetake && <button onClick={onRetake} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Retake test</button>}
         <button onClick={onDone} className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl shadow-md cursor-pointer">Done</button>
       </div>
     </div>

@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import { store } from "./services/store";
+import * as plans from "./services/plans";
 import { Client, Tenant, User as AppUser, Role, Department } from "./types";
 import { listenForSWNavigation } from "./services/fcmService";
 
@@ -219,13 +220,9 @@ function AppInner() {
   const [trainingAttempts, setTrainingAttempts] = useState<any[]>([]);
   const [chatUnreadCount, setChatUnreadCount] = useState<number>(0);
 
-  const isTrialExpired = activeClient?.plan === "Free" && (() => {
-    if (!activeClient.createdAt) return false;
-    const createdTime = new Date(activeClient.createdAt).getTime();
-    const elapsedMs = Date.now() - createdTime;
-    const trialDurationMs = 15 * 24 * 60 * 60 * 1000;
-    return elapsedMs > trialDurationMs;
-  })();
+  const isTrialExpired = !!activeClient && plans.isTrialExpired(activeClient.plan, activeClient.createdAt);
+  const clientFeatures = activeClient?.services ?? [];
+  const hasFeature = (key: string) => clientFeatures.includes(key);
   
   // Loading state
   const [loading, setLoading] = useState<boolean>(true);
@@ -498,15 +495,13 @@ function AppInner() {
     triggerToast("Switched active Brand Client!");
   };
 
-  const handleAddClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise", services: string[]) => {
-    await store.addClient(id, name, logo, plan);
-    store.saveClientServices(id, services);
+  const handleAddClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean) => {
+    await store.addClient(id, name, logo, plan, trainingAddon);
     await refreshLocalState();
   };
 
-  const handleUpdateClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise", services: string[]) => {
-    await store.updateClient(id, name, logo, plan);
-    store.saveClientServices(id, services);
+  const handleUpdateClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean) => {
+    await store.updateClient(id, name, logo, plan, trainingAddon);
     await refreshLocalState();
   };
 
@@ -524,7 +519,7 @@ function AppInner() {
     triggerToast("Logged out successfully.");
   };
 
-  const handleAddTenant = async (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise") => {
+  const handleAddTenant = async (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => {
     const newTenant = await store.addTenant(clientId, name, subdomain, logo, plan);
 
     // Auto-generate the Outlet room in Team Talk and make sure every client
@@ -744,7 +739,7 @@ function AppInner() {
   };
 
   // Outlet & Staff CRUD Callbacks
-  const handleUpdateTenant = async (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise") => {
+  const handleUpdateTenant = async (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => {
     await store.updateTenant(tenantId, name, subdomain, logo, plan);
     await refreshLocalState();
     triggerToast("Outlet workspace updated.");
@@ -818,7 +813,7 @@ function AppInner() {
       <>
         <Login
           onLoginSuccess={async (usr) => {
-            setLoggedInEmail(usr.email);
+            setLoggedInEmail(usr.email || usr.phoneNumber || usr.id);
             await refreshLocalState();
             // Request FCM permission immediately after login
             if ('Notification' in window && Notification.permission === 'default') {
@@ -1075,103 +1070,27 @@ function AppInner() {
                   <div className="space-y-2">
                     <h2 className="text-2xl font-medium text-slate-800 tracking-tight">Free Trial Expired</h2>
                     <p className="text-slate-500 text-sm leading-relaxed">
-                      Your 15-day free trial of the Horae Operations Portal has concluded. To continue using the portal's compliance, tasks, and notification services, please upgrade your subscription.
+                      Your 15-day free trial of the Horae Operations Portal has concluded. To keep using the portal, your organization needs an active subscription plan.
                     </p>
                   </div>
 
-                  {/* Pricing/Plan Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full pt-4">
-                    {/* Essential Card */}
-                    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs text-left flex flex-col justify-between hover:border-indigo-500 transition-all">
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-medium tracking-wider uppercase text-indigo-650 bg-indigo-50 px-2 py-0.5 rounded">Essential</span>
-                        <h3 className="text-sm font-medium text-slate-800">Tasks + Notices</h3>
-                        <ul className="text-[10px] text-slate-500 space-y-1 pt-2">
-                          <li>• Task management</li>
-                          <li>• Notices & announcements</li>
-                          <li>• Basic communications</li>
-                        </ul>
+                  {/* Plan overview (informational — activation is handled by Horae) */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full pt-2 text-left">
+                    {([
+                      { name: "Essential", desc: "Task Manager + Team Talk" },
+                      { name: "Pro", desc: "Essential + Checklists, Equipment Maintenance & Notice Board" },
+                      { name: "Enterprise", desc: "Pro + Training, Quizzes & SOPs" },
+                      { name: "Training", desc: "Training only — combinable with Essential or Pro" },
+                    ] as const).map(p => (
+                      <div key={p.name} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
+                        <span className="text-[9px] font-semibold tracking-wider uppercase text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{p.name}</span>
+                        <p className="text-[11px] text-slate-600 mt-2 leading-relaxed">{p.desc}</p>
                       </div>
-                      {activeUser.role === Role.ADMIN ? (
-                        <button 
-                          onClick={async () => {
-                            if (activeClient) {
-                              await store.updateClient(activeClient.id, activeClient.name, activeClient.logo, "Essential");
-                              await refreshLocalState();
-                              triggerToast("Brand upgraded to Essential Plan!");
-                            }
-                          }}
-                          className="mt-4 w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs rounded-xl cursor-pointer shadow-sm text-center"
-                        >
-                          Upgrade Essential
-                        </button>
-                      ) : (
-                        <p className="text-[9px] text-slate-400 mt-4 text-center font-medium">Contact admin to upgrade</p>
-                      )}
-                    </div>
-
-                    {/* Pro Card */}
-                    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm text-left flex flex-col justify-between hover:border-indigo-500 transition-all relative overflow-hidden">
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-medium tracking-wider uppercase text-amber-600 bg-amber-50 px-2 py-0.5 rounded">Pro</span>
-                        <h3 className="text-sm font-medium text-slate-800">Tasks+Notices+Quiz+SOP</h3>
-                        <ul className="text-[10px] text-slate-500 space-y-1 pt-2">
-                          <li>• All Essential features</li>
-                          <li>• Knowledge quizzes</li>
-                          <li>• SOP Documentation</li>
-                        </ul>
-                      </div>
-                      {activeUser.role === Role.ADMIN ? (
-                        <button 
-                          onClick={async () => {
-                            if (activeClient) {
-                              await store.updateClient(activeClient.id, activeClient.name, activeClient.logo, "Pro");
-                              await refreshLocalState();
-                              triggerToast("Brand upgraded to Pro Plan!");
-                            }
-                          }}
-                          className="mt-4 w-full py-2 bg-[#162D4E] hover:bg-[#162D4E]/90 text-[#C5A880] font-medium text-xs rounded-xl cursor-pointer shadow-sm text-center"
-                        >
-                          Upgrade Pro
-                        </button>
-                      ) : (
-                        <p className="text-[9px] text-slate-400 mt-4 text-center font-medium">Contact admin to upgrade</p>
-                      )}
-                    </div>
-
-                    {/* Enterprise Card */}
-                    <div className="bg-white border border-indigo-200 rounded-2xl p-4 shadow-sm text-left flex flex-col justify-between hover:border-indigo-500 transition-all relative">
-                      <div className="absolute top-2 right-2 text-[8px] bg-emerald-100 text-emerald-800 font-semibold px-1.5 py-0.5 rounded uppercase">Full Suite</div>
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-medium tracking-wider uppercase text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">Enterprise</span>
-                        <h3 className="text-sm font-medium text-slate-800">Checklists + All</h3>
-                        <ul className="text-[10px] text-slate-500 space-y-1 pt-2">
-                          <li>• All Pro features</li>
-                          <li>• Compliance Checklists</li>
-                          <li>• Audit history & CSV</li>
-                        </ul>
-                      </div>
-                      {activeUser.role === Role.ADMIN ? (
-                        <button 
-                          onClick={async () => {
-                            if (activeClient) {
-                              await store.updateClient(activeClient.id, activeClient.name, activeClient.logo, "Enterprise");
-                              await refreshLocalState();
-                              triggerToast("Brand upgraded to Enterprise Plan!");
-                            }
-                          }}
-                          className="mt-4 w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs rounded-xl cursor-pointer shadow-sm text-center"
-                        >
-                          Upgrade Enterprise
-                        </button>
-                      ) : (
-                        <p className="text-[9px] text-slate-400 mt-4 text-center font-medium">Contact admin to upgrade</p>
-                      )}
-                    </div>
+                    ))}
                   </div>
 
-                  <div className="text-[10px] text-slate-400 font-medium">
-                    Need custom pricing? Contact our team at <a href="mailto:support@horae.ops" className="text-indigo-600 underline">support@horae.ops</a>.
+                  <div className="p-4 bg-amber-50 border border-amber-200/60 rounded-2xl text-[11px] text-amber-800 font-medium leading-relaxed w-full">
+                    Plans are activated by your Horae account manager. Contact us at <a href="mailto:support@horae.cloud" className="text-indigo-600 underline font-semibold">support@horae.cloud</a> and we'll switch your organization to the plan you need.
                   </div>
                 </div>
               ) : activeUser.role === Role.SUPER_ADMIN ? (
@@ -1271,7 +1190,7 @@ function AppInner() {
                     />
                   )}
 
-                  {activeTab === "training" && (
+                  {activeTab === "training" && hasFeature("training") && (
                     [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role) ? (
                       <TrainingAdmin
                         trainings={trainings}
@@ -1293,7 +1212,7 @@ function AppInner() {
                     )
                   )}
 
-                  {activeTab === "team-talk" && (
+                  {activeTab === "team-talk" && hasFeature("teamtalk") && (
                     <TeamTalk
                       activeUser={activeUser}
                       tenantId={activeUser.tenantId}
@@ -1316,7 +1235,7 @@ function AppInner() {
                     />
                   )}
 
-                  {activeTab === "maintenance" && (activeUser.clitAccess || [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role)) && (
+                  {activeTab === "maintenance" && hasFeature("maintenance") && (activeUser.clitAccess || [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role)) && (
                     <MaintenanceHub
                       activeUser={activeUser}
                       activeTenant={activeTenant}

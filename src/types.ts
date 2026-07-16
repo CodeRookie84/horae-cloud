@@ -32,9 +32,11 @@ export interface Client {
   id: string;
   name: string;
   logo: string;
-  plan: "Free" | "Essential" | "Pro" | "Enterprise";
+  plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training";
   createdAt: string;
   services?: string[];
+  /** Training add-on — grants the Training feature on top of Essential/Pro. */
+  trainingAddon?: boolean;
 }
 
 export interface Tenant {
@@ -43,7 +45,7 @@ export interface Tenant {
   name: string;
   subdomain: string;
   logo: string;
-  plan: "Free" | "Essential" | "Pro" | "Enterprise";
+  plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training";
   createdAt: string;
 }
 
