@@ -208,16 +208,31 @@ body {
 }
 
 /* ─── Frosted-glass card surfaces (match the marketing site) ────────────── */
-/* Target elevated white cards (rounded-2xl/3xl + shadow-warm) so the pastel
-   mesh whispers through — buttons use rounded-xl and are deliberately excluded. */
+/* Elevated white cards let the pastel mesh whisper through via a light
+   translucency. NO `backdrop-filter` — it forced the browser to re-blur the
+   (now non-fixed) mesh on every animation frame from the page's always-running
+   animate-bounce/animate-pulse, which flickered continuously on mobile.
+   Plain translucency gives the same soft look with zero compositing cost. */
 .bg-white.shadow-warm.rounded-2xl,
 .bg-white.shadow-warm.rounded-3xl,
 .bg-white.shadow-warm-lg.rounded-2xl,
 .bg-white.shadow-warm-lg.rounded-3xl {
-  background-color: color-mix(in srgb, #ffffff 82%, transparent) !important;
-  backdrop-filter: blur(14px) saturate(140%);
-  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  background-color: color-mix(in srgb, #ffffff 90%, transparent) !important;
   border-color: rgba(255, 255, 255, 0.7) !important;
+}
+
+/* ─── Mobile: kill backdrop-filter (continuous composite flicker) ─────────── */
+/* On phones, `backdrop-filter: blur()` (the top navbar, tools strip, cards,
+   modals) must re-blur the now-non-fixed pastel mesh on EVERY frame of the
+   page's always-running animate-bounce / animate-pulse, which flickered the
+   whole screen continuously. Elements keep their semi-opaque background, so
+   they still read as soft glass — just without the per-frame blur cost.
+   Desktop keeps the real frosted-glass look. */
+@media (max-width: 768px) {
+  [class*="backdrop-blur"] {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
 }
 
 /* Decorative repeating "piped dots" pattern used as hero watermark */
