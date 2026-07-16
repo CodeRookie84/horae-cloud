@@ -228,6 +228,25 @@ body {
   background-size: 16px 16px;
 }
 
+/* ─── Form fields: colorful pastel focus glow + gradient-lit rest state ───── */
+/* Gives inputs/selects/textareas a soft violet ring on focus (the "colorful
+   outline") and a barely-there brand tint at rest, so fields don't read as flat
+   white — most noticeable on mobile forms. Checkboxes/radios/ranges excluded. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+textarea,
+select {
+  transition: box-shadow 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
+}
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: rgba(139, 124, 246, 0.55) !important;    /* brand violet */
+  box-shadow:
+    0 0 0 3px rgba(139, 124, 246, 0.22),
+    0 6px 18px -10px rgba(139, 124, 246, 0.45) !important;
+}
+
 /* Subtle motion respect */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

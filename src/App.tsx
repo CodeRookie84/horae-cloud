@@ -384,7 +384,14 @@ function AppInner() {
   // (notifications, tasks, notices, checklists), skips the task_messages join,
   // and does NOT touch chat/quiz/SOP/users or trigger tab side effects. Shared
   // by the realtime handler, the focus/visibility catch-up, and the interval.
+  // Guard against overlapping syncs — on mobile, focus + visibilitychange +
+  // the interval + a realtime event can all fire within the same tick (e.g.
+  // during a pull-to-refresh), and running several full refetches at once caused
+  // the UI to thrash/flicker. One at a time.
+  const syncInFlightRef = useRef(false);
   const lightSync = useCallback(async (mode: 'full' | 'delta' = 'full') => {
+    if (syncInFlightRef.current) return;
+    syncInFlightRef.current = true;
     // Raise a toast for any notifications we haven't seen before.
     const alertUnseen = (list: any[]) => {
       const unseen = seenNotifIdsRef.current
@@ -443,6 +450,8 @@ function AppInner() {
           alertUnseen(n); setNotifications(n);
         } catch { /* silent — next sync will retry */ }
       }
+    } finally {
+      syncInFlightRef.current = false;
     }
   }, []);
 
@@ -456,6 +465,12 @@ function AppInner() {
       lightSync('delta');
     }, 4000);
   }, [lightSync]);
+
+  // Stable so the always-mounted permission banners don't re-run their effect on
+  // every App render (an inline arrow here changed identity constantly).
+  const handleFcmToken = useCallback((token: string) => {
+    if (activeUser) store.updateUserFCMToken(activeUser.id, token);
+  }, [activeUser?.id]);
 
   // Initial full load.
   useEffect(() => {
@@ -885,10 +900,14 @@ function AppInner() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#162D4E] flex items-center justify-center text-slate-200 font-sans p-6" id="app-loading-gate">
+      <div
+        className="min-h-screen flex items-center justify-center font-sans p-6"
+        id="app-loading-gate"
+        style={{ background: "linear-gradient(135deg, var(--color-brand-tint) 0%, var(--color-cream) 42%, var(--color-accent-tint) 100%)" }}
+      >
         <div className="text-center space-y-3">
-          <RefreshCw className="w-8 h-8 mx-auto animate-spin text-[#C5A880]" />
-          <p className="text-xs font-mono font-medium tracking-wider text-[#C5A880]/80">Loading Client Gateway...</p>
+          <RefreshCw className="w-8 h-8 mx-auto animate-spin" style={{ color: "var(--color-brand)" }} />
+          <p className="text-xs font-mono font-medium tracking-wider" style={{ color: "var(--color-ink-soft)" }}>Loading Client Gateway…</p>
         </div>
       </div>
     );
@@ -923,7 +942,8 @@ function AppInner() {
 
   if (clients.length === 0 || !activeTenant || !activeUser) {
     return (
-      <div className="min-h-screen bg-[#162D4E] flex items-center justify-center text-slate-200 font-sans p-6" id="app-setup-gate">
+      <div className="min-h-screen flex items-center justify-center font-sans p-6" id="app-setup-gate"
+           style={{ background: "linear-gradient(135deg, var(--color-brand-tint) 0%, var(--color-cream) 42%, var(--color-accent-tint) 100%)" }}>
         <div className="max-w-md w-full bg-white text-slate-800 rounded-3xl p-8 shadow-2xl text-center space-y-6 border border-slate-100">
           <img 
             src="/horae-logo.jpg" 
@@ -976,9 +996,7 @@ function AppInner() {
         <NotificationPermissionBanner
           userId={activeUser.id}
           variant="login"
-          onPermissionGranted={(token) => {
-            store.updateUserFCMToken(activeUser.id, token);
-          }}
+          onPermissionGranted={handleFcmToken}
         />
       )}
 
@@ -987,9 +1005,7 @@ function AppInner() {
         <NotificationPermissionBanner
           userId={activeUser.id}
           variant="reminder"
-          onPermissionGranted={(token) => {
-            store.updateUserFCMToken(activeUser.id, token);
-          }}
+          onPermissionGranted={handleFcmToken}
         />
       )}
 
