@@ -322,7 +322,7 @@ export default function ClientAdminPanel({
 
   const downloadStaffCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Name,Email,Outlet,Role,Department,Password\n";
+    csvContent += "Name,Email,Mobile Number,Outlet,Role,Department,Password\n";
     // clientUsers = every staff member across ALL of this client's outlets
     // (matches what the on-screen directory table shows). `tenantUsers` is
     // scoped to only the currently active outlet, which silently dropped
@@ -330,11 +330,12 @@ export default function ClientAdminPanel({
     clientUsers.forEach(usr => {
       const name = `"${usr.name.replace(/"/g, '""')}"`;
       const email = `"${(usr.email || "").replace(/"/g, '""')}"`;
+      const phone = `"${(usr.phoneNumber || "").replace(/"/g, '""')}"`;
       const tenant = `"${tenants.find(t => t.id === usr.tenantId)?.name || usr.tenantId}"`;
       const role = `"${usr.role}"`;
       const dept = `"${usr.department}"`;
       const pwd = `"${store.getPasswordForEmail(store.loginKeyFor(usr))}"`;
-      csvContent += `${name},${email},${tenant},${role},${dept},${pwd}\n`;
+      csvContent += `${name},${email},${phone},${tenant},${role},${dept},${pwd}\n`;
     });
     const link = document.createElement("a");
     link.setAttribute("href", encodeURI(csvContent));
