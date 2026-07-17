@@ -1,4 +1,4 @@
-const CACHE_NAME = 'horae-ops-cache-v2';
+const CACHE_NAME = 'horae-ops-cache-v3';
 
 // ---------- INSTALL ----------
 self.addEventListener('install', (e) => {
@@ -53,8 +53,8 @@ self.addEventListener('push', (event) => {
       title = 'Horae Notification',
       body = 'Tap to open Horae.',
       url = '/',
-      icon = '/app-icon.jpg',
-      badge = '/app-icon.jpg',
+      icon = '/app-icon-192.png',
+      badge = '/app-icon-192.png',
       tag = 'horae-notif',
       requireInteraction = false
     } = data;
