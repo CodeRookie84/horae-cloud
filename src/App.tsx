@@ -481,8 +481,15 @@ function AppInner() {
     if (activeUser) store.updateUserFCMToken(activeUser.id, token);
   }, [activeUser?.id]);
 
-  // Initial full load.
+  // Initial full load — ONLY when someone is actually signed in. Without this
+  // guard, every anonymous visit to the login page still fired the full
+  // refreshLocalState() waterfall (~40 Supabase requests against the default
+  // client-system/tenant-system/user-superadmin context) before the visitor
+  // had typed anything, wasting a large chunk of the page's load time and
+  // Supabase request quota for data that's never shown. Post-login, the login
+  // success handler already calls refreshLocalState() itself.
   useEffect(() => {
+    if (!loggedInEmail) { setLoading(false); return; }
     refreshLocalState();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
