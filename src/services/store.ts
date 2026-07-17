@@ -401,9 +401,12 @@ export class StoreService {
   public getStaffPasswords(): Record<string, string> {
     const data = localStorage.getItem("horae_staff_passwords");
     const passwords = data ? JSON.parse(data) : {};
-    if (!passwords["coderookie84@gmail.com"]) {
-      passwords["coderookie84@gmail.com"] = "!Horae@2026";
-    }
+    // Only seed under 'admin@horae.ops' — the super admin's real DB email and
+    // the key loginKeyFor() actually computes for that account. A prior
+    // version also seeded 'coderookie84@gmail.com' (the login identifier, a
+    // DIFFERENT key), which verifyLogin used to check the password against —
+    // so changing the password never updated the key login actually checked,
+    // and the original hardcoded default kept working forever.
     if (!passwords["admin@horae.ops"]) {
       passwords["admin@horae.ops"] = "!Horae@2026";
     }
@@ -483,23 +486,39 @@ export class StoreService {
     const cleanCompanyName = companyName.trim().toLowerCase().replace(/\s+/g, ' ');
 
     if (cleanEmail === 'coderookie84@gmail.com') {
-      const correctPassword = this.getPasswordForEmail(cleanEmail);
-      if (!password || password !== correctPassword) {
-        return null;
-      }
-      // Platform Super Admin logs in
+      // Platform Super Admin. Read the current password DIRECTLY from the DB
+      // record's avatar field (same "#pwd=" source-of-truth pattern every
+      // regular user login already uses below) instead of a local cache.
+      // The old cache-only check verified against a key
+      // ('coderookie84@gmail.com', the login identifier) that the
+      // password-change flow never wrote to — it writes to
+      // loginKeyFor(user) = the DB row's real email ('admin@horae.ops'). So a
+      // password change silently succeeded in the database while login kept
+      // accepting the original hardcoded default forever, and a fresh
+      // device/browser with an empty cache couldn't log in with the real
+      // current password either. Reading the DB row directly fixes both.
       const { data: adminUser } = await supabase
         .from('users')
         .select('*')
         .eq('id', 'user-superadmin')
         .single();
-      
-      if (adminUser) {
-        localStorage.setItem("horae_logged_in_email", cleanEmail);
-        await this.setActiveUser(adminUser.id);
-        return this.mapUserRecord(adminUser);
+      if (!adminUser) return null;
+
+      const adminLoginKey = this.loginKeyFor(adminUser);
+      let correctPassword: string;
+      if (adminUser.avatar && adminUser.avatar.includes('#pwd=')) {
+        correctPassword = adminUser.avatar.split('#pwd=')[1];
+        this.saveStaffPassword(adminLoginKey, correctPassword);
+      } else {
+        correctPassword = this.getPasswordForEmail(adminLoginKey);
       }
-      return null;
+      if (!password || password !== correctPassword) {
+        return null;
+      }
+
+      localStorage.setItem("horae_logged_in_email", cleanEmail);
+      await this.setActiveUser(adminUser.id);
+      return this.mapUserRecord(adminUser);
     }
 
     // Normal client user login

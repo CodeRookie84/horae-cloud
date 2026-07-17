@@ -30,7 +30,10 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const handleLogoDoubleClick = () => {
     setEmail("coderookie84@gmail.com");
     setCompanyName("");
-    setPassword("!Horae@2026");
+    // Password intentionally left blank, not hardcoded — it's a real password
+    // that gets changed, so pre-filling a fixed value here always eventually
+    // goes stale and fails.
+    setPassword("");
     setErrorMsg("");
   };
 
