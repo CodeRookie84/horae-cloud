@@ -323,9 +323,13 @@ export default function ClientAdminPanel({
   const downloadStaffCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
     csvContent += "Name,Email,Outlet,Role,Department,Password\n";
-    tenantUsers.forEach(usr => {
+    // clientUsers = every staff member across ALL of this client's outlets
+    // (matches what the on-screen directory table shows). `tenantUsers` is
+    // scoped to only the currently active outlet, which silently dropped
+    // every staff member onboarded to a different outlet from the export.
+    clientUsers.forEach(usr => {
       const name = `"${usr.name.replace(/"/g, '""')}"`;
-      const email = `"${usr.email.replace(/"/g, '""')}"`;
+      const email = `"${(usr.email || "").replace(/"/g, '""')}"`;
       const tenant = `"${tenants.find(t => t.id === usr.tenantId)?.name || usr.tenantId}"`;
       const role = `"${usr.role}"`;
       const dept = `"${usr.department}"`;
