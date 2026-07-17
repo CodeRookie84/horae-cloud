@@ -35,6 +35,22 @@ export class StoreService {
     this.loadState();
   }
 
+  // Request de-duplication: refreshLocalState (and the many store methods it
+  // calls in parallel) each independently re-fetch "the active user" / "this
+  // client's tenants" — a single refresh cycle was firing the SAME query
+  // 5-6 times. If an identical call is already in flight, return that promise
+  // instead of firing a new request. This only merges calls happening at the
+  // same instant; once the in-flight promise settles the slot clears, so the
+  // next distinct call always gets a fresh fetch — no staleness risk.
+  private _inFlight = new Map<string, Promise<any>>();
+  private dedupe<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const existing = this._inFlight.get(key);
+    if (existing) return existing;
+    const p = fn().finally(() => { this._inFlight.delete(key); });
+    this._inFlight.set(key, p);
+    return p;
+  }
+
   private loadState() {
     this.activeClientId = localStorage.getItem("horae_active_client_id") || "client-system";
     this.activeTenantId = localStorage.getItem("horae_active_tenant_id") || "tenant-system";
@@ -207,6 +223,10 @@ export class StoreService {
   }
 
   public async getActiveUser(): Promise<User> {
+    return this.dedupe(`activeUser:${this.activeUserId}`, () => this._getActiveUserImpl());
+  }
+
+  private async _getActiveUserImpl(): Promise<User> {
     const { data } = await supabase
       .from('users')
       .select('*')
@@ -262,11 +282,15 @@ export class StoreService {
   }
 
   public async getTenantsByClient(clientId: string): Promise<Tenant[]> {
+    return this.dedupe(`tenantsByClient:${clientId}`, () => this._getTenantsByClientImpl(clientId));
+  }
+
+  private async _getTenantsByClientImpl(clientId: string): Promise<Tenant[]> {
     const { data } = await supabase
       .from('tenants')
       .select('*')
       .eq('client_id', clientId);
-    
+
     return (data || []).map(t => ({
       id: t.id,
       clientId: t.client_id,

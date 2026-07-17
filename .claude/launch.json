@@ -12,6 +12,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "5051", "--directory", "marketing"],
       "port": 5051
+    },
+    {
+      "name": "horae-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview", "--", "--port=3001"],
+      "port": 3001
     }
   ]
 }

@@ -302,21 +302,39 @@ function AppInner() {
         store.getActiveUser()
       ]);
 
+      // Independent reads — none depends on another's result (trainingAttempts is
+      // the one exception, fetched right after since it needs trainingsList's ids).
+      // Batched into one Promise.all rather than several sequential awaits: this
+      // both cuts real round-trip latency (parallel instead of serial) and lets
+      // the shared getActiveUser()/getTenantsByClient() lookups (called
+      // internally by several of these) collapse into a single request each via
+      // store's request de-duplication, instead of one fresh fetch per stage.
       const [
         filteredTenants,
         matchedUsers,
         noticesList,
         checklistsList,
         tasksList,
-        notificationsList
+        notificationsList,
+        quizzesList,
+        attemptsList,
+        sopsList,
+        readStatusesList,
+        trainingsList
       ] = await Promise.all([
         store.getTenantsByClient(activeClientObj.id),
         store.getTenantUsers(),
         store.getNotices(),
         store.getChecklists(),
         store.getTasks(),
-        store.getNotifications()
+        store.getNotifications(),
+        store.getQuizzes(),
+        store.getQuizAttempts(),
+        store.getSOPs(),
+        store.getSOPReadStatuses(),
+        trainingSvc.getTrainings(activeClientObj.id)
       ]);
+      const trainingAttemptsList = await trainingSvc.getAttempts(trainingsList.map(t => t.id));
 
       setClients(clientsList);
       setActiveClient(activeClientObj);
@@ -326,14 +344,6 @@ function AppInner() {
       setActiveTenant(tenantObj);
       setTenantUsers(matchedUsers);
       setActiveUser(userObj);
-
-      // Load Database Synced Quiz and SOP modules
-      const quizzesList = await store.getQuizzes();
-      const attemptsList = await store.getQuizAttempts();
-      const sopsList = await store.getSOPs();
-      const readStatusesList = await store.getSOPReadStatuses();
-      const trainingsList = await trainingSvc.getTrainings(activeClientObj.id);
-      const trainingAttemptsList = await trainingSvc.getAttempts(trainingsList.map(t => t.id));
       
       // Fetch unread channels, threads & mentions — the dashboard total is the sum of all three:
       // plain unread messages in DMs/channels/rooms, unread thread replies, and unread @mentions.
