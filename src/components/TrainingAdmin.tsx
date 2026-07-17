@@ -452,7 +452,12 @@ function ScoresView({ training, attempts, clientUsers, tenants, onBack, onChange
                 <td className="px-4 py-3"><div className="font-bold text-slate-800">{r.u.name}</div><div className="text-[10px] text-slate-400">{r.u.role}</div></td>
                 <td className="px-4 py-3 text-slate-500">{tenantName(r.u.tenantId)}</td>
                 <td className="px-4 py-3 text-center font-mono">{r.attempts}</td>
-                <td className="px-4 py-3 text-center font-bold font-mono">{r.best ? `${r.best.pct}%` : "—"}</td>
+                <td
+                  className={`px-4 py-3 text-center font-bold font-mono ${r.mine.length > 0 ? "cursor-help border-b border-dotted border-slate-300 w-fit mx-auto" : ""}`}
+                  title={r.mine.length > 0 ? r.mine.map(a => `Attempt ${a.attemptNo}: ${a.pct}% — ${new Date(a.submittedAt).toLocaleDateString()}`).join("\n") : undefined}
+                >
+                  {r.best ? `${r.best.pct}%` : "—"}
+                </td>
                 <td className="px-4 py-3 text-center">
                   {r.passed ? <span className="text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded-full">Passed</span>
                     : r.attempts ? <span className="text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-100 px-2 py-0.5 rounded-full">Failed</span>
