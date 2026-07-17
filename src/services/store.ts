@@ -423,13 +423,17 @@ export class StoreService {
    * column; anything without an "@" is treated as a phone number and matched
    * against `phone_number`. Passwords live on the user row (`avatar#pwd=`), so
    * phone-only staff (no email) authenticate the same way.
+   *
+   * `companyName` is the client's display name (e.g. "Cakewala"), matched
+   * case-insensitively — NOT the opaque internal client id (e.g. "h26cw01").
+   * Falls back to an id match so an admin who still has the old id keeps working.
    */
-  public async verifyLogin(companyId: string, identifier: string, password?: string): Promise<User | null> {
+  public async verifyLogin(companyName: string, identifier: string, password?: string): Promise<User | null> {
     const cleanId = identifier.trim();
     const isEmail = cleanId.includes('@');
     const cleanEmail = cleanId.toLowerCase();
     const phoneLast10 = this.normalizePhone(cleanId).last10;
-    const cleanCompanyId = companyId.toLowerCase().trim().replace(/\s+/g, '-');
+    const cleanCompanyName = companyName.trim().toLowerCase().replace(/\s+/g, ' ');
 
     if (cleanEmail === 'coderookie84@gmail.com') {
       const correctPassword = this.getPasswordForEmail(cleanEmail);
@@ -452,13 +456,24 @@ export class StoreService {
     }
 
     // Normal client user login
-    // 1. Fetch target client
-    const { data: client } = await supabase
+    // 1. Fetch target client — by display name first (ILIKE is a case-insensitive
+    // exact match here since the value has no wildcard chars), then fall back to
+    // the old opaque id for continuity.
+    if (!cleanCompanyName) return null;
+    let { data: clientMatches } = await supabase
       .from('clients')
       .select('id')
-      .eq('id', cleanCompanyId)
-      .single();
-
+      .ilike('name', cleanCompanyName)
+      .limit(1);
+    if (!clientMatches || clientMatches.length === 0) {
+      const byId = await supabase
+        .from('clients')
+        .select('id')
+        .eq('id', cleanCompanyName.replace(/\s+/g, '-'))
+        .limit(1);
+      clientMatches = byId.data;
+    }
+    const client = clientMatches?.[0];
     if (!client) return null;
 
     // 2. Fetch all tenants of this client

@@ -245,6 +245,11 @@ function AppInner() {
   // resolves to the home tab SYNCHRONOUSLY here — so the dashboard never paints
   // and there's no reactive redirect bouncing between the two (which flickered).
   const effectiveTab = (activeTab === "dashboard" && !dashboardMeaningful) ? homeTab : activeTab;
+  // "Back to Dashboard" only makes sense when there IS a dashboard — for a
+  // Training-only plan it silently no-oped (handleBack set activeTab to
+  // "dashboard", but effectiveTab resolved right back to "training", so the
+  // button looked broken). Pass undefined to hide the button entirely instead.
+  const backToDashboard = dashboardMeaningful ? handleBack : undefined;
   
   // Loading state
   const [loading, setLoading] = useState<boolean>(true);
@@ -1247,7 +1252,7 @@ function AppInner() {
                       notices={notices}
                       tenants={tenants}
                       activeUser={activeUser}
-                      onBack={handleBack}
+                      onBack={backToDashboard}
                       onUrgentNotify={handleUrgentNoticeNotify}
                     />
                   )}
@@ -1257,7 +1262,7 @@ function AppInner() {
                       checklists={checklists}
                       tenants={tenants}
                       onSubmitChecklist={handleSubmitChecklist}
-                      onBack={handleBack}
+                      onBack={backToDashboard}
                       onRefresh={refreshLocalState}
                     />
                   )}
@@ -1276,7 +1281,7 @@ function AppInner() {
                       onAddMessage={handleAddMessage}
                       onDeleteTask={handleDeleteTask}
                       onUrgentNotify={handleUrgentTaskNotify}
-                      onBack={handleBack}
+                      onBack={backToDashboard}
                     />
                   )}
 
@@ -1286,7 +1291,7 @@ function AppInner() {
                       attempts={quizAttempts}
                       activeUser={activeUser}
                       onSubmitAttempt={handleSubmitQuizAttempt}
-                      onBack={handleBack}
+                      onBack={backToDashboard}
                     />
                   )}
 
@@ -1296,7 +1301,7 @@ function AppInner() {
                       readStatuses={sopReadStatuses}
                       activeUser={activeUser}
                       onMarkRead={handleMarkSOPAsRead}
-                      onBack={handleBack}
+                      onBack={backToDashboard}
                     />
                   )}
 
@@ -1317,7 +1322,7 @@ function AppInner() {
                         attempts={trainingAttempts}
                         activeUser={activeUser}
                         onSubmit={handleSubmitTraining}
-                        onBack={handleBack}
+                        onBack={backToDashboard}
                       />
                     )
                   )}
@@ -1334,7 +1339,7 @@ function AppInner() {
                         const taskId = await handleAddTask(title, description, 'High', new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], targetAssignees, activeUser.tenantId, _channelId, _msgId);
                         return taskId;
                       }}
-                      onBack={handleBack}
+                      onBack={backToDashboard}
                     />
                   )}
 
@@ -1390,7 +1395,7 @@ function AppInner() {
                       onOnboardUser={handleOnboardStaff}
                       onUpdateUser={handleUpdateUser}
                       onDeleteUser={handleDeleteUser}
-                      onBack={handleBack}
+                      onBack={backToDashboard}
                     />
                   )}
                 </>

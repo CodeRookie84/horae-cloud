@@ -15,7 +15,7 @@ interface LoginProps {
 
 export default function Login({ onLoginSuccess }: LoginProps) {
   const [email, setEmail] = useState("");
-  const [companyId, setCompanyId] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -29,7 +29,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   // Secret developer shortcut: double clicking the logo icon auto-fills superadmin
   const handleLogoDoubleClick = () => {
     setEmail("coderookie84@gmail.com");
-    setCompanyId("");
+    setCompanyName("");
     setPassword("!Horae@2026");
     setErrorMsg("");
   };
@@ -50,8 +50,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       setErrorMsg("Password is required.");
       return;
     }
-    if (!isSuperAdminEmail && !companyId.trim()) {
-      setErrorMsg("Company ID is required for brand logins.");
+    if (!isSuperAdminEmail && !companyName.trim()) {
+      setErrorMsg("Company name is required for brand logins.");
       return;
     }
 
@@ -59,8 +59,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     setErrorMsg("");
 
     try {
-      // If Super Admin, companyId is ignored by verifyLogin
-      const user = await store.verifyLogin(isSuperAdminEmail ? "" : companyId, email, password);
+      // If Super Admin, companyName is ignored by verifyLogin
+      const user = await store.verifyLogin(isSuperAdminEmail ? "" : companyName, email, password);
       if (user) {
         const loginKey = store.loginKeyFor(user);
         const hasChangedPwd = localStorage.getItem(`horae_pwd_changed_${loginKey}`);
@@ -71,7 +71,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           onLoginSuccess(user);
         }
       } else {
-        setErrorMsg("Invalid credentials. Please verify your Email, Password, and Company ID.");
+        setErrorMsg("Invalid credentials. Please verify your Email, Password, and Company Name.");
       }
     } catch (err: any) {
       console.error("Login verification failed:", err);
@@ -108,13 +108,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       setPwdError("Failed to update password. Please try again.");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSkipPasswordChange = () => {
-    if (tempLoggedInUser) {
-      localStorage.setItem(`horae_pwd_changed_${store.loginKeyFor(tempLoggedInUser)}`, "true");
-      onLoginSuccess(tempLoggedInUser);
     }
   };
 
@@ -169,9 +162,9 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           <div className="space-y-6">
             <div className="text-center space-y-2 mb-4">
               <KeyRound className="w-10 h-10 text-[#8B7CF6] mx-auto" />
-              <h3 className="text-lg font-display font-semibold text-[#241D4B]">Optional: Change Password</h3>
+              <h3 className="text-lg font-display font-semibold text-[#241D4B]">Set a New Password</h3>
               <p className="text-xs text-[#6A6390] leading-normal">
-                This appears to be your first login. You can set a new secure password now, or continue with your current password.
+                This is your first login. For security, please set a new password before continuing.
               </p>
             </div>
 
@@ -245,15 +238,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                 >
                   Update & Enter Portal
                 </button>
-
-                <button
-                  type="button"
-                  onClick={handleSkipPasswordChange}
-                  disabled={loading}
-                  className="w-full py-3 px-4 border border-[#E7E3F5] hover:border-[#8B7CF6]/50 hover:bg-[#F4F1FF] text-[#6A6390] font-bold text-xs uppercase tracking-wider rounded-xl transition-all active:scale-98 cursor-pointer"
-                >
-                  Continue with Current Password
-                </button>
               </div>
             </form>
           </div>
@@ -277,7 +261,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             </AnimatePresence>
 
             <form onSubmit={handleLogin} className="space-y-5">
-              {/* Company ID Input (Smoothly hides when Super Admin email is typed) */}
+              {/* Company Name Input (Smoothly hides when Super Admin email is typed) */}
               <AnimatePresence initial={false}>
                 {!isSuperAdminEmail && (
                   <motion.div
@@ -288,7 +272,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     className="space-y-1.5 overflow-hidden text-left"
                   >
                     <label className="text-[10px] font-bold text-[#6A6390] uppercase tracking-widest block px-1">
-                      Company ID
+                      Company Name
                     </label>
                     <div className="relative">
                       <Building className="absolute left-3 top-3 w-4 h-4 text-[#8B7CF6]" />
@@ -296,8 +280,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                         type="text"
                         required={!isSuperAdminEmail}
                         placeholder="e.g. cakewala"
-                        value={companyId}
-                        onChange={(e) => setCompanyId(e.target.value.toLowerCase().replace(/\s+/g, ""))}
+                        value={companyName}
+                        onChange={(e) => setCompanyName(e.target.value.toLowerCase())}
                         className={`${inputBase} ${inputBrand} pl-10 pr-4 font-mono`}
                       />
                     </div>
