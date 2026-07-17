@@ -19,7 +19,7 @@ interface Props {
   trainings: TrainingT[];
   attempts: TrainingAttempt[];
   activeUser: AppUser;
-  onSubmit: (training: TrainingT, answers: number[]) => Promise<TrainingAttempt>;
+  onSubmit: (training: TrainingT, answers: number[], screenLeaves?: number) => Promise<TrainingAttempt>;
   onBack?: () => void;
 }
 
@@ -122,6 +122,18 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
   const st = trainingStatus(training, activeUser.id, attempts);
   const topRef = useRef<HTMLDivElement>(null);
 
+  // Every past attempt on THIS course, newest first — shown to the staff
+  // member so they can see how they did each time, not just their best.
+  const myAttemptsForThisCourse = useMemo(
+    () => attempts.filter(a => a.trainingId === training.id).sort((a, b) => b.attemptNo - a.attemptNo),
+    [attempts, training.id],
+  );
+
+  // How many times the app was left/backgrounded during the CURRENT test
+  // attempt — a soft deterrent + admin-visible signal, not an automatic fail.
+  // Reset whenever a fresh attempt starts (Start/Retake test).
+  const screenLeavesRef = useRef(0);
+
   // How many retakes remain, as human text — shown on the intro + result screens
   // when the user hasn't passed yet. `st` already accounts for admin grants and
   // recomputes after each submission (parent refreshes the attempts list).
@@ -152,6 +164,15 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
     return { qOrder, optPerm };
   }, [training, phase]);
 
+  // Count each time the tab/app goes to the background while the test is
+  // actually in progress — not a hard rule, just tracked for the admin.
+  useEffect(() => {
+    if (phase !== "test") return;
+    const onVis = () => { if (document.hidden) screenLeavesRef.current += 1; };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [phase]);
+
   const changeLang = async (code: "en" | "hi" | "kn" | "ta") => {
     setLang(code);
     if (code === "en" || translated[code]?.q) return; // 'en' shows source
@@ -179,7 +200,7 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
     setErr(""); setSubmitting(true);
     try {
       const answersArr = training.questions.map((_, i) => answers[i]);
-      const att = await onSubmit(training, answersArr);
+      const att = await onSubmit(training, answersArr, screenLeavesRef.current);
       setResult(att); setPhase("result");
     } finally { setSubmitting(false); }
   };
@@ -217,7 +238,7 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
             {st.status === "passed" ? (
               <button onClick={() => setPhase("result")} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer flex items-center gap-1.5"><Award className="w-4 h-4" /> View certificate</button>
             ) : st.canTake ? (
-              <button onClick={() => { setAnswers({}); setResult(null); setPhase("test"); }} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer">
+              <button onClick={() => { setAnswers({}); setResult(null); screenLeavesRef.current = 0; setPhase("test"); }} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer">
                 {st.attemptsUsed > 0 ? "Retake test" : "Start test"}
               </button>
             ) : (
@@ -228,6 +249,22 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
             <div className="space-y-1">
               <p className="text-[11px] text-slate-500">Last attempt: <span className="font-bold">{st.last.pct}%</span> on {new Date(st.last.submittedAt).toLocaleDateString()}</p>
               <p className="text-[11px] font-semibold text-amber-700">{retakesLeftText}</p>
+            </div>
+          )}
+
+          {/* Full attempt history — every attempt's score, not just the best
+              or the latest. No hover needed (this is the primary mobile view). */}
+          {myAttemptsForThisCourse.length > 0 && (
+            <div className="rounded-2xl border border-slate-100 p-4 space-y-2">
+              <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Your attempt history</h4>
+              <div className="space-y-1.5">
+                {myAttemptsForThisCourse.map(a => (
+                  <div key={a.id} className="flex items-center justify-between text-[11px] px-3 py-2 rounded-xl bg-slate-50/60">
+                    <span className="text-slate-600">Attempt {a.attemptNo} · {new Date(a.submittedAt).toLocaleDateString()}</span>
+                    <span className={`font-bold ${a.passed ? "text-emerald-700" : "text-rose-700"}`}>{a.pct}%{a.passed ? " ✓" : ""}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -284,7 +321,7 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
       {phase === "result" && result && (
         <ResultView training={training} activeUser={activeUser} result={result}
           retakesLeftText={retakesLeftText}
-          onRetake={st.canTake && !result.passed ? () => { setAnswers({}); setPhase("test"); } : undefined}
+          onRetake={st.canTake && !result.passed ? () => { setAnswers({}); screenLeavesRef.current = 0; setPhase("test"); } : undefined}
           onDone={onExit} />
       )}
     </div>

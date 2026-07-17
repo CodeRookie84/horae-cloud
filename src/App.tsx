@@ -896,11 +896,12 @@ function AppInner() {
     setTrainingAttempts(att);
   };
 
-  const handleSubmitTraining = async (training: any, answers: number[]) => {
+  const handleSubmitTraining = async (training: any, answers: number[], screenLeaves: number = 0) => {
     const att = await trainingSvc.submitAttempt(
       training,
       { id: activeUser!.id, name: activeUser!.name, role: String(activeUser!.role), department: String(activeUser!.department), tenantId: activeUser!.tenantId },
       answers,
+      screenLeaves,
     );
     await refreshTraining();
     return att;

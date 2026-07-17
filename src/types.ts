@@ -431,6 +431,8 @@ export interface TrainingAttempt {
   answers: number[];
   attemptNo: number;
   submittedAt: string;
+  /** How many times the staff member left/backgrounded the app during this attempt — an admin-visible signal, not an automatic fail. */
+  screenLeaves: number;
 }
 
 export function isTargetMatched(

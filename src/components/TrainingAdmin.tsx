@@ -415,8 +415,8 @@ function ScoresView({ training, attempts, clientUsers, tenants, onBack, onChange
   const avg = (() => { const b = rows.map(r => r.best?.pct).filter((x): x is number => x != null); return b.length ? Math.round(b.reduce((s, x) => s + x, 0) / b.length) : 0; })();
 
   const exportCsv = () => {
-    const header = "Name,Outlet,Role,Attempts,Best %,Status,Last submitted\n";
-    const body = rows.map(r => `"${r.u.name}","${tenantName(r.u.tenantId)}","${r.u.role}","${r.attempts}","${r.best?.pct ?? ""}","${r.passed ? "Passed" : r.attempts ? "Failed" : "Not started"}","${r.mine[0] ? new Date(r.mine[0].submittedAt).toLocaleString() : ""}"`).join("\n");
+    const header = "Name,Outlet,Role,Attempts,Best %,Left screen (best attempt),Status,Last submitted\n";
+    const body = rows.map(r => `"${r.u.name}","${tenantName(r.u.tenantId)}","${r.u.role}","${r.attempts}","${r.best?.pct ?? ""}","${r.best?.screenLeaves ?? 0}","${r.passed ? "Passed" : r.attempts ? "Failed" : "Not started"}","${r.mine[0] ? new Date(r.mine[0].submittedAt).toLocaleString() : ""}"`).join("\n");
     const blob = new Blob([header + body], { type: "text/csv;charset=utf-8;" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${training.title.replace(/\W+/g, "_")}_scores.csv`; a.click();
   };
@@ -453,10 +453,13 @@ function ScoresView({ training, attempts, clientUsers, tenants, onBack, onChange
                 <td className="px-4 py-3 text-slate-500">{tenantName(r.u.tenantId)}</td>
                 <td className="px-4 py-3 text-center font-mono">{r.attempts}</td>
                 <td
-                  className={`px-4 py-3 text-center font-bold font-mono ${r.mine.length > 0 ? "cursor-help border-b border-dotted border-slate-300 w-fit mx-auto" : ""}`}
-                  title={r.mine.length > 0 ? r.mine.map(a => `Attempt ${a.attemptNo}: ${a.pct}% — ${new Date(a.submittedAt).toLocaleDateString()}`).join("\n") : undefined}
+                  className={`px-4 py-3 text-center ${r.mine.length > 0 ? "cursor-help" : ""}`}
+                  title={r.mine.length > 0 ? r.mine.map(a => `Attempt ${a.attemptNo}: ${a.pct}%${a.screenLeaves ? ` (left screen ${a.screenLeaves}x)` : ""} — ${new Date(a.submittedAt).toLocaleDateString()}`).join("\n") : undefined}
                 >
-                  {r.best ? `${r.best.pct}%` : "—"}
+                  <span className={`font-bold font-mono ${r.mine.length > 0 ? "border-b border-dotted border-slate-300" : ""}`}>{r.best ? `${r.best.pct}%` : "—"}</span>
+                  {!!r.best?.screenLeaves && (
+                    <span className="block text-[9px] font-semibold text-amber-600 mt-0.5">left screen {r.best.screenLeaves}x</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-center">
                   {r.passed ? <span className="text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded-full">Passed</span>

@@ -75,6 +75,7 @@ function mapAttempt(r: any): TrainingAttempt {
     department: r.department || "", tenantId: r.tenant_id || "",
     score: r.score, total: r.total, pct: r.pct, passed: !!r.passed,
     answers: r.answers || [], attemptNo: r.attempt_no ?? 1, submittedAt: r.submitted_at,
+    screenLeaves: r.screen_leaves ?? 0,
   };
 }
 
@@ -282,6 +283,7 @@ export async function submitAttempt(
   training: Training,
   user: { id: string; name: string; role: string; department: string; tenantId: string },
   answers: number[],
+  screenLeaves: number = 0,
 ): Promise<TrainingAttempt> {
   let score = 0;
   training.questions.forEach((q, i) => { if (answers[i] === q.correctIndex) score++; });
@@ -302,6 +304,7 @@ export async function submitAttempt(
     user_id: user.id, user_name: user.name, user_role: user.role,
     department: user.department, tenant_id: user.tenantId,
     score, total, pct, passed, answers, attempt_no: attemptNo,
+    screen_leaves: Math.max(0, screenLeaves),
   };
   await supabase.from("training_attempts").insert(row);
 
