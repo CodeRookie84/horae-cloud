@@ -212,10 +212,33 @@ export class StoreService {
       .select('*')
       .eq('id', this.activeUserId)
       .single();
-    
+
     if (!data) {
-      const users = await this.getAllUsers();
-      return users[0];
+      // The stored activeUserId no longer resolves (stale/invalid local state).
+      // NEVER fall back to an arbitrary row in the whole `users` table across
+      // every client — that silently displayed a random unrelated person. Instead
+      // re-resolve to the actual signed-in identity (same lookup verifyLogin uses).
+      const loggedInKey = (localStorage.getItem("horae_logged_in_email") || "").trim();
+      if (loggedInKey) {
+        if (loggedInKey.toLowerCase() === 'coderookie84@gmail.com') {
+          const { data: admin } = await supabase.from('users').select('*').eq('id', 'user-superadmin').single();
+          if (admin) { this.activeUserId = admin.id; localStorage.setItem("horae_active_user_id", admin.id); return this.mapUserRecord(admin); }
+        } else {
+          const isEmail = loggedInKey.includes('@');
+          let query = supabase.from('users').select('*');
+          query = isEmail ? query.eq('email', loggedInKey.toLowerCase()) : query.like('phone_number', `%${this.normalizePhone(loggedInKey).last10}`);
+          const { data: matched } = await query.limit(1);
+          if (matched && matched.length > 0) {
+            this.activeUserId = matched[0].id;
+            localStorage.setItem("horae_active_user_id", matched[0].id);
+            return this.mapUserRecord(matched[0]);
+          }
+        }
+      }
+      // Truly unresolvable — clear the corrupted session (so a refresh cleanly
+      // returns to the login screen) instead of guessing a random user.
+      this.logout();
+      throw new Error("Your session could not be verified. Please log in again.");
     }
     return this.mapUserRecord(data);
   }
