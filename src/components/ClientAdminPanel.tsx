@@ -299,7 +299,7 @@ export default function ClientAdminPanel({
     try {
       setStaffErrorMsg("");
       await onOnboardUser(targetTenant, staffName, staffEmail, roleToOnboard as Role, deptToOnboard as Department, avatarUrl, staffPhone, !!staffPhone);
-      const generatedPwd = store.getPasswordForEmail(staffEmail.trim().toLowerCase() || staffPhone.trim().replace(/\s+/g, ''));
+      const generatedPwd = store.getPasswordForEmail(staffEmail.trim().toLowerCase() || store.normalizePhone(staffPhone).e164);
       setStaffSuccessMsg(`Staff member ${staffName} onboarded! Generated Password: ${generatedPwd}`);
       setStaffName("");
       setStaffEmail("");
@@ -2421,13 +2421,19 @@ export default function ClientAdminPanel({
 
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                    Mobile Number <span className="text-slate-400 font-medium normal-case">(WhatsApp + login)</span>
+                    Mobile Number <span className="text-slate-400 font-medium normal-case">(10 digits — WhatsApp + login)</span>
                   </label>
                   <input
                     type="tel"
-                    placeholder="e.g., +919876543210"
+                    placeholder="e.g., 9876543210"
                     value={staffPhone}
-                    onChange={(e) => setStaffPhone(e.target.value)}
+                    onChange={(e) => {
+                      // Keep just the 10-digit number (pastes like +91 98765 43210 or 09876543210 work too)
+                      let d = e.target.value.replace(/\D/g, "");
+                      if (d.length > 10 && d.startsWith("91")) d = d.slice(2);
+                      if (d.length === 11 && d.startsWith("0")) d = d.slice(1);
+                      setStaffPhone(d.slice(0, 10));
+                    }}
                     className="w-full text-xs px-3 py-2 bg-slate-500/10 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white transition-colors"
                   />
                 </div>

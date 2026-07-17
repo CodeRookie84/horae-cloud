@@ -114,6 +114,18 @@ export class StoreService {
     return String(u.email || u.phoneNumber || (u as any).phone_number || u.id || "").toLowerCase().trim();
   }
 
+  /**
+   * Normalize a mobile number. Staff only ever type the 10-digit number; we
+   * store it as +91XXXXXXXXXX so WhatsApp/notify-dispatcher (which need the
+   * international format) keep working. `last10` is the match key for login,
+   * so "+91 98765 43210", "919876543210" and "9876543210" all find the user.
+   */
+  public normalizePhone(raw: string): { e164: string; last10: string } {
+    const digits = (raw || "").replace(/\D/g, "");
+    const last10 = digits.slice(-10);
+    return { e164: last10.length === 10 ? `+91${last10}` : raw.trim(), last10 };
+  }
+
   private mapUserRecord(u: any): User {
     let avatar = u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
     let pwd = "";
@@ -372,12 +384,14 @@ export class StoreService {
     this.saveStaffPassword(identifier, newPassword);
 
     // `identifier` is an email or a mobile number — match the right column.
+    // Phones match on the last 10 digits, same as verifyLogin.
     const clean = identifier.trim();
     const isEmail = clean.includes('@');
-    const { data: matchedUsers } = await supabase
-      .from('users')
-      .select('*')
-      .eq(isEmail ? 'email' : 'phone_number', isEmail ? clean.toLowerCase() : clean.replace(/\s+/g, ''));
+    let pwdQuery = supabase.from('users').select('*');
+    pwdQuery = isEmail
+      ? pwdQuery.eq('email', clean.toLowerCase())
+      : pwdQuery.like('phone_number', `%${this.normalizePhone(clean).last10}`);
+    const { data: matchedUsers } = await pwdQuery;
 
     if (matchedUsers && matchedUsers.length > 0) {
       for (const u of matchedUsers) {
@@ -414,7 +428,7 @@ export class StoreService {
     const cleanId = identifier.trim();
     const isEmail = cleanId.includes('@');
     const cleanEmail = cleanId.toLowerCase();
-    const cleanPhone = cleanId.replace(/\s+/g, '');
+    const phoneLast10 = this.normalizePhone(cleanId).last10;
     const cleanCompanyId = companyId.toLowerCase().trim().replace(/\s+/g, '-');
 
     if (cleanEmail === 'coderookie84@gmail.com') {
@@ -457,12 +471,17 @@ export class StoreService {
 
     const tenantIds = tenants.map(t => t.id);
 
-    // 3. Find the user by email OR phone number belonging to one of these tenants
-    const { data: matchedUsers } = await supabase
-      .from('users')
-      .select('*')
-      .eq(isEmail ? 'email' : 'phone_number', isEmail ? cleanEmail : cleanPhone)
-      .in('tenant_id', tenantIds);
+    // 3. Find the user by email OR phone number belonging to one of these tenants.
+    // Phones match on the last 10 digits (`like %XXXXXXXXXX`) so it works whether
+    // the row stores +91XXXXXXXXXX or a bare 10-digit number.
+    let userQuery = supabase.from('users').select('*').in('tenant_id', tenantIds);
+    if (isEmail) {
+      userQuery = userQuery.eq('email', cleanEmail);
+    } else {
+      if (phoneLast10.length < 10) return null;
+      userQuery = userQuery.like('phone_number', `%${phoneLast10}`);
+    }
+    const { data: matchedUsers } = await userQuery;
 
     if (!matchedUsers || matchedUsers.length === 0) return null;
 
@@ -752,11 +771,15 @@ export class StoreService {
     clitRole?: string
   ): Promise<User> {
     const cleanEmail = (email || "").trim();
-    const cleanPhone = (phoneNumber || "").trim();
+    const phone = this.normalizePhone(phoneNumber || "");
+    const cleanPhone = phone.last10.length === 10 ? phone.e164 : "";
 
     // Email is optional, but a staff member needs at least one login identifier.
     if (!cleanEmail && !cleanPhone) {
-      throw new Error("Provide an email address or a mobile number so this staff member can log in.");
+      if ((phoneNumber || "").trim()) {
+        throw new Error("The mobile number must have 10 digits (no +91 needed).");
+      }
+      throw new Error("Provide an email address or a 10-digit mobile number so this staff member can log in.");
     }
 
     // ── Duplicate identifier guard ─────────────────────────────
@@ -773,10 +796,10 @@ export class StoreService {
       const { data: existing } = await supabase
         .from('users')
         .select('id, phone_number')
-        .eq('phone_number', cleanPhone.replace(/\s+/g, ''))
+        .like('phone_number', `%${phone.last10}`)
         .limit(1);
       if (existing && existing.length > 0) {
-        throw new Error(`A staff member with the mobile number "${cleanPhone}" is already registered. Please use a different number.`);
+        throw new Error(`A staff member with the mobile number "${phone.last10}" is already registered. Please use a different number.`);
       }
     }
     // ──────────────────────────────────────────────────────────
@@ -784,7 +807,7 @@ export class StoreService {
     const userId = "user-" + Date.now();
     const pwd = this.generateRandomPassword();
     // Cache the password under the same key login will use (email, else phone, else id).
-    this.saveStaffPassword(cleanEmail || cleanPhone.replace(/\s+/g, '') || userId, pwd);
+    this.saveStaffPassword(cleanEmail || cleanPhone || userId, pwd);
 
     const baseAvatar = avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
     const avatarWithPwd = baseAvatar + "#pwd=" + pwd;
@@ -802,13 +825,19 @@ export class StoreService {
       avatar: avatarWithPwd,
     };
 
-    if (cleanPhone) newUser.phone_number = cleanPhone.replace(/\s+/g, '');
+    if (cleanPhone) newUser.phone_number = cleanPhone;
     if (whatsappOptedIn !== undefined) newUser.whatsapp_opted_in = whatsappOptedIn;
     newUser.clit_access = !!clitAccess;
     newUser.clit_role = clitAccess ? (clitRole || 'technician') : null;
 
-    await supabase.from('users').insert([newUser]);
-    
+    // Surface insert failures — this used to be unchecked, so a constraint
+    // violation (e.g. email NOT NULL before 20260718_email_optional.sql) made
+    // the UI report success while no user was created.
+    const { error: insertError } = await supabase.from('users').insert([newUser]);
+    if (insertError) {
+      throw new Error(`Couldn't create the staff member: ${insertError.message}`);
+    }
+
     // Save to memory so it's available next time entry
     this.addCustomRole(normRole);
     this.addCustomDept(normDept);
