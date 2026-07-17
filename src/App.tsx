@@ -879,9 +879,15 @@ function AppInner() {
   };
 
   const handleDeleteUser = async (userId: string) => {
-    await store.deleteUser(userId);
-    await refreshLocalState();
-    triggerToast("Staff user deleted.");
+    try {
+      await store.deleteUser(userId);
+      await refreshLocalState();
+      triggerToast("Staff user deleted.");
+    } catch (err: any) {
+      console.error("Delete user failed:", err);
+      await refreshLocalState();
+      triggerToast("Couldn't delete user: " + (err?.message || "unknown error"));
+    }
   };
 
   const handleResetWorkspaceData = async () => {

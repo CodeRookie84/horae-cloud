@@ -6,7 +6,7 @@
 // (shuffled, multi-language via free translate) → score vs pass mark → review +
 // certificate on pass. Mobile-first, themed to the Horae app palette.
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   GraduationCap, ArrowLeft, FileText, Award, Clock, CheckCircle2, XCircle,
   Lock, RotateCcw, Languages, Printer, AlertTriangle, ExternalLink,
@@ -120,6 +120,7 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
   onSubmit: Props["onSubmit"]; onExit: () => void;
 }) {
   const st = trainingStatus(training, activeUser.id, attempts);
+  const topRef = useRef<HTMLDivElement>(null);
 
   // How many retakes remain, as human text — shown on the intro + result screens
   // when the user hasn't passed yet. `st` already accounts for admin grants and
@@ -183,8 +184,16 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
     } finally { setSubmitting(false); }
   };
 
+  // On reaching the result, jump back to the top so the score + retake are the
+  // first thing seen (the submit button sits at the bottom of the question list).
+  useEffect(() => {
+    if (phase === "result") {
+      topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [phase]);
+
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 p-5 sm:p-6 shadow-md space-y-5">
+    <div ref={topRef} className="bg-white rounded-2xl border border-slate-100 p-5 sm:p-6 shadow-md space-y-5">
       <button onClick={onExit} className="flex items-center gap-1 text-slate-500 hover:text-slate-800 text-xs font-semibold transition-colors">
         <ArrowLeft className="w-4 h-4" /> Back to courses
       </button>
@@ -314,6 +323,12 @@ function ResultView({ training, activeUser, result, retakesLeftText, onRetake, o
         )}
       </div>
 
+      {/* Actions at the top so the score + retake are visible without scrolling */}
+      <div className="flex justify-center gap-2">
+        {onRetake && <button onClick={onRetake} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Retake test</button>}
+        <button onClick={onDone} className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl shadow-md cursor-pointer">Done</button>
+      </div>
+
       {passed && <Certificate userName={activeUser.name} title={training.title} pct={result.pct} date={result.submittedAt} />}
 
       <div className="space-y-3">
@@ -338,11 +353,6 @@ function ResultView({ training, activeUser, result, retakesLeftText, onRetake, o
             </div>
           );
         })}
-      </div>
-
-      <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-        {onRetake && <button onClick={onRetake} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Retake test</button>}
-        <button onClick={onDone} className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl shadow-md cursor-pointer">Done</button>
       </div>
     </div>
   );

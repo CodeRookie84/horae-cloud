@@ -716,8 +716,15 @@ export class StoreService {
       .update({ created_by_user_id: null })
       .eq('created_by_user_id', userId);
 
-    // Delete user
-    await supabase.from('users').delete().eq('id', userId);
+    // Delete user — verify a row was actually removed. With RLS enabled and no
+    // DELETE policy the delete silently affects 0 rows and returns no error, so
+    // `.select()` + a count check turns that false success into a real failure.
+    const { data: deleted, error: delErr } = await supabase
+      .from('users').delete().eq('id', userId).select('id');
+    if (delErr) throw delErr;
+    if (!deleted || deleted.length === 0) {
+      throw new Error("The database blocked the deletion (no row removed). The users table is likely missing a DELETE policy — apply migration 20260718_delete_policies.sql.");
+    }
 
     // Reset active user state if deleted
     if (this.activeUserId === userId) {
