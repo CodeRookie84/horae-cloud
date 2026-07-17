@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import { BrowserRouter, useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -31,21 +31,27 @@ import { listenForSWNavigation } from "./services/fcmService";
 
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./components/Dashboard";
-import NoticesWorkflows from "./components/NoticesWorkflows";
-import ChecklistsWorkflows from "./components/ChecklistsWorkflows";
-import TaskManagerWorkflows from "./components/TaskManagerWorkflows";
-import HoraeAdminPanel from "./components/HoraeAdminPanel";
-import Quizzes from "./components/Quizzes";
-import SOPs from "./components/SOPs";
-import ClientAdminPanel from "./components/ClientAdminPanel";
 import Login from "./components/Login";
 import NotificationPermissionBanner from "./components/NotificationPermissionBanner";
-import TeamTalk from "./components/TeamTalk";
-import SwotCompass from "./components/swot/SwotCompass";
-import MaintenanceHub from "./components/maintenance/MaintenanceHub";
-import Training from "./components/Training";
-import TrainingAdmin from "./components/TrainingAdmin";
 import * as trainingSvc from "./services/trainingService";
+
+// Lazy-loaded: everything below is one large admin/workflow module that's only
+// ever needed once a signed-in user actually opens that specific tab. Statically
+// importing all of them made every visitor — including an anonymous one on the
+// login screen — download the entire app (1.7MB/438KB gzipped) up front. Each
+// becomes its own chunk, fetched only when its tab is first opened.
+const NoticesWorkflows = lazy(() => import("./components/NoticesWorkflows"));
+const ChecklistsWorkflows = lazy(() => import("./components/ChecklistsWorkflows"));
+const TaskManagerWorkflows = lazy(() => import("./components/TaskManagerWorkflows"));
+const HoraeAdminPanel = lazy(() => import("./components/HoraeAdminPanel"));
+const Quizzes = lazy(() => import("./components/Quizzes"));
+const SOPs = lazy(() => import("./components/SOPs"));
+const ClientAdminPanel = lazy(() => import("./components/ClientAdminPanel"));
+const TeamTalk = lazy(() => import("./components/TeamTalk"));
+const SwotCompass = lazy(() => import("./components/swot/SwotCompass"));
+const MaintenanceHub = lazy(() => import("./components/maintenance/MaintenanceHub"));
+const Training = lazy(() => import("./components/Training"));
+const TrainingAdmin = lazy(() => import("./components/TrainingAdmin"));
 
 
 /** Single row in the notifications dropdown — swipe left/right to dismiss, tap to open + mark read. */
@@ -1193,6 +1199,11 @@ function AppInner() {
               className={`h-full ${activeTab === 'team-talk' ? 'w-full' : 'max-w-7xl mx-auto'}`}
             >
               {/* Tab routing mappings */}
+              <Suspense fallback={
+                <div className="flex items-center justify-center py-24">
+                  <RefreshCw className="w-6 h-6 animate-spin text-[color:var(--color-brand,#8B7CF6)]" />
+                </div>
+              }>
               {isTrialExpired && activeUser.role !== Role.SUPER_ADMIN ? (
                 <div className="flex flex-col items-center justify-center min-h-[60vh] p-6 text-center max-w-2xl mx-auto bg-white rounded-3xl border border-slate-200/80 shadow-md space-y-6 my-4">
                   <div className="w-16 h-16 bg-rose-100 rounded-full flex items-center justify-center text-rose-600 text-3xl shadow-sm animate-pulse">
@@ -1417,6 +1428,7 @@ function AppInner() {
                   )}
                 </>
               )}
+              </Suspense>
             </motion.div>
           </AnimatePresence>
         </main>
