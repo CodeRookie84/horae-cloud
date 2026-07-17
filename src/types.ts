@@ -70,6 +70,8 @@ export interface User {
   clitAccess?: boolean;
   /** CLIT role (separate from the staff `role`): technician | qc_executive | qc_lead | maintenance_manager | clit_admin */
   clitRole?: string;
+  /** Has this account completed its mandatory first-login password change? Server-side (not localStorage) so it survives a new device, cleared browser data, or iOS's aggressive storage-clearing for installed web apps. */
+  pwdChanged?: boolean;
 }
 
 export interface Notice {

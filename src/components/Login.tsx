@@ -65,9 +65,11 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       // If Super Admin, companyName is ignored by verifyLogin
       const user = await store.verifyLogin(isSuperAdminEmail ? "" : companyName, email, password);
       if (user) {
-        const loginKey = store.loginKeyFor(user);
-        const hasChangedPwd = localStorage.getItem(`horae_pwd_changed_${loginKey}`);
-        if (!hasChangedPwd) {
+        // Server-side flag (not localStorage) — a new device, cleared browser
+        // data, or iOS's aggressive storage-clearing for installed web apps
+        // used to silently reset a local-only flag and re-trigger this on
+        // every login, even though the password was already changed.
+        if (!user.pwdChanged) {
           setTempLoggedInUser(user);
           setShowFirstLoginPrompt(true);
         } else {
@@ -104,8 +106,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     try {
       const loginKey = store.loginKeyFor(tempLoggedInUser!);
       await store.updateUserPassword(loginKey, newPassword.trim());
-      localStorage.setItem(`horae_pwd_changed_${loginKey}`, "true");
-      onLoginSuccess(tempLoggedInUser!);
+      await store.markPasswordChanged(tempLoggedInUser!.id);
+      onLoginSuccess({ ...tempLoggedInUser!, pwdChanged: true });
     } catch (err) {
       console.error("Password update failed:", err);
       setPwdError("Failed to update password. Please try again.");

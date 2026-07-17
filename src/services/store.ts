@@ -192,7 +192,13 @@ export class StoreService {
       lastSeenAt: u.last_seen_at || undefined,
       clitAccess: u.clit_access || false,
       clitRole: u.clit_role || undefined,
+      pwdChanged: u.pwd_changed || false,
     };
+  }
+
+  /** Mark an account's mandatory first-login password change as done, server-side. */
+  public async markPasswordChanged(userId: string): Promise<void> {
+    await supabase.from('users').update({ pwd_changed: true }).eq('id', userId);
   }
 
   private normalizeRole(role: string): string {
