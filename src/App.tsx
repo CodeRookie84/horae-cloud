@@ -875,8 +875,8 @@ function AppInner() {
     triggerToast("Outlet workspace deleted.");
   };
 
-  const handleUpdateUser = async (userId: string, name: string, email: string, role: string, department: string, clitAccess?: boolean, clitRole?: string) => {
-    await store.updateUser(userId, name, email, role, department, clitAccess, clitRole);
+  const handleUpdateUser = async (userId: string, name: string, email: string, role: string, department: string, clitAccess?: boolean, clitRole?: string, phoneNumber?: string) => {
+    await store.updateUser(userId, name, email, role, department, clitAccess, clitRole, phoneNumber);
     await refreshLocalState();
     triggerToast("Staff user updated.");
   };
@@ -954,7 +954,12 @@ function AppInner() {
             // until it stabilizes. A hard refresh doesn't flicker because `loading`
             // starts true and covers the first full load; mirror that here.
             setLoading(true);
-            setLoggedInEmail(usr.email || usr.phoneNumber || usr.id);
+            // Prefer the actual login credential (persisted by store.verifyLogin) over
+            // usr.email: for Super Admin, the login identifier (coderookie84@gmail.com)
+            // differs from the DB user record's own email (admin@horae.ops), so using
+            // usr.email here broke every loggedInEmail === 'coderookie84@gmail.com' check
+            // (Exit Workspace banner, Sidebar super-admin gating) for the rest of the session.
+            setLoggedInEmail(store.getLoggedInEmail() || usr.email || usr.phoneNumber || usr.id);
             await refreshLocalState();
             // Request FCM permission immediately after login
             if ('Notification' in window && Notification.permission === 'default') {

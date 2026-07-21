@@ -787,11 +787,29 @@ export class StoreService {
 
   public async updateUser(
     userId: string, name: string, email: string, role: string, department: string,
-    clitAccess?: boolean, clitRole?: string,
+    clitAccess?: boolean, clitRole?: string, phoneNumber?: string,
   ): Promise<void> {
+    const cleanEmail = (email || "").trim();
+    const phone = this.normalizePhone(phoneNumber || "");
+    const cleanPhone = phone.last10.length === 10 ? phone.e164 : "";
+
+    // Same rule as onboardingUser: a staff member needs at least one login identifier.
+    if (!cleanEmail && !cleanPhone) {
+      if ((phoneNumber || "").trim()) {
+        throw new Error("The mobile number must have 10 digits (no +91 needed).");
+      }
+      throw new Error("Provide an email address or a 10-digit mobile number so this staff member can log in.");
+    }
+
     const normRole = this.normalizeRole(role);
     const normDept = this.normalizeDept(department);
-    const patch: any = { name, email, role: normRole, department: normDept };
+    const patch: any = {
+      name,
+      email: cleanEmail || null,
+      phone_number: cleanPhone || null,
+      role: normRole,
+      department: normDept,
+    };
     if (clitAccess !== undefined) {
       patch.clit_access = !!clitAccess;
       patch.clit_role = clitAccess ? (clitRole || 'technician') : null;

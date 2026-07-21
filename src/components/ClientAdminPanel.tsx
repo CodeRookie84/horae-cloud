@@ -103,7 +103,7 @@ interface ClientAdminPanelProps {
   onDeleteTenant: (tenantId: string) => void;
   
   onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean, clitAccess?: boolean, clitRole?: string) => void;
-  onUpdateUser: (userId: string, name: string, email: string, role: string, department: string, clitAccess?: boolean, clitRole?: string) => void;
+  onUpdateUser: (userId: string, name: string, email: string, role: string, department: string, clitAccess?: boolean, clitRole?: string, phoneNumber?: string) => Promise<void>;
   onDeleteUser: (userId: string) => void;
   onBack?: () => void;
 }
@@ -212,11 +212,17 @@ export default function ClientAdminPanel({
   const [staffSuccessMsg, setStaffSuccessMsg] = useState("");
   const [staffErrorMsg, setStaffErrorMsg] = useState("");
 
+  const [staffDirSearch, setStaffDirSearch] = useState("");
+  const [staffDirDeptFilter, setStaffDirDeptFilter] = useState("ALL");
+  const [staffDirRoleFilter, setStaffDirRoleFilter] = useState("ALL");
+
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
   const [editUserName, setEditUserName] = useState("");
   const [editUserEmail, setEditUserEmail] = useState("");
+  const [editUserPhone, setEditUserPhone] = useState("");
   const [editUserRole, setEditUserRole] = useState("");
   const [editUserDepartment, setEditUserDepartment] = useState("");
+  const [editUserErrorMsg, setEditUserErrorMsg] = useState("");
   const [resetPwdUser, setResetPwdUser] = useState<AppUser | null>(null);
   const [resetPwdValue, setResetPwdValue] = useState("");
   const [showResetPwdToggle, setShowResetPwdToggle] = useState(false);
@@ -246,16 +252,14 @@ export default function ClientAdminPanel({
     Department.STORE
   ] as string[];
 
-  const dynamicRoles = Array.from(new Set([
-    ...tenantUsers.map(u => u.role),
-    ...store.getCustomRoles()
-  ])).filter(Boolean) as string[];
+  // Scan clientUsers (every outlet of this client), not tenantUsers (only the
+  // currently active single outlet) — otherwise a role/department only used at
+  // another outlet silently disappears from this dropdown depending which
+  // outlet workspace happens to be active.
+  const dynamicRoles = Array.from(new Set(clientUsers.map(u => u.role))).filter(Boolean) as string[];
   const activeRoles = dynamicRoles.length > 0 ? dynamicRoles : ["Manager", "Supervisor", "Staff", "Cashier", "Chef"];
 
-  const dynamicDepts = Array.from(new Set([
-    ...tenantUsers.map(u => u.department),
-    ...store.getCustomDepts()
-  ])).filter(Boolean) as string[];
+  const dynamicDepts = Array.from(new Set(clientUsers.map(u => u.department))).filter(Boolean) as string[];
   const activeDepts = dynamicDepts.length > 0 ? dynamicDepts : ["Management", "Kitchen & Baking", "Front Desk & Sales", "Packing & Inventory"];
 
   // availableRoles: all roles for onboarding/editing staff directory
@@ -267,6 +271,22 @@ export default function ClientAdminPanel({
   // For other creation forms (Notices, Checklists, Quizzes, SOPs): allow active roles & departments
   const multiSelectRoles = ["All Roles", ...activeRoles];
   const multiSelectDepts = ["All Departments", ...activeDepts];
+
+  // Staff Directory: respects the top "Scope" outlet filter (like every other
+  // tab), plus its own search (name/email/phone) and role/department filters.
+  // clientUsers itself stays unfiltered by outlet — dynamicRoles/dynamicDepts
+  // above need to see staff across ALL outlets, not just the scoped one.
+  const staffDirSearchLower = staffDirSearch.trim().toLowerCase();
+  const scopedClientUsers = selectedOutletFilter === "ALL" ? clientUsers : clientUsers.filter(u => u.tenantId === selectedOutletFilter);
+  const filteredClientUsers = scopedClientUsers.filter(u => {
+    if (staffDirRoleFilter !== "ALL" && u.role !== staffDirRoleFilter) return false;
+    if (staffDirDeptFilter !== "ALL" && u.department !== staffDirDeptFilter) return false;
+    if (staffDirSearchLower) {
+      const haystack = `${u.name} ${u.email || ""} ${u.phoneNumber || ""}`.toLowerCase();
+      if (!haystack.includes(staffDirSearchLower)) return false;
+    }
+    return true;
+  });
 
   // Initialize staffRole and staffDept to first active ones if empty
   useEffect(() => {
@@ -323,11 +343,12 @@ export default function ClientAdminPanel({
   const downloadStaffCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
     csvContent += "Name,Email,Mobile Number,Outlet,Role,Department,Password\n";
-    // clientUsers = every staff member across ALL of this client's outlets
-    // (matches what the on-screen directory table shows). `tenantUsers` is
-    // scoped to only the currently active outlet, which silently dropped
-    // every staff member onboarded to a different outlet from the export.
-    clientUsers.forEach(usr => {
+    // scopedClientUsers = every staff member across this client's outlets,
+    // narrowed by the top "Scope" outlet filter (matches the promise made on
+    // the Reports tab: "Use the brand/outlet filters at the top... to filter
+    // files"). `tenantUsers` is scoped to only the currently active outlet,
+    // which used to silently drop every staff member onboarded elsewhere.
+    scopedClientUsers.forEach(usr => {
       const name = `"${usr.name.replace(/"/g, '""')}"`;
       const email = `"${(usr.email || "").replace(/"/g, '""')}"`;
       const phone = `"${(usr.phoneNumber || "").replace(/"/g, '""')}"`;
@@ -348,7 +369,7 @@ export default function ClientAdminPanel({
   const downloadQuizScoreboardCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
     csvContent += "Employee,Role,Quiz Assessment,Score,Total Questions,Percentage,Completed Date\n";
-    quizAttempts.forEach(att => {
+    filteredQuizAttempts.forEach(att => {
       const emp = `"${att.userName.replace(/"/g, '""')}"`;
       const role = `"${att.userRole}"`;
       const title = `"${att.quizTitle.replace(/"/g, '""')}"`;
@@ -367,11 +388,16 @@ export default function ClientAdminPanel({
   };
 
   // Filtered lists based on outlet filter
+  const filteredOutletTenants = selectedOutletFilter === "ALL" ? tenants : tenants.filter(t => t.id === selectedOutletFilter);
   const filteredNotices = selectedOutletFilter === "ALL" ? notices : notices.filter(n => n.tenantId === selectedOutletFilter);
   const filteredChecklists = selectedOutletFilter === "ALL" ? checklists : checklists.filter(c => c.tenantId === selectedOutletFilter);
   const filteredTasks = selectedOutletFilter === "ALL" ? tasks : tasks.filter(t => t.tenantId === selectedOutletFilter);
   const filteredQuizzes = selectedOutletFilter === "ALL" ? quizzes : quizzes.filter(q => q.tenantId === selectedOutletFilter || q.tenantId === "ALL");
   const filteredSOPs = selectedOutletFilter === "ALL" ? sops : sops.filter(s => s.tenantId === selectedOutletFilter || s.tenantId === "ALL");
+  const filteredQuizAttempts = selectedOutletFilter === "ALL" ? quizAttempts : quizAttempts.filter(att => {
+    const quiz = quizzes.find(q => q.id === att.quizId);
+    return quiz ? quiz.tenantId === selectedOutletFilter : false;
+  });
 
   // ----------------------------------------------------
   // SUB-TAB 1: Notices State & Logic
@@ -2316,6 +2342,10 @@ export default function ClientAdminPanel({
                   <div className="p-8 text-center text-xs text-slate-400">
                     No outlets provisioned under this client organization yet.
                   </div>
+                ) : filteredOutletTenants.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-400">
+                    No outlets match the current Scope filter.
+                  </div>
                 ) : (
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -2327,7 +2357,7 @@ export default function ClientAdminPanel({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50 text-xs">
-                      {tenants.map(out => (
+                      {filteredOutletTenants.map(out => (
                         <tr key={out.id} className="hover:bg-slate-500/10">
                           <td className="px-4 py-3 flex items-center gap-2">
                             <span className="text-lg">{out.logo}</span>
@@ -2530,10 +2560,45 @@ export default function ClientAdminPanel({
                   Download CSV
                 </button>
               </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  placeholder="Search by name, email, phone..."
+                  value={staffDirSearch}
+                  onChange={(e) => setStaffDirSearch(e.target.value)}
+                  className="text-xs px-3 py-2 bg-slate-500/10 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white transition-colors"
+                />
+                <select
+                  value={staffDirRoleFilter}
+                  onChange={(e) => setStaffDirRoleFilter(e.target.value)}
+                  className="text-xs px-2.5 py-2 bg-slate-500/10 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white cursor-pointer"
+                >
+                  <option value="ALL">All Roles</option>
+                  {activeRoles.map(r => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+                <select
+                  value={staffDirDeptFilter}
+                  onChange={(e) => setStaffDirDeptFilter(e.target.value)}
+                  className="text-xs px-2.5 py-2 bg-slate-500/10 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white cursor-pointer"
+                >
+                  <option value="ALL">All Departments</option>
+                  {activeDepts.map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+
               <div className="border border-slate-100 rounded-xl overflow-hidden">
                 {clientUsers.length === 0 ? (
                   <div className="p-8 text-center text-xs text-slate-400">
                     No staff onboarded under this brand organization yet.
+                  </div>
+                ) : filteredClientUsers.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-400">
+                    No staff match your search/filters.
                   </div>
                 ) : (
                   <table className="w-full text-left border-collapse">
@@ -2546,7 +2611,7 @@ export default function ClientAdminPanel({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50 text-xs">
-                      {clientUsers.map(usr => {
+                      {filteredClientUsers.map(usr => {
                         const userTenant = tenants.find(t => t.id === usr.tenantId);
                         return (
                           <tr key={usr.id} className="hover:bg-slate-500/10">
@@ -2580,9 +2645,11 @@ export default function ClientAdminPanel({
                                 onClick={() => {
                                   setEditingUser(usr);
                                   setEditUserName(usr.name);
-                                  setEditUserEmail(usr.email);
+                                  setEditUserEmail(usr.email || "");
+                                  setEditUserPhone(usr.phoneNumber || "");
                                   setEditUserRole(usr.role);
                                   setEditUserDepartment(usr.department);
+                                  setEditUserErrorMsg("");
                                 }}
                                 className="p-1 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-indigo-600 transition-colors inline-flex items-center justify-center cursor-pointer"
                                 title="Edit User Role/Details"
@@ -2887,10 +2954,19 @@ export default function ClientAdminPanel({
               </div>
 
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
-                  onUpdateUser(editingUser.id, editUserName, editUserEmail, editUserRole, editUserDepartment);
-                  setEditingUser(null);
+                  if (!editUserEmail.trim() && !editUserPhone.trim()) {
+                    setEditUserErrorMsg("Provide an email address or a 10-digit mobile number.");
+                    return;
+                  }
+                  try {
+                    setEditUserErrorMsg("");
+                    await onUpdateUser(editingUser.id, editUserName, editUserEmail, editUserRole, editUserDepartment, undefined, undefined, editUserPhone);
+                    setEditingUser(null);
+                  } catch (err: any) {
+                    setEditUserErrorMsg(err?.message || "Failed to update staff member. Please try again.");
+                  }
                 }}
                 className="space-y-4"
               >
@@ -2921,16 +2997,33 @@ export default function ClientAdminPanel({
 
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                    Email Address
+                    Email Address <span className="normal-case font-medium text-slate-400">(optional if mobile is given)</span>
                   </label>
                   <input
                     type="email"
-                    required
                     value={editUserEmail}
                     onChange={(e) => setEditUserEmail(e.target.value)}
                     className="w-full text-xs px-3 py-2 bg-slate-500/10 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white transition-colors"
                   />
                 </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                    Mobile Number <span className="normal-case font-medium text-slate-400">(10 digits, optional if email is given)</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={editUserPhone}
+                    onChange={(e) => setEditUserPhone(e.target.value)}
+                    className="w-full text-xs px-3 py-2 bg-slate-500/10 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white transition-colors"
+                  />
+                </div>
+
+                {editUserErrorMsg && (
+                  <p className="text-[11px] font-semibold text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
+                    {editUserErrorMsg}
+                  </p>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">

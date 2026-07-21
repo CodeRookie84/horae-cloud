@@ -293,8 +293,18 @@ export default function HoraeAdminPanel({
         <div className="flex flex-wrap items-center gap-3">
           <select
             onChange={(e) => {
-              const selectedUserId = e.target.value;
-              if (selectedUserId) onSelectUser(selectedUserId);
+              const val = e.target.value;
+              if (!val) return;
+              if (val.startsWith("provision:")) {
+                // No outlet/staff onboarded yet for this client — there's no user to
+                // impersonate into, so route to Outlet Provisioning instead of silently
+                // hiding the client from this list.
+                const clientId = val.slice("provision:".length);
+                setSelectedClientId(clientId);
+                setActiveTab("outlets");
+              } else {
+                onSelectUser(val);
+              }
             }}
             value=""
             className="px-3.5 py-2 bg-[#162D4E] hover:bg-[#162D4E]/90 text-white font-bold text-xs rounded-xl shadow-lg cursor-pointer focus:outline-none border-none transition-colors"
@@ -305,11 +315,11 @@ export default function HoraeAdminPanel({
               const clientTenantIds = clientTenants.map(t => t.id);
               const adminUser = users.find(u => clientTenantIds.includes(u.tenantId) && u.role === Role.ADMIN) ||
                                 users.find(u => clientTenantIds.includes(u.tenantId));
-              return adminUser ? (
-                <option key={client.id} value={adminUser.id}>
-                  {client.logo} {client.name}
+              return (
+                <option key={client.id} value={adminUser ? adminUser.id : `provision:${client.id}`}>
+                  {client.logo} {client.name}{!adminUser ? " (no outlets yet — click to set up)" : ""}
                 </option>
-              ) : null;
+              );
             })}
           </select>
 
