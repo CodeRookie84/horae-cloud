@@ -19,6 +19,7 @@ import {
   QuizAttempt,
   SOP,
   SOPReadStatus,
+  WhatsAppEngagementRow,
   isTargetMatched
 } from "../types";
 import supabase from "./supabaseClient";
@@ -321,34 +322,55 @@ export class StoreService {
   public async setActiveClient(clientId: string) {
     this.activeClientId = clientId;
     localStorage.setItem("horae_active_client_id", clientId);
-    
+
     // Switch active workspace to first tenant under this client
     const tenants = await this.getTenantsByClient(clientId);
     if (tenants.length > 0) {
       await this.setActiveTenant(tenants[0].id);
+    } else {
+      // Client has no outlets at all yet — same identity-leak risk as the
+      // zero-staff case in setActiveTenant: don't leave a different client's
+      // user active while this client's branding is now showing.
+      this.activeTenantId = '';
+      this.activeUserId = '';
+      localStorage.removeItem("horae_active_tenant_id");
+      localStorage.removeItem("horae_active_user_id");
     }
   }
 
   public async setActiveTenant(tenantId: string) {
+    const previousClientId = this.activeClientId;
     this.activeTenantId = tenantId;
     localStorage.setItem("horae_active_tenant_id", tenantId);
-    
+
     // Sync client
     const { data: tenant } = await supabase
       .from('tenants')
       .select('client_id')
       .eq('id', tenantId)
       .single();
-    
+
+    const isCrossClientSwitch = !!tenant && tenant.client_id !== previousClientId;
+
     if (tenant && tenant.client_id !== this.activeClientId) {
       this.activeClientId = tenant.client_id;
       localStorage.setItem("horae_active_client_id", tenant.client_id);
     }
-    
+
     // Auto-update active user to the first match of this new tenant to make switcher clean!
     const matchedUsers = await this.getTenantUsers();
     if (matchedUsers.length > 0) {
       this.setActiveUser(matchedUsers[0].id);
+    } else if (isCrossClientSwitch) {
+      // This tenant has no staff onboarded yet AND we just crossed into a
+      // different client — do NOT silently keep the previous client's user
+      // active. That used to leak the old client's identity (and therefore
+      // their chat-channel memberships, tasks, etc.) into this client's
+      // screens while the UI displayed the new client's branding. Clearing
+      // activeUserId makes getActiveUser() fall back to re-resolving the
+      // real signed-in identity instead.
+      this.activeUserId = '';
+      localStorage.removeItem("horae_active_user_id");
     }
   }
 
@@ -2558,6 +2580,64 @@ This guide ensures that cash flows are reconciled correctly at the close of ever
     });
 
     return statuses;
+  }
+
+  /**
+   * Per-user WhatsApp delivery/read/reply engagement for the given users
+   * (typically `scopedClientUsers` from the Reports tab), over the last
+   * `sinceDays` days. Built from `notification_log` (populated by
+   * notify-dispatcher on every send, and updated with delivered_at/read_at
+   * by the whatsapp-webhook edge function) and `whatsapp_inbound_messages`
+   * (populated by the same webhook when a user replies).
+   */
+  public async getWhatsAppEngagementReport(userIds: string[], sinceDays: number = 30): Promise<WhatsAppEngagementRow[]> {
+    if (userIds.length === 0) return [];
+    const since = new Date(Date.now() - sinceDays * 86400000).toISOString();
+
+    const { data: logRows } = await supabase
+      .from('notification_log')
+      .select('user_id, status, delivered_at, read_at')
+      .eq('channel', 'whatsapp')
+      .in('user_id', userIds)
+      .gte('sent_at', since);
+
+    const { data: inboundRows } = await supabase
+      .from('whatsapp_inbound_messages')
+      .select('user_id')
+      .in('user_id', userIds)
+      .gte('received_at', since);
+
+    const byUser = new Map<string, WhatsAppEngagementRow>();
+    const rowFor = (userId: string) => {
+      let row = byUser.get(userId);
+      if (!row) {
+        row = { userId, sentCount: 0, deliveredCount: 0, readCount: 0, failedCount: 0, repliedCount: 0 };
+        byUser.set(userId, row);
+      }
+      return row;
+    };
+
+    for (const r of (logRows || [])) {
+      const row = rowFor(r.user_id);
+      if (r.status === 'failed') row.failedCount++;
+      else row.sentCount++;
+      if (r.delivered_at) row.deliveredCount++;
+      if (r.read_at) {
+        row.readCount++;
+        if (!row.lastReadAt || r.read_at > row.lastReadAt) row.lastReadAt = r.read_at;
+      }
+    }
+
+    const repliedCounts = new Map<string, number>();
+    for (const r of (inboundRows || [])) {
+      if (!r.user_id) continue;
+      repliedCounts.set(r.user_id, (repliedCounts.get(r.user_id) || 0) + 1);
+    }
+    for (const [userId, count] of repliedCounts) {
+      rowFor(userId).repliedCount = count;
+    }
+
+    return Array.from(byUser.values());
   }
 
   public async markSOPAsRead(sopId: string, sopTitle: string): Promise<SOPReadStatus> {

@@ -376,6 +376,17 @@ export interface SOPReadStatus {
   readAt: string;
 }
 
+/** Per-user WhatsApp delivery/read/reply engagement, for the Reports tab. */
+export interface WhatsAppEngagementRow {
+  userId: string;
+  sentCount: number;
+  deliveredCount: number;
+  readCount: number;
+  failedCount: number;
+  repliedCount: number;
+  lastReadAt?: string;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Training — upload a document, attach an (AI-drafted, admin-reviewed) test,
 // target it to outlets/departments/roles, and track staff scores.

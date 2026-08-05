@@ -11,7 +11,7 @@ import {
   Building2, UserPlus, Edit2, Copy, Languages, ArrowLeft, KeyRound, Eye, EyeOff, MessageCircle
 } from "lucide-react";
 import {
-  Notice, Checklist, Task, User as AppUser, Tenant, Department, Role, Quiz, QuizAttempt, SOP, SOPReadStatus, Client
+  Notice, Checklist, Task, User as AppUser, Tenant, Department, Role, Quiz, QuizAttempt, SOP, SOPReadStatus, Client, WhatsAppEngagementRow
 } from "../types";
 import { store, translateText } from "../services/store";
 
@@ -278,6 +278,19 @@ export default function ClientAdminPanel({
   // above need to see staff across ALL outlets, not just the scoped one.
   const staffDirSearchLower = staffDirSearch.trim().toLowerCase();
   const scopedClientUsers = selectedOutletFilter === "ALL" ? clientUsers : clientUsers.filter(u => u.tenantId === selectedOutletFilter);
+
+  // WhatsApp Engagement report data (Reports tab) — fetched on demand rather
+  // than kept in the big refreshLocalState batch, since it's only needed
+  // while the Reports sub-tab is actually open.
+  const [waReport, setWaReport] = useState<WhatsAppEngagementRow[]>([]);
+  useEffect(() => {
+    if (activeSubTab !== "reports") return;
+    let cancelled = false;
+    store.getWhatsAppEngagementReport(scopedClientUsers.map(u => u.id)).then(rows => {
+      if (!cancelled) setWaReport(rows);
+    });
+    return () => { cancelled = true; };
+  }, [activeSubTab, selectedOutletFilter, clientUsers.length]);
   const filteredClientUsers = scopedClientUsers.filter(u => {
     if (staffDirRoleFilter !== "ALL" && u.role !== staffDirRoleFilter) return false;
     if (staffDirDeptFilter !== "ALL" && u.department !== staffDirDeptFilter) return false;
@@ -943,6 +956,46 @@ export default function ClientAdminPanel({
     const link = document.createElement("a");
     link.setAttribute("href", encodeURI(csvContent));
     link.setAttribute("download", `Tasks_Report_${new Date().toISOString().split("T")[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // WhatsApp Engagement: sent/delivered/read/replied per staff member, over
+  // the last 30 days, scoped by the same outlet Scope filter as every other
+  // Reports card. Built from `waReport` (fetched via effect above).
+  const waReportByUser = new Map(waReport.map(r => [r.userId, r]));
+  const waSummary = scopedClientUsers.reduce((acc, u) => {
+    const r = waReportByUser.get(u.id);
+    if (r) {
+      acc.sent += r.sentCount;
+      acc.delivered += r.deliveredCount;
+      acc.read += r.readCount;
+      if (r.sentCount > 0 && r.readCount === 0) acc.neverRead += 1;
+    }
+    return acc;
+  }, { sent: 0, delivered: 0, read: 0, neverRead: 0 });
+  const waReadRatePct = waSummary.sent > 0 ? Math.round((waSummary.read / waSummary.sent) * 100) : 0;
+
+  const downloadWhatsAppEngagementCSV = () => {
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Name,Outlet,Sent,Delivered,Read,Failed,Replied,Read Rate %,Last Read At\n";
+    scopedClientUsers.forEach(u => {
+      const r = waReportByUser.get(u.id);
+      const sent = r?.sentCount ?? 0;
+      const delivered = r?.deliveredCount ?? 0;
+      const read = r?.readCount ?? 0;
+      const failed = r?.failedCount ?? 0;
+      const replied = r?.repliedCount ?? 0;
+      const readRate = sent > 0 ? Math.round((read / sent) * 100) : 0;
+      const name = `"${u.name.replace(/"/g, '""')}"`;
+      const outlet = `"${tenants.find(t => t.id === u.tenantId)?.name || u.tenantId}"`;
+      const lastRead = r?.lastReadAt ? `"${new Date(r.lastReadAt).toLocaleString()}"` : '""';
+      csvContent += `${name},${outlet},${sent},${delivered},${read},${failed},${replied},${readRate},${lastRead}\n`;
+    });
+    const link = document.createElement("a");
+    link.setAttribute("href", encodeURI(csvContent));
+    link.setAttribute("download", `WhatsApp_Engagement_${new Date().toISOString().split("T")[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -2691,6 +2744,26 @@ export default function ClientAdminPanel({
               </p>
             </div>
 
+            {/* WhatsApp Engagement — at-a-glance strip, last 30 days */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">WA Sent</p>
+                <p className="text-lg font-bold text-slate-800 mt-0.5">{waSummary.sent}</p>
+              </div>
+              <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Read Rate</p>
+                <p className="text-lg font-bold text-emerald-600 mt-0.5">{waReadRatePct}%</p>
+              </div>
+              <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Delivered</p>
+                <p className="text-lg font-bold text-slate-800 mt-0.5">{waSummary.delivered}</p>
+              </div>
+              <div className="bg-slate-50 border border-rose-100 rounded-xl p-3.5">
+                <p className="text-[9px] font-bold text-rose-400 uppercase tracking-wider">Never Read — Follow Up</p>
+                <p className="text-lg font-bold text-rose-600 mt-0.5">{waSummary.neverRead}</p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Card 1: Workspace User Directory */}
               <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 flex flex-col justify-between space-y-4 hover:shadow-md transition-shadow">
@@ -2769,6 +2842,26 @@ export default function ClientAdminPanel({
                 >
                   <Download className="w-3.5 h-3.5" />
                   Download Scoreboard Report
+                </button>
+              </div>
+
+              {/* Card 5: WhatsApp Engagement */}
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 flex flex-col justify-between space-y-4 hover:shadow-md transition-shadow">
+                <div className="space-y-1">
+                  <h4 className="text-xs font-bold text-slate-805 uppercase tracking-wider flex items-center gap-1.5">
+                    <MessageCircle className="w-4 h-4 text-indigo-600" />
+                    WhatsApp Engagement
+                  </h4>
+                  <p className="text-xs text-slate-500 leading-normal">
+                    Download sent/delivered/read/replied WhatsApp stats per staff member (last 30 days) — spot who's silently missing task alerts and notices.
+                  </p>
+                </div>
+                <button
+                  onClick={downloadWhatsAppEngagementCSV}
+                  className="w-full sm:w-fit py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm shadow-indigo-100"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download WhatsApp Report
                 </button>
               </div>
             </div>

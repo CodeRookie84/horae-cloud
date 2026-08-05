@@ -473,7 +473,7 @@ async function sendNotifications(user: any, payload: {
     if ((count || 0) < MAX_MESSAGES_PER_USER_DAY) {
       promises.push(
         sendWhatsApp(user.phone_number, payload.waMessage, payload.waTemplate)
-          .then(() => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "sent", undefined, isUrgent))
+          .then(waMessageId => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "sent", undefined, isUrgent, waMessageId))
           .catch(e => logNotif(user.id, tenantId, eventType, refId, "whatsapp", "failed", String(e), isUrgent))
       );
     }
@@ -501,7 +501,10 @@ async function sendNotifications(user: any, payload: {
 
 // ─── WhatsApp (Meta Cloud API) ────────────────────────────────────────────────
 
-async function sendWhatsApp(phone: string, message: string, template?: { name: string, params: string[] }): Promise<void> {
+/** Returns the Meta WhatsApp message id (WAMID) for the send, so delivery/
+ * read receipts arriving later on the webhook can be matched back to this
+ * exact notification_log row. */
+async function sendWhatsApp(phone: string, message: string, template?: { name: string, params: string[] }): Promise<string | undefined> {
   const body: any = {
     messaging_product: "whatsapp",
     to: phone.replace(/\D/g, ""),
@@ -533,6 +536,8 @@ async function sendWhatsApp(phone: string, message: string, template?: { name: s
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`WA ${res.status}: ${await res.text()}`);
+  const data = await res.json().catch(() => null);
+  return data?.messages?.[0]?.id;
 }
 
 // ─── Web Push (VAPID via the web-push library) ───────────────────────────────
@@ -617,10 +622,11 @@ async function getTaskRecipients(task: any, excludeId?: string) {
   return data || [];
 }
 
-async function logNotif(userId: string, tenantId: string, eventType: string, refId: string, channel: string, status: string, error?: string, isUrgent: boolean = false) {
+async function logNotif(userId: string, tenantId: string, eventType: string, refId: string, channel: string, status: string, error?: string, isUrgent: boolean = false, waMessageId?: string) {
   await supabase.from("notification_log").insert([{
     user_id: userId, tenant_id: tenantId, event_type: eventType,
     reference_id: refId, channel, status, error_message: error, is_urgent: isUrgent,
+    wa_message_id: waMessageId,
   }]);
 }
 

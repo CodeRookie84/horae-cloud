@@ -128,25 +128,39 @@ export async function autoAddUserToChannels(
   const outletName = tenant ? tenant.name : 'Outlet';
   const slug = outletName.toLowerCase().replace(/\s+/g, '-');
 
-  // Find outlet channel
+  // Find outlet channel — scoped to this exact tenant, so an outlet at a
+  // different client with the same name/slug (e.g. two clients each with an
+  // outlet named "Main" or "Outlet") never gets silently matched instead.
   const { data: outletChannel } = await supabase
     .from('chat_channels')
     .select('id, name')
-    // .eq('tenant_id', tenantId)
+    .eq('tenant_id', tenantId)
     .eq('type', 'outlet')
     .eq('name', slug)
     .limit(1);
 
   if (outletChannel && outletChannel[0]) toJoin.add(outletChannel[0].id);
 
-  // Dynamic Rules from auto_rules table
+  // Dynamic Rules from auto_rules table. chat_channel_auto_rules has no
+  // tenant_id column of its own (only channel_id) — filter by cross-checking
+  // each rule's channel actually belongs to this tenant, otherwise a rule
+  // created for one client would silently auto-add every new hire at every
+  // other client too.
   const { data: rules } = await supabase
     .from('chat_channel_auto_rules')
-    .select('channel_id, role, department')
-    // .eq('tenant_id', tenantId);
+    .select('channel_id, role, department');
 
-  if (rules) {
+  if (rules && rules.length > 0) {
+    const ruleChannelIds = Array.from(new Set(rules.map((r: any) => r.channel_id)));
+    const { data: ruleChannels } = await supabase
+      .from('chat_channels')
+      .select('id')
+      .in('id', ruleChannelIds)
+      .eq('tenant_id', tenantId);
+    const validChannelIds = new Set((ruleChannels ?? []).map((c: any) => c.id));
+
     for (const rule of rules) {
+      if (!validChannelIds.has(rule.channel_id)) continue;
       const roleMatch = !rule.role || rule.role === role;
       const deptMatch = !rule.department || rule.department === department;
       if (roleMatch && deptMatch) toJoin.add(rule.channel_id);
@@ -284,7 +298,7 @@ export async function getChannels(tenantId: string, userId: string): Promise<Cha
   const { data, error } = await supabase
     .from('chat_channels')
     .select('*')
-    // .eq('tenant_id', tenantId)
+    .eq('tenant_id', tenantId)
     .in('id', channelIds)
     .eq('is_archived', false)
     .order('type', { ascending: true })
@@ -341,10 +355,15 @@ export async function getAllChannels(outletTenantIds: string[], userId: string):
   
   let memberData: any[] = [];
   if (memberChannelIds.length > 0) {
+    // Scoped to this client's own outlets too — otherwise a channel the user
+    // happens to be a member of at a DIFFERENT client (e.g. picked up while
+    // seeding/creating outlets as an impersonating admin) leaks into this
+    // client's Team Talk room list.
     const { data: mData } = await supabase
       .from('chat_channels')
       .select('*')
       .in('id', memberChannelIds)
+      .in('tenant_id', outletTenantIds)
       .eq('is_archived', false);
     if (mData) memberData = mData;
   }
@@ -1090,7 +1109,7 @@ export async function searchMessages(
   let dbQuery = supabase
     .from('chat_messages')
     .select('*')
-    // .eq('tenant_id', tenantId)
+    .eq('tenant_id', tenantId)
     .eq('is_deleted', false)
     .textSearch('content', query, { type: 'websearch' })
     .limit(30);
@@ -1177,7 +1196,7 @@ export async function getMentions(
     .from('chat_mentions')
     .select('message_id')
     .eq('mentioned_user_id', userId)
-    // .eq('tenant_id', tenantId)
+    .eq('tenant_id', tenantId)
     .eq('is_read', false)
     .order('created_at', { ascending: false })
     .limit(30);
@@ -1222,7 +1241,7 @@ export async function getMentionCount(userId: string, tenantId: string): Promise
     .from('chat_mentions')
     .select('message_id')
     .eq('mentioned_user_id', userId)
-    // .eq('tenant_id', tenantId)
+    .eq('tenant_id', tenantId)
     .eq('is_read', false);
   return new Set((data ?? []).map((r: any) => r.message_id)).size;
 }
@@ -1293,7 +1312,7 @@ export async function getOutletChannel(tenantId: string): Promise<ChatChannel | 
   const { data } = await supabase
     .from('chat_channels')
     .select('*')
-    // .eq('tenant_id', tenantId)
+    .eq('tenant_id', tenantId)
     .eq('is_archived', false)
     .or('name.eq.general,type.eq.outlet')
     .limit(1)
@@ -1307,7 +1326,7 @@ export async function getAnnouncementChannel(tenantId: string): Promise<ChatChan
   const { data } = await supabase
     .from('chat_channels')
     .select('*')
-    // .eq('tenant_id', tenantId)
+    .eq('tenant_id', tenantId)
     .eq('type', 'announcement')
     .eq('is_archived', false)
     .limit(1)
@@ -1419,7 +1438,7 @@ export async function getEscalatedMessages(tenantId: string, role: string): Prom
   const { data, error } = await supabase
     .from('chat_messages')
     .select('*')
-    // .eq('tenant_id', tenantId)
+    .eq('tenant_id', tenantId)
     .eq('escalation_status', 'pending')
     .in('escalation_role', [role, 'Manager', 'Management']) // Basic role matching
     .eq('is_deleted', false)
@@ -1442,7 +1461,7 @@ export async function getAllThreads(tenantId: string, limit: number = 50): Promi
   const { data, error } = await supabase
     .from('chat_messages')
     .select('*')
-    // .eq('tenant_id', tenantId)
+    .eq('tenant_id', tenantId)
     .not('thread_status', 'is', null) // Has a thread status (meaning it's a thread root)
     .is('thread_id', null) // Is a root message
     .eq('is_deleted', false)
@@ -1460,7 +1479,7 @@ export async function getActiveThreads(tenantId: string, userId: string, isAdmin
     const { data, error } = await supabase
       .from('chat_messages')
       .select('*')
-      // .eq('tenant_id', tenantId)
+      .eq('tenant_id', tenantId)
       .eq('thread_status', 'active')
       .is('thread_id', null)
       .eq('is_deleted', false)
@@ -1484,7 +1503,7 @@ export async function getActiveThreads(tenantId: string, userId: string, isAdmin
     let query = supabase
       .from('chat_messages')
       .select('*')
-      // .eq('tenant_id', tenantId)
+      .eq('tenant_id', tenantId)
       .eq('thread_status', 'active')
       .is('thread_id', null)
       .eq('is_deleted', false);
