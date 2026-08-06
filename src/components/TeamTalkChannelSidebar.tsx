@@ -54,6 +54,13 @@ interface ChannelSidebarProps {
   onMarkPrioritySeen?: (msgIds: string[]) => void;
   /** Open the priority-people picker */
   onManagePriority?: () => void;
+  /**
+   * Simplified flat view for less-technical staff: one WhatsApp-style list of
+   * all their chats (unread first), with no Unread/Everything-Else grouping or
+   * Direct-Chats/Channels/Rooms sub-sections. Priority strip + mentions summary
+   * are kept (they're the "don't miss" surface). Managers get the full view.
+   */
+  simplified?: boolean;
 }
 
 function getChannelIcon(type: ChatChannel['type']) {
@@ -266,6 +273,7 @@ export default function TeamTalkChannelSidebar({
   onOpenPriorityMessage,
   onMarkPrioritySeen,
   onManagePriority,
+  simplified = false,
 }: ChannelSidebarProps) {
   const canManageChannels = currentUser.role === Role.ADMIN || currentUser.role === Role.MANAGER || currentUser.role === Role.SUPER_ADMIN;
   // Channel create/delete/add-member is client-admin only (Manager/Supervisor cannot)
@@ -295,6 +303,15 @@ export default function TeamTalkChannelSidebar({
   const hasUnreadSection = dmUnread.length > 0 || groupsUnread.length > 0 || channelsUnread.length > 0;
   const hasReadSection = dmRead.length > 0 || groupsRead.length > 0 || channelsRead.length > 0;
   const hasNoChannels = visibleDMChannels.length === 0 && groupChannelsList.length === 0 && otherChannelsList.length === 0;
+
+  // Simplified (staff) view: one flat chat list, unread first then alphabetical.
+  const flatChannels = [...visibleDMChannels, ...groupChannelsList, ...otherChannelsList]
+    .sort((a, b) => {
+      const au = (a.unreadCount ?? 0) > 0 ? 0 : 1;
+      const bu = (b.unreadCount ?? 0) > 0 ? 0 : 1;
+      if (au !== bu) return au - bu;
+      return a.name.localeCompare(b.name);
+    });
 
   // Group unread mentions by channel — most recent first — for per-row badges and the summary popover
   const mentionsByChannel = new Map<string, TeamTalkMessage[]>();
@@ -499,6 +516,17 @@ export default function TeamTalkChannelSidebar({
           </div>
         )}
 
+        {simplified ? (
+          <SubSection
+            sectionKey="all-chats"
+            label="Chats" icon={MessageCircle} channels={flatChannels}
+            bgClass="bg-slate-100 text-slate-700" iconClass="text-slate-500" badgeClass="bg-slate-200 text-slate-800"
+            onAdd={onStartDirectChat} onAddTitle="Start direct chat"
+            onDeleteThread={onDeleteThread}
+            onCloseThread={onCloseThread}
+            alwaysShow
+          />
+        ) : (
         <>
             {/* ═══ UNREAD GROUP ═══ */}
             {hasUnreadSection && (
@@ -592,6 +620,7 @@ export default function TeamTalkChannelSidebar({
               </div>
             )}
           </>
+        )}
       </nav>
 
       {/* Current user footer */}

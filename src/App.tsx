@@ -33,6 +33,8 @@ import Sidebar from "./components/Sidebar";
 import Dashboard from "./components/Dashboard";
 import Login from "./components/Login";
 import NotificationPermissionBanner from "./components/NotificationPermissionBanner";
+import MobileBottomNav from "./components/MobileBottomNav";
+import { getAppModules, getBottomNavModules } from "./services/appModules";
 import * as trainingSvc from "./services/trainingService";
 
 // Lazy-loaded: everything below is one large admin/workflow module that's only
@@ -52,6 +54,7 @@ const SwotCompass = lazy(() => import("./components/swot/SwotCompass"));
 const MaintenanceHub = lazy(() => import("./components/maintenance/MaintenanceHub"));
 const Training = lazy(() => import("./components/Training"));
 const TrainingAdmin = lazy(() => import("./components/TrainingAdmin"));
+const AppLauncher = lazy(() => import("./components/AppLauncher"));
 
 
 /** Single row in the notifications dropdown — swipe left/right to dismiss, tap to open + mark read. */
@@ -156,7 +159,7 @@ function AppInner() {
   }, []);
 
   // Navigation Track — sync with URL
-  const [activeTab, setActiveTab] = useState<string>("dashboard");
+  const [activeTab, setActiveTab] = useState<string>("home");
   // Track which item ID was deep-linked (passed to child components)
   const [deepLinkedItemId, setDeepLinkedItemId] = useState<string | undefined>(undefined);
 
@@ -165,7 +168,7 @@ function AppInner() {
     setDeepLinkedItemId(itemId);
     // Push browser URL to match (enables native back-button navigation)
     const urlMap: Record<string, string> = {
-      dashboard: '/dashboard', notices: '/notices', checklists: '/checklists',
+      home: '/home', dashboard: '/dashboard', notices: '/notices', checklists: '/checklists',
       tasks: '/tasks', quizzes: '/quizzes', sops: '/sops', 'admin-panel': '/admin',
       'horae-admin': '/horae-admin', 'checklist-report': '/checklist-report',
       'team-talk': '/teamtalk', swot: '/swot', maintenance: '/maintenance', training: '/training',
@@ -175,37 +178,47 @@ function AppInner() {
     }
   }, [navigate, location.pathname]);
 
-  // History padding: Ensure PWA back-swipe always goes to dashboard instead of exiting if opened via deep link
+  // History padding: Ensure PWA back-swipe always goes to the launcher home
+  // instead of exiting if opened via deep link
   useEffect(() => {
-    if (window.history.length <= 1 && location.pathname !== '/dashboard' && location.pathname !== '/' && location.pathname !== '') {
-      window.history.replaceState(null, '', '/dashboard');
+    if (window.history.length <= 1 && location.pathname !== '/home' && location.pathname !== '/' && location.pathname !== '') {
+      window.history.replaceState(null, '', '/home');
       window.history.pushState(null, '', location.pathname);
     }
   }, []);
 
-  // Sync state when user presses the browser back button
+  // Sync the active tab FROM the URL whenever the URL changes (browser
+  // back/forward, deep links). Deliberately depends on location.pathname ONLY,
+  // not activeTab: including activeTab made this re-run on every manual tab
+  // switch and — if React Router's location hadn't propagated yet that render —
+  // revert activeTab back to the previous URL's tab, so clicks appeared to do
+  // nothing. Functional updates let us drop activeTab from the closure safely.
   useEffect(() => {
     const path = location.pathname;
     const pathParts = path.split('/');
-    const mainRoute = '/' + (pathParts[1] || 'dashboard');
+    const mainRoute = '/' + (pathParts[1] || 'home');
     const itemId = pathParts[2] || undefined;
-    
+
     const reverseMap: Record<string, string> = {
-      '/dashboard': 'dashboard', '/notices': 'notices', '/checklists': 'checklists',
+      '/home': 'home', '/dashboard': 'dashboard', '/notices': 'notices', '/checklists': 'checklists',
       '/tasks': 'tasks', '/quizzes': 'quizzes', '/sops': 'sops', '/admin': 'admin-panel',
       '/horae-admin': 'horae-admin', '/checklist-report': 'checklist-report',
       '/teamtalk': 'team-talk', '/swot': 'swot', '/maintenance': 'maintenance', '/training': 'training',
     };
-    
-    const targetTab = reverseMap[mainRoute];
-    if (targetTab && targetTab !== activeTab) {
-      setActiveTab(targetTab);
-      setDeepLinkedItemId(itemId);
-    }
-  }, [location.pathname, activeTab]);
 
+    const targetTab = reverseMap[mainRoute];
+    if (!targetTab) return;
+    // Setting the same value is a no-op React bails on, so this is safe to run
+    // unconditionally on URL change without needing activeTab in the closure.
+    setActiveTab(targetTab);
+    setDeepLinkedItemId(itemId);
+  }, [location.pathname]);
+
+  // With the launcher home in place, every module's "back" returns to the app
+  // grid (home), not the dashboard — home always exists for every plan/role,
+  // so this is a stable landing target regardless of feature gating.
   const handleBack = useCallback(() => {
-    handleSetActiveTab('dashboard');
+    handleSetActiveTab('home');
   }, [handleSetActiveTab]);
 
 
@@ -251,11 +264,22 @@ function AppInner() {
   // resolves to the home tab SYNCHRONOUSLY here — so the dashboard never paints
   // and there's no reactive redirect bouncing between the two (which flickered).
   const effectiveTab = (activeTab === "dashboard" && !dashboardMeaningful) ? homeTab : activeTab;
-  // "Back to Dashboard" only makes sense when there IS a dashboard — for a
-  // Training-only plan it silently no-oped (handleBack set activeTab to
-  // "dashboard", but effectiveTab resolved right back to "training", so the
-  // button looked broken). Pass undefined to hide the button entirely instead.
-  const backToDashboard = dashboardMeaningful ? handleBack : undefined;
+  // Every module's back button now returns to the launcher home, which exists
+  // for every plan/role — so it's always a valid target (unlike the old
+  // dashboard, which some plans don't surface). Kept the name for the many
+  // `onBack={backToDashboard}` call sites below.
+  const backToDashboard = handleBack;
+
+  // Modules the current user can open — shared source of truth for the launcher
+  // home grid and the mobile bottom nav (same plan/role gating as the sidebar).
+  const launcherModules = getAppModules({
+    features: clientFeatures,
+    role: activeUser?.role ?? '',
+    clitAccess: !!activeUser?.clitAccess,
+    dashboardMeaningful,
+    badges: { 'team-talk': chatUnreadCount },
+  });
+  const bottomNavModules = getBottomNavModules(launcherModules);
   
   // Loading state
   const [loading, setLoading] = useState<boolean>(true);
@@ -378,9 +402,9 @@ function AppInner() {
       if (userObj.role === Role.SUPER_ADMIN) {
         handleSetActiveTab("horae-admin");
       } else if (activeTab === "horae-admin") {
-        handleSetActiveTab("dashboard");
+        handleSetActiveTab("home");
       } else if (userObj.role !== Role.ADMIN && (activeTab === "checklist-report" || activeTab === "admin-panel")) {
-        handleSetActiveTab("dashboard");
+        handleSetActiveTab("home");
       }
 
       setNotices(noticesList);
@@ -1259,6 +1283,15 @@ function AppInner() {
                 />
               ) : (
                 <>
+                  {effectiveTab === "home" && (
+                    <AppLauncher
+                      activeUser={activeUser}
+                      clientName={activeClient?.name}
+                      modules={launcherModules}
+                      onNavigate={handleSetActiveTab}
+                    />
+                  )}
+
                   {effectiveTab === "dashboard" && (
                     <Dashboard
                       activeTenant={activeTenant}
@@ -1439,6 +1472,16 @@ function AppInner() {
           </AnimatePresence>
         </main>
 
+        {/* Mobile bottom nav — hidden inside Team Talk (it has its own bottom
+            input bar) and for the super-admin console. Sits in the flex column
+            so it never overlaps scrolling content. */}
+        {activeTab !== 'team-talk' && activeUser.role !== Role.SUPER_ADMIN && (
+          <MobileBottomNav
+            items={bottomNavModules}
+            activeTab={effectiveTab}
+            onNavigate={handleSetActiveTab}
+          />
+        )}
 
       </div>
 

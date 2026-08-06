@@ -2020,6 +2020,7 @@ export default function TeamTalk({
               onOpenPriorityMessage={handleOpenPriorityMessage}
               onMarkPrioritySeen={handleMarkPrioritySeen}
               onManagePriority={() => setShowPriorityManager(true)}
+              simplified={!userIsManager}
             />
           )}
         </div>
