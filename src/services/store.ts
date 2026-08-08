@@ -23,7 +23,6 @@ import {
   isTargetMatched
 } from "../types";
 import supabase from "./supabaseClient";
-import * as chatService from "./chatService";
 import * as plans from "./plans";
 
 export class StoreService {
@@ -968,9 +967,7 @@ export class StoreService {
     // Save to memory so it's available next time entry
     this.addCustomRole(normRole);
     this.addCustomDept(normDept);
-    
-    // Auto-add to Team Talk channels based on dept + role (zero manual setup needed)
-    chatService.autoAddUserToChannels(tenantId, newUser.id, newUser.role, newUser.department).catch(console.error);
+
     return {
       id: newUser.id,
       name: newUser.name,

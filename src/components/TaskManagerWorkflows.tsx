@@ -40,7 +40,7 @@ import {
 import { Task, User as AppUser, Role, Department, Tenant } from "../types";
 import { supabase } from '../services/supabaseClient';
 import { store, translateText } from "../services/store";
-import TeamTalkMemberPicker, { resolveMemberIds, EMPTY_SELECTION, type MemberPickerSelection } from "./TeamTalkMemberPicker";
+import MemberPicker, { resolveMemberIds, EMPTY_SELECTION, type MemberPickerSelection } from "./MemberPicker";
 
 interface TaskManagerWorkflowsProps {
   tasks: Task[];
@@ -2312,7 +2312,7 @@ export default function TaskManagerWorkflows({
 
               <div className="space-y-1">
                 <label className="text-sm text-slate-700 font-semibold tracking-wider block">Assigned to (Select Multiple)</label>
-                <TeamTalkMemberPicker
+                <MemberPicker
                   candidates={tenantUsers}
                   tenants={tenants}
                   value={assigneePicked}

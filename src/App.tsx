@@ -49,7 +49,6 @@ const HoraeAdminPanel = lazy(() => import("./components/HoraeAdminPanel"));
 const Quizzes = lazy(() => import("./components/Quizzes"));
 const SOPs = lazy(() => import("./components/SOPs"));
 const ClientAdminPanel = lazy(() => import("./components/ClientAdminPanel"));
-const TeamTalk = lazy(() => import("./components/TeamTalk"));
 const SwotCompass = lazy(() => import("./components/swot/SwotCompass"));
 const MaintenanceHub = lazy(() => import("./components/maintenance/MaintenanceHub"));
 const Training = lazy(() => import("./components/Training"));
@@ -171,7 +170,7 @@ function AppInner() {
       home: '/home', dashboard: '/dashboard', notices: '/notices', checklists: '/checklists',
       tasks: '/tasks', quizzes: '/quizzes', sops: '/sops', 'admin-panel': '/admin',
       'horae-admin': '/horae-admin', 'checklist-report': '/checklist-report',
-      'team-talk': '/teamtalk', swot: '/swot', maintenance: '/maintenance', training: '/training',
+      swot: '/swot', maintenance: '/maintenance', training: '/training',
     };
     if (urlMap[tab] && location.pathname !== urlMap[tab]) {
       navigate(urlMap[tab]);
@@ -203,7 +202,7 @@ function AppInner() {
       '/home': 'home', '/dashboard': 'dashboard', '/notices': 'notices', '/checklists': 'checklists',
       '/tasks': 'tasks', '/quizzes': 'quizzes', '/sops': 'sops', '/admin': 'admin-panel',
       '/horae-admin': 'horae-admin', '/checklist-report': 'checklist-report',
-      '/teamtalk': 'team-talk', '/swot': 'swot', '/maintenance': 'maintenance', '/training': 'training',
+      '/swot': 'swot', '/maintenance': 'maintenance', '/training': 'training',
     };
 
     const targetTab = reverseMap[mainRoute];
@@ -246,7 +245,6 @@ function AppInner() {
   const [sopReadStatuses, setSopReadStatuses] = useState<any[]>([]);
   const [trainings, setTrainings] = useState<any[]>([]);
   const [trainingAttempts, setTrainingAttempts] = useState<any[]>([]);
-  const [chatUnreadCount, setChatUnreadCount] = useState<number>(0);
 
   const isTrialExpired = !!activeClient && plans.isTrialExpired(activeClient.plan, activeClient.createdAt);
   const clientFeatures = activeClient?.services ?? [];
@@ -255,7 +253,7 @@ function AppInner() {
   // The dashboard is only worth showing when the plan grants something it
   // surfaces. A Training-only client has an empty dashboard, so Training becomes
   // their landing page and the Dashboard tab is hidden.
-  const DASHBOARD_FEATURES = ["tasks", "teamtalk", "notices", "checklists", "quizzes"];
+  const DASHBOARD_FEATURES = ["tasks", "notices", "checklists", "quizzes"];
   const dashboardMeaningful = clientFeatures.some(f => DASHBOARD_FEATURES.includes(f));
   const homeTab = dashboardMeaningful ? "dashboard"
     : clientFeatures.includes("training") ? "training"
@@ -277,7 +275,6 @@ function AppInner() {
     role: activeUser?.role ?? '',
     clitAccess: !!activeUser?.clitAccess,
     dashboardMeaningful,
-    badges: { 'team-talk': chatUnreadCount },
   });
   const bottomNavModules = getBottomNavModules(launcherModules);
   
@@ -374,23 +371,6 @@ function AppInner() {
       setActiveTenant(tenantObj);
       setTenantUsers(matchedUsers);
       setActiveUser(userObj);
-      
-      // Fetch unread channels, threads & mentions — the dashboard total is the sum of all three:
-      // plain unread messages in DMs/channels/rooms, unread thread replies, and unread @mentions.
-      const { getChannels, getAllChannels, getUnreadThreads, getMentionCount } = await import('./services/chatService');
-      const isManager = [Role.ADMIN, Role.MANAGER, Role.SUPER_ADMIN, 'Admin', 'Manager', 'Super Admin'].includes(userObj.role as any);
-
-      const clientOutletIds = filteredTenants.map(t => t.id);
-      const [channels, unreadThreads, mentionCount] = await Promise.all([
-        isManager ? getAllChannels(clientOutletIds, userObj.id) : getChannels(tenantObj.id, userObj.id),
-        getUnreadThreads(tenantObj.id, userObj.id),
-        getMentionCount(userObj.id, tenantObj.id),
-      ]);
-
-      const unreadCount = channels.reduce((acc, ch) => acc + (ch.unreadCount ?? 0), 0) +
-                          unreadThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 1), 0) +
-                          mentionCount;
-      setChatUnreadCount(unreadCount);
 
       setQuizzes(quizzesList);
       setQuizAttempts(attemptsList);
@@ -574,35 +554,6 @@ function AppInner() {
     };
   }, [activeUser?.id, lightSync]);
 
-  // Poll for chat unread counts to keep sidebar updated
-  useEffect(() => {
-    if (!activeUser || !activeTenant) return;
-    const fetchUnread = () => {
-      import('./services/chatService').then(({ getChannels, getAllChannels, getUnreadThreads, getMentionCount }) => {
-        const isManager = [Role.ADMIN, Role.MANAGER, Role.SUPER_ADMIN, 'Admin', 'Manager', 'Super Admin'].includes(activeUser.role as any);
-        const channelsPromise = isManager
-          ? getAllChannels(tenants.map(t => t.id), activeUser.id)
-          : getChannels(activeUser.tenantId, activeUser.id);
-
-        Promise.all([
-          channelsPromise,
-          getUnreadThreads(activeUser.tenantId, activeUser.id),
-          getMentionCount(activeUser.id, activeUser.tenantId),
-        ]).then(([channels, unreadThreads, mentionCount]) => {
-          const count = channels.reduce((acc, ch) => acc + (ch.unreadCount ?? 0), 0) +
-            unreadThreads.reduce((acc, t) => acc + (t.unreadReplyCount ?? 1), 0) +
-            mentionCount;
-          setChatUnreadCount(count);
-        }).catch(() => {});
-      });
-    };
-    fetchUnread();
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') fetchUnread();
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [activeUser, activeTenant, tenants]);
-
   // ── Apply deep link once data is loaded ───────────────────────────────────
   useEffect(() => {
     if (!loading && deepLinkRef.current) {
@@ -668,24 +619,7 @@ function AppInner() {
   };
 
   const handleAddTenant = async (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => {
-    const newTenant = await store.addTenant(clientId, name, subdomain, logo, plan);
-
-    // Auto-generate the Outlet room in Team Talk and make sure every client
-    // admin (not just whoever clicked "Add Outlet") is already a member of it.
-    if (activeUser) {
-      try {
-        const { ensureOutletChannelsForClient } = await import('./services/chatService');
-        const clientOutletIds = [...allTenants.filter(t => t.clientId === clientId).map(t => t.id), newTenant.id];
-        const clientUsers = allUsers.filter(u => clientOutletIds.includes(u.tenantId));
-        const adminUserIds = clientUsers
-          .filter(u => u.role === Role.ADMIN || u.role === Role.SUPER_ADMIN)
-          .map(u => u.id);
-        await ensureOutletChannelsForClient(clientId, clientOutletIds, clientUsers, adminUserIds, activeUser.id);
-      } catch (e) {
-        console.error("Failed to auto-create outlet room:", e);
-      }
-    }
-
+    await store.addTenant(clientId, name, subdomain, logo, plan);
     await refreshLocalState();
   };
 
@@ -1082,7 +1016,6 @@ function AppInner() {
         activeTab={effectiveTab}
         onSelectTab={(tab) => handleSetActiveTab(tab)}
         notificationsCount={notifications.length}
-        chatUnreadCount={chatUnreadCount}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
         allUsers={allUsers}
@@ -1113,7 +1046,6 @@ function AppInner() {
         )}
 
         {/* TOP STATUS BAR BAR */}
-        {activeTab !== 'team-talk' && (
         <header className="bg-white/70 backdrop-blur-xl border-b border-slate-100 px-4 py-3 md:px-8 md:py-4 flex items-center justify-between shrink-0" id="top-navbar">
           <div className="flex items-center gap-3">
             {/* Hamburger Menu Toggle */}
@@ -1215,10 +1147,9 @@ function AppInner() {
             </div>
           </div>
         </header>
-        )}
 
         {/* CONTAINER SHEATH WITH SCROLLING INTERNAL COLUMN */}
-        <main className={`flex-1 overflow-y-auto ${activeTab === 'team-talk' ? 'bg-white p-0' : 'bg-[#F1F5F9] p-4 md:p-5 lg:p-6'}`} id="scrolling-main-box">
+        <main className="flex-1 overflow-y-auto bg-[#F1F5F9] p-4 md:p-5 lg:p-6" id="scrolling-main-box">
           <AnimatePresence mode="wait">
             <motion.div
               key={effectiveTab}
@@ -1226,7 +1157,7 @@ function AppInner() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
               transition={{ duration: 0.25 }}
-              className={`h-full ${activeTab === 'team-talk' ? 'w-full' : 'max-w-7xl mx-auto'}`}
+              className="h-full max-w-7xl mx-auto"
             >
               {/* Tab routing mappings */}
               <Suspense fallback={
@@ -1249,7 +1180,7 @@ function AppInner() {
                   {/* Plan overview (informational — activation is handled by Horae) */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full pt-2 text-left">
                     {([
-                      { name: "Essential", desc: "Task Manager + Team Talk" },
+                      { name: "Essential", desc: "Task Manager" },
                       { name: "Pro", desc: "Essential + Checklists, Equipment Maintenance & Notice Board" },
                       { name: "Enterprise", desc: "Pro + Training, Quizzes & SOPs" },
                       { name: "Training", desc: "Training only — combinable with Essential or Pro" },
@@ -1394,22 +1325,6 @@ function AppInner() {
                     )
                   )}
 
-                  {activeTab === "team-talk" && hasFeature("teamtalk") && (
-                    <TeamTalk
-                      activeUser={activeUser}
-                      tenantId={activeUser.tenantId}
-                      tenants={tenants}
-                      allTenantUsers={[Role.SUPER_ADMIN, Role.ADMIN].includes(activeUser.role as Role) ? allUsers : allUsers.filter(u => tenants.map(t => t.id).includes(u.tenantId))}
-                      tasks={tasks}
-                      onCreateTask={async (title, description, _channelId, _msgId, assigneeIds) => {
-                        const targetAssignees = assigneeIds && assigneeIds.length > 0 ? assigneeIds : [activeUser.id];
-                        const taskId = await handleAddTask(title, description, 'High', new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], targetAssignees, activeUser.tenantId, _channelId, _msgId);
-                        return taskId;
-                      }}
-                      onBack={backToDashboard}
-                    />
-                  )}
-
                   {activeTab === "swot" && (
                     <SwotCompass
                       activeUser={activeUser}
@@ -1472,10 +1387,9 @@ function AppInner() {
           </AnimatePresence>
         </main>
 
-        {/* Mobile bottom nav — hidden inside Team Talk (it has its own bottom
-            input bar) and for the super-admin console. Sits in the flex column
-            so it never overlaps scrolling content. */}
-        {activeTab !== 'team-talk' && activeUser.role !== Role.SUPER_ADMIN && (
+        {/* Mobile bottom nav — hidden for the super-admin console. Sits in the
+            flex column so it never overlaps scrolling content. */}
+        {activeUser.role !== Role.SUPER_ADMIN && (
           <MobileBottomNav
             items={bottomNavModules}
             activeTab={effectiveTab}

@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * TeamTalkMemberPicker.tsx — Typeahead, multi-select member picker.
+ * MemberPicker.tsx — Typeahead, multi-select member picker.
  * Type a name/department/role/outlet and pick matching suggestions instead
  * of scrolling a full checkbox list. Selecting a group (department/role/outlet)
  * expands to every matching user; selections render as removable chips.
@@ -20,7 +20,7 @@ export interface MemberPickerSelection {
 
 const EMPTY_SELECTION: MemberPickerSelection = { outlets: [], depts: [], roles: [], individuals: [] };
 
-interface TeamTalkMemberPickerProps {
+interface MemberPickerProps {
   /** Full pool of users eligible to be added — already excludes existing members */
   candidates: AppUser[];
   /** Outlets available for group-select (omit to hide the Outlets group, e.g. inside a single-outlet context) */
@@ -46,7 +46,7 @@ function resolveMemberIds(selection: MemberPickerSelection, candidates: AppUser[
 
 export { resolveMemberIds, EMPTY_SELECTION };
 
-export default function TeamTalkMemberPicker({ candidates, tenants = [], value, onChange }: TeamTalkMemberPickerProps) {
+export default function MemberPicker({ candidates, tenants = [], value, onChange }: MemberPickerProps) {
   const [query, setQuery] = useState('');
 
   const allDepts = useMemo(() => Array.from(new Set(candidates.map(u => u.department).filter(Boolean))), [candidates]);

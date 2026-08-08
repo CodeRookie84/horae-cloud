@@ -4,8 +4,8 @@
  *
  * Dashboard — Patisserie Modern redesign.
  *
- * Layout: trial banner, greeting hero (greeting + date only), Team Talk and
- * Tasks action cards, and the fixed Workspace Tools strip.
+ * Layout: trial banner, greeting hero (greeting + date only), Tasks action
+ * card, and the fixed Workspace Tools strip.
  */
 
 import React from "react";
@@ -18,7 +18,6 @@ import {
   ChevronDown,
   MessageSquare,
   Plus,
-  MessageCircle,
   GraduationCap,
   Sparkles,
   Award,
@@ -78,19 +77,7 @@ export default function Dashboard({
 }: DashboardProps) {
   const has = (key: string) => features.includes(key);
   // ── State (unchanged from previous Dashboard) ──────────────────────────
-  const [teamTalkUnread, setTeamTalkUnread] = React.useState(0);
   const [isToolsExpanded, setIsToolsExpanded] = React.useState(true);
-
-  React.useEffect(() => {
-    import("../services/chatService").then(({ getChannels }) => {
-      getChannels(activeUser.tenantId, activeUser.id)
-        .then((channels) => {
-          const count = channels.reduce((acc, ch) => acc + (ch.unreadCount ?? 0), 0);
-          setTeamTalkUnread(count);
-        })
-        .catch(console.error);
-    });
-  }, [activeUser.tenantId, activeUser.id]);
 
   const [localChecked, setLocalChecked] = React.useState<{ [itemId: string]: boolean }>(() => {
     const init: { [itemId: string]: boolean } = {};
@@ -314,44 +301,9 @@ export default function Dashboard({
         </div>
       </section>
 
-      {/* ── Two action cards: Team Talk preview + Tasks summary ───────── */}
-      {(has("teamtalk") || has("tasks")) && (
-      <section id="dashboard-action-cards" className={`grid grid-cols-1 gap-6 ${has("teamtalk") && has("tasks") ? "lg:grid-cols-2" : ""}`}>
-        {/* Team Talk */}
-        {has("teamtalk") && (
-        <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-hidden">
-          <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-line)]">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-[var(--color-brand-tint)] text-[var(--color-brand)] flex items-center justify-center">
-                <MessageCircle className="w-4.5 h-4.5" />
-              </div>
-              <div>
-                <h3 className="font-display text-lg font-semibold text-[var(--color-ink)]">Team Talk</h3>
-                <p className="text-xs text-[var(--color-ink-soft)]">Channels, mentions and DMs</p>
-              </div>
-            </div>
-            <button
-              onClick={() => onNavigate("team-talk")}
-              className="text-white text-sm font-medium bg-[var(--color-brand)] hover:bg-[color-mix(in_srgb,var(--color-brand)_88%,var(--color-ink))] px-3.5 py-2 rounded-xl shadow-warm cursor-pointer transition-all"
-            >
-              Open &rarr;
-            </button>
-          </header>
-          <div className="px-6 py-5">
-            {teamTalkUnread === 0 ? (
-              <p className="text-sm text-[var(--color-ink-soft)]">All caught up across your channels.</p>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-brand-tint)] text-[var(--color-brand)] text-sm font-bold rounded-full animate-pulse">
-                  <MessageCircle className="w-3.5 h-3.5" />
-                  New unread messages
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-        )}
-
+      {/* ── Action card: Tasks summary ───────── */}
+      {has("tasks") && (
+      <section id="dashboard-action-cards" className="grid grid-cols-1 gap-6">
         {/* Tasks */}
         {has("tasks") && (
         <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-hidden">

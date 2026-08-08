@@ -9,7 +9,7 @@
  */
 import type { ComponentType } from 'react';
 import {
-  Layers, Megaphone, ClipboardCheck, MessageSquare, MessageCircle,
+  Layers, Megaphone, ClipboardCheck, MessageSquare,
   GraduationCap, BookOpen, FileText, Wrench, Compass, ShieldCheck,
 } from 'lucide-react';
 
@@ -30,7 +30,7 @@ export interface ModuleGateContext {
   clitAccess: boolean;
   /** Whether the Dashboard tab surfaces anything for this plan */
   dashboardMeaningful: boolean;
-  /** Per-module badge counts keyed by module id (e.g. { 'team-talk': 3 }) */
+  /** Per-module badge counts keyed by module id (e.g. { 'tasks': 3 }) */
   badges?: Record<string, number>;
 }
 
@@ -51,7 +51,6 @@ export function getAppModules(ctx: ModuleGateContext): AppModule[] {
   if (has('notices')) push({ id: 'notices', label: 'Notices', icon: Megaphone, accent: 'bg-amber-100 text-amber-600' });
   if (has('checklists')) push({ id: 'checklists', label: 'Checklists', icon: ClipboardCheck, accent: 'bg-emerald-100 text-emerald-600' });
   if (has('tasks')) push({ id: 'tasks', label: 'Tasks', icon: MessageSquare, accent: 'bg-indigo-100 text-indigo-600' });
-  if (has('teamtalk')) push({ id: 'team-talk', label: 'Team Talk', icon: MessageCircle, accent: 'bg-rose-100 text-rose-600' });
   if (has('maintenance') && (clitAccess || isAdmin(role))) push({ id: 'maintenance', label: 'Maintenance', icon: Wrench, accent: 'bg-slate-200 text-slate-700' });
   if (has('training')) push({ id: 'training', label: 'Training', icon: GraduationCap, accent: 'bg-violet-100 text-violet-600' });
   if (has('quizzes')) push({ id: 'quizzes', label: 'Quizzes', icon: BookOpen, accent: 'bg-sky-100 text-sky-600' });
@@ -67,12 +66,12 @@ export function getAppModules(ctx: ModuleGateContext): AppModule[] {
 
 /**
  * The 3 most operationally-relevant modules for the mobile bottom bar (plus a
- * Home button added by the nav component itself). Prefers Team Talk / Tasks /
- * Notices, falling back to whatever else the plan grants so the bar is never
+ * Home button added by the nav component itself). Prefers Tasks / Notices /
+ * Checklists, falling back to whatever else the plan grants so the bar is never
  * sparse.
  */
 export function getBottomNavModules(all: AppModule[]): AppModule[] {
-  const preferred = ['team-talk', 'tasks', 'notices', 'checklists', 'training'];
+  const preferred = ['tasks', 'notices', 'checklists', 'training'];
   const byId = new Map(all.map(m => [m.id, m]));
   const picked: AppModule[] = [];
   for (const id of preferred) {

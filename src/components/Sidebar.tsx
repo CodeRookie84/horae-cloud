@@ -19,7 +19,6 @@ import {
   LogOut,
   X,
   Key,
-  MessageCircle,
   Bell,
   BellOff,
   Compass,
@@ -46,8 +45,7 @@ interface SidebarProps {
   activeTab: string;
   onSelectTab: (tab: string) => void;
   notificationsCount: number;
-  chatUnreadCount?: number;
-  
+
   isOpen: boolean;
   onClose: () => void;
   allUsers: AppUser[];
@@ -70,7 +68,6 @@ export default function Sidebar({
   activeTab,
   onSelectTab,
   notificationsCount,
-  chatUnreadCount = 0,
   isOpen,
   onClose,
   allUsers,
@@ -146,13 +143,12 @@ export default function Sidebar({
   const showTasks = clientServices.includes("tasks");
   const showQuizzes = clientServices.includes("quizzes");
   const showSOPs = clientServices.includes("sops");
-  const showTeamTalk = clientServices.includes("teamtalk");
   const showTraining = clientServices.includes("training");
   const showMaintenance = clientServices.includes("maintenance") &&
     (activeUser.clitAccess || activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN);
   // Dashboard only appears when the plan surfaces something on it (Training-only
   // clients land on Training instead).
-  const showDashboard = ["tasks", "teamtalk", "notices", "checklists", "quizzes"].some(f => clientServices.includes(f));
+  const showDashboard = ["tasks", "notices", "checklists", "quizzes"].some(f => clientServices.includes(f));
 
   return (
     <>
@@ -456,32 +452,6 @@ export default function Sidebar({
                   </div>
                 </button>
               )}
-
-              {/* ── Team Talk ── */}
-              {showTeamTalk && (<>
-              <div className="text-sm text-slate-500 font-medium tracking-wide mt-4 mb-1 px-1">
-                Communication
-              </div>
-              <button
-                id="btn-team-talk"
-                onClick={() => handleTabClick("team-talk")}
-                className={`w-full flex items-center justify-between px-2.5 py-1.8 rounded-md text-sm font-medium transition-all cursor-pointer ${
-                  activeTab === "team-talk"
-                    ? "bg-gradient-to-r from-[#162D4E] to-slate-800 border border-[#C5A880]/30 text-slate-800 shadow-lg font-semibold"
-                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <MessageCircle className="w-3.5 h-3.5 text-[#C5A880]" />
-                  <span>Team Talk</span>
-                </div>
-                {chatUnreadCount > 0 && (
-                  <span className="bg-rose-500 text-slate-800 text-xs font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center leading-none">
-                    {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
-                  </span>
-                )}
-              </button>
-              </>)}
 
               {/* ── Growth Compass (personal SWOT) ── */}
               <div className="text-sm text-slate-500 font-medium tracking-wide mt-4 mb-1 px-1">

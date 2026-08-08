@@ -13,7 +13,7 @@ export type PlanId = "Free" | "Essential" | "Pro" | "Enterprise" | "Training";
 
 /** Canonical feature keys used across the sidebar + tab gating. */
 export type FeatureKey =
-  | "tasks" | "teamtalk" | "notices" | "checklists"
+  | "tasks" | "notices" | "checklists"
   | "maintenance" | "training" | "quizzes" | "sops";
 
 export const TRIAL_DAYS = 15;
@@ -21,14 +21,14 @@ const TRIAL_MS = TRIAL_DAYS * 24 * 60 * 60 * 1000;
 
 /** Every feature — the active Free trial grants all of these. */
 const ALL_FEATURES: FeatureKey[] = [
-  "tasks", "teamtalk", "notices", "checklists", "maintenance", "training", "quizzes", "sops",
+  "tasks", "notices", "checklists", "maintenance", "training", "quizzes", "sops",
 ];
 
 /** Base feature set per paid plan (before the Training add-on is applied). */
 const PLAN_BASE: Record<Exclude<PlanId, "Free">, FeatureKey[]> = {
-  Essential: ["tasks", "teamtalk"],
-  Pro: ["tasks", "teamtalk", "checklists", "maintenance", "notices"],
-  Enterprise: ["tasks", "teamtalk", "checklists", "maintenance", "notices", "training", "quizzes", "sops"],
+  Essential: ["tasks"],
+  Pro: ["tasks", "checklists", "maintenance", "notices"],
+  Enterprise: ["tasks", "checklists", "maintenance", "notices", "training", "quizzes", "sops"],
   Training: ["training"],
 };
 
@@ -43,7 +43,6 @@ export const PLAN_LABELS: Record<PlanId, string> = {
 /** Human labels for the feature keys — used by the admin plan preview. */
 export const FEATURE_LABELS: Record<FeatureKey, string> = {
   tasks: "Task Manager",
-  teamtalk: "Team Talk",
   notices: "Notice Board",
   checklists: "Checklists",
   maintenance: "Equipment Maintenance",

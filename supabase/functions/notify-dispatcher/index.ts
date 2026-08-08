@@ -84,8 +84,6 @@ serve(async (req) => {
       else if (type === "UPDATE")  await handleTaskUpdated(record, old_record, body.actorId);
     } else if (table === "notices" && type === "INSERT") {
       await handleNoticePosted(record);
-    } else if (table === "chat_messages" && type === "INSERT") {
-      await handleChatMessage(record);
     } else if (type === "TASK_COMMENT") {
       await handleTaskComment(body);
     } else if (type === "DIGEST") {
@@ -206,107 +204,6 @@ async function handleNoticePosted(notice: any) {
   }
 }
 
-/**
- * Team Talk: new chat message. DMs notify every other member on every
- * message (small, focused audience). Channels/groups only notify users who
- * were actually @mentioned or are participants of the thread being replied
- * to — broadcasting every channel message to every member would be noise,
- * not a notification.
- */
-async function handleChatMessage(msg: any) {
-  if (msg.message_type === "system") return;
-
-  const { data: channel } = await supabase
-    .from("chat_channels")
-    .select("*")
-    .eq("id", msg.channel_id)
-    .single();
-  if (!channel) return;
-
-  const recipientIds = new Set<string>();
-  // Track which users get a "mention" vs regular notification title
-  const mentionUserIds = new Set<string>(msg.mentioned_user_ids || []);
-
-  // All channel types: always notify @mentioned users
-  (msg.mentioned_user_ids || []).forEach((uid: string) => recipientIds.add(uid));
-
-  if (channel.type === "dm") {
-    // DMs: notify all members
-    const { data: members } = await supabase
-      .from("chat_members")
-      .select("user_id")
-      .eq("channel_id", msg.channel_id);
-    (members || []).forEach((m: any) => recipientIds.add(m.user_id));
-  } else {
-    // Channels & rooms: notify thread participants for replies
-    if (msg.thread_id) {
-      const { data: participants } = await supabase
-        .from("chat_thread_participants")
-        .select("user_id")
-        .eq("thread_id", msg.thread_id);
-      (participants || []).forEach((p: any) => recipientIds.add(p.user_id));
-    }
-    // For main-chat messages (not thread replies) AND for ALL channel messages:
-    // also notify all channel members — they need to know activity is happening.
-    // Anti-spam is applied per user below, so high-traffic channels don't spam.
-    const { data: members } = await supabase
-      .from("chat_members")
-      .select("user_id")
-      .eq("channel_id", msg.channel_id);
-    (members || []).forEach((m: any) => recipientIds.add(m.user_id));
-  }
-
-  recipientIds.delete(msg.sender_id);
-  if (recipientIds.size === 0) return;
-
-  // Recipients who have marked this sender as a "priority" person get a
-  // distinct, unmistakable push (⭐ + its own tag + high-priority log) so a
-  // contact they can't miss breaks through even in a busy channel.
-  const prioritizedBy = new Set<string>();
-  {
-    const { data: prio } = await supabase
-      .from("chat_priority_users")
-      .select("user_id")
-      .eq("priority_user_id", msg.sender_id)
-      .in("user_id", Array.from(recipientIds));
-    (prio || []).forEach((r: any) => prioritizedBy.add(r.user_id));
-  }
-
-  const preview = msg.message_type === "voice" ? "🎤 Voice message"
-    : msg.message_type === "image" ? "📷 Photo"
-    : (msg.content || "").slice(0, 80);
-  const deepLink = `${APP_BASE_URL}/team-talk?channel=${msg.channel_id}&msg=${msg.id}`;
-  const channelLabel = channel.type === "dm" ? msg.sender_name || "Someone" : `#${channel.name}`;
-
-  for (const userId of recipientIds) {
-    const user = await getUser(userId);
-    if (!user) continue;
-    if (!await checkAntiSpam(userId, channel.tenant_id, "chat_message", msg.id)) continue;
-
-    const isMentionForUser = mentionUserIds.has(userId);
-    const isPriorityForUser = prioritizedBy.has(userId);
-    const pushTitle = isPriorityForUser
-      ? `⭐ Priority · ${msg.sender_name} in ${channelLabel}`
-      : isMentionForUser
-        ? `🔔 ${msg.sender_name} mentioned you in ${channelLabel}`
-        : msg.thread_id
-          ? `💬 ${msg.sender_name} replied in ${channelLabel}`
-          : `💬 ${msg.sender_name} in ${channelLabel}`;
-
-    // Push/in-app only — WhatsApp for Team Talk messages stays manual, via the "Notify on WhatsApp" button.
-    // Priority senders use their own push tag so they don't collapse into the
-    // channel's regular chat notification, and are logged as urgent.
-    await sendNotifications(user, {
-      waMessage: buildChatMessage(msg.sender_name || "Someone", channel.name, preview, deepLink),
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [msg.sender_name || "Someone", `${preview} ${deepLink}`] },
-      pushTitle,
-      pushBody: preview,
-      url: deepLink,
-      pushTag: isPriorityForUser ? `chat-priority-${msg.channel_id}` : `chat-${msg.channel_id}`,
-    }, channel.tenant_id, "chat_message", msg.id, isPriorityForUser, true);
-  }
-}
-
 async function handleDigest(userId: string, tenantId: string, items: any, runMode: "morning" | "evening" = "morning") {
   const user = await getUser(userId);
   if (!user) return;
@@ -323,7 +220,6 @@ async function handleDigest(userId: string, tenantId: string, items: any, runMod
     if (items.tasks?.length)      parts.push(`📋 TASKS DUE TODAY: ${items.tasks.length} task(s) need attention`);
   } else {
     if (items.tasks?.length)      parts.push(`📋 STILL OPEN: ${items.tasks.length} task(s) — check before tomorrow`);
-    if (items.mentions?.length)   parts.push(`💬 TEAM TALK: ${items.mentions.length} unread mention(s) today`);
   }
   if (parts.length <= 1) return;
 
@@ -335,7 +231,7 @@ async function handleDigest(userId: string, tenantId: string, items: any, runMod
     waMessage: parts.join("\n"),
     waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [digestHeading, `${parts.slice(1, -1).join(" ")} ${deepLink}`] },
     pushTitle: runMode === "evening" ? "🌙 Your Horae Evening Wrap-up" : "📋 Your Horae Morning Briefing",
-    pushBody: `${items.tasks?.length || 0} tasks${runMode === "evening" ? ", " + (items.mentions?.length || 0) + " mentions" : ", " + (items.checklists?.length || 0) + " checklists"}`,
+    pushBody: `${items.tasks?.length || 0} tasks${runMode === "evening" ? "" : ", " + (items.checklists?.length || 0) + " checklists"}`,
     url: deepLink,
     pushTag: "horae-digest",
   }, tenantId, "daily_digest", `digest-${runMode}-` + new Date().toISOString().slice(0, 10));

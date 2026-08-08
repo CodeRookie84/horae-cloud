@@ -4,8 +4,8 @@
  * Runs twice a day (configured via Supabase cron):
  *  - "morning" (~8:00 AM IST): pending checklists, notices from last 24h,
  *    quizzes not yet attempted, tasks due today.
- *  - "evening" (~6:30 PM IST): tasks still open from today, unread Team
- *    Talk mentions since the morning run, tasks due tomorrow.
+ *  - "evening" (~6:30 PM IST): tasks still open from today and tasks due
+ *    tomorrow.
  *
  * Calls notify-dispatcher with the digest payload.
  * Skips users who already received a digest for that run today.
@@ -129,16 +129,6 @@ serve(async (req) => {
           .gte("due_date", tomorrow + "T00:00:00Z");
         items.notices = []; // not used in evening run
         items.tasks = [...items.tasks, ...(tomorrowTasks || [])];
-
-        // Unread Team Talk mentions since this morning
-        const { data: mentions } = await supabase
-          .from("chat_messages")
-          .select("id, content, channel_id")
-          .contains("mentioned_user_ids", [user.id])
-          .gte("created_at", startOfToday)
-          .order("created_at", { ascending: false })
-          .limit(5);
-        items.mentions = mentions || [];
       }
 
       // Skip empty digest
