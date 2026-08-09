@@ -1,8 +1,7 @@
 /**
  * maintenanceService.ts — Supabase-backed persistence for the Equipment
  * Maintenance (CLIT) tab. Replaces the original standalone tool's /api Node
- * backend. Everything is scoped per outlet (tenant_id), following the same
- * pattern as swotService.ts.
+ * backend. Everything is scoped per outlet (tenant_id).
  *
  * Tables (migration supabase/migrations/20260706_maintenance.sql):
  *   maintenance_equipment          — per-outlet machine registry (built-in + custom)

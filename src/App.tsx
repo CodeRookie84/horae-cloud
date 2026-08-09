@@ -49,7 +49,6 @@ const HoraeAdminPanel = lazy(() => import("./components/HoraeAdminPanel"));
 const Quizzes = lazy(() => import("./components/Quizzes"));
 const SOPs = lazy(() => import("./components/SOPs"));
 const ClientAdminPanel = lazy(() => import("./components/ClientAdminPanel"));
-const SwotCompass = lazy(() => import("./components/swot/SwotCompass"));
 const MaintenanceHub = lazy(() => import("./components/maintenance/MaintenanceHub"));
 const Training = lazy(() => import("./components/Training"));
 const TrainingAdmin = lazy(() => import("./components/TrainingAdmin"));
@@ -170,7 +169,7 @@ function AppInner() {
       home: '/home', dashboard: '/dashboard', notices: '/notices', checklists: '/checklists',
       tasks: '/tasks', quizzes: '/quizzes', sops: '/sops', 'admin-panel': '/admin',
       'horae-admin': '/horae-admin', 'checklist-report': '/checklist-report',
-      swot: '/swot', maintenance: '/maintenance', training: '/training',
+      maintenance: '/maintenance', training: '/training',
     };
     if (urlMap[tab] && location.pathname !== urlMap[tab]) {
       navigate(urlMap[tab]);
@@ -202,7 +201,7 @@ function AppInner() {
       '/home': 'home', '/dashboard': 'dashboard', '/notices': 'notices', '/checklists': 'checklists',
       '/tasks': 'tasks', '/quizzes': 'quizzes', '/sops': 'sops', '/admin': 'admin-panel',
       '/horae-admin': 'horae-admin', '/checklist-report': 'checklist-report',
-      '/swot': 'swot', '/maintenance': 'maintenance', '/training': 'training',
+      '/maintenance': 'maintenance', '/training': 'training',
     };
 
     const targetTab = reverseMap[mainRoute];
@@ -1323,13 +1322,6 @@ function AppInner() {
                         onBack={backToDashboard}
                       />
                     )
-                  )}
-
-                  {activeTab === "swot" && (
-                    <SwotCompass
-                      activeUser={activeUser}
-                      tenants={tenants}
-                    />
                   )}
 
                   {activeTab === "maintenance" && hasFeature("maintenance") && (activeUser.clitAccess || [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role)) && (

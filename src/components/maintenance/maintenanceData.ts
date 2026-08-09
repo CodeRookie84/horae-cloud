@@ -7,7 +7,6 @@
 // Verbatim data extracted from the standalone CLIT Autonomous Maintenance tool
 // (clit_autonomous_maintenance.html) via scratchpad/extract_maintenance.cjs.
 // DO NOT hand-edit the data blocks — re-run the extractor if the source changes.
-// See memory: horae-growth-compass-swot (same extract-don't-retype discipline).
 
 export const BASE_MACHINES = [
   {

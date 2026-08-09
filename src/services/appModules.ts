@@ -10,7 +10,7 @@
 import type { ComponentType } from 'react';
 import {
   Layers, Megaphone, ClipboardCheck, MessageSquare,
-  GraduationCap, BookOpen, FileText, Wrench, Compass, ShieldCheck,
+  GraduationCap, BookOpen, FileText, Wrench, ShieldCheck,
 } from 'lucide-react';
 
 export interface AppModule {
@@ -55,9 +55,6 @@ export function getAppModules(ctx: ModuleGateContext): AppModule[] {
   if (has('training')) push({ id: 'training', label: 'Training', icon: GraduationCap, accent: 'bg-violet-100 text-violet-600' });
   if (has('quizzes')) push({ id: 'quizzes', label: 'Quizzes', icon: BookOpen, accent: 'bg-sky-100 text-sky-600' });
   if (has('sops')) push({ id: 'sops', label: 'SOPs', icon: FileText, accent: 'bg-teal-100 text-teal-600' });
-
-  // Growth Compass (personal SWOT) — available to everyone, like the sidebar.
-  push({ id: 'swot', label: 'Growth Compass', icon: Compass, accent: 'bg-fuchsia-100 text-fuchsia-600' });
 
   if (role === 'Admin') push({ id: 'admin-panel', label: 'Admin Panel', icon: ShieldCheck, accent: 'bg-[#C5A880]/20 text-[#9c7d4e]' });
 
