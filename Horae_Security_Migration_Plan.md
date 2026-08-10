@@ -33,31 +33,37 @@ Auth and RLS are therefore **not hardening. They are the security model, and it 
 
 The brief says "filter on `client_id`." You **can't**, directly, on most tables — the column isn't there. Every table falls into one of three tiers, and each tier needs a *different* policy shape.
 
-### Tier A — has `client_id` (direct policy) — 5 tables
-`tenants`, `chat_channels`, `trainings`, `maintenance_sop_meta`, `swot_analyses`*
+> **Scope note (2026-08-10):** two removed features left orphaned tables in the DB that should be **dropped, not secured** — do this *before* the RLS work so you're not writing policies for dead tables:
+> - **Growth Compass** → `swot_analyses` (drop migration: `20260810_drop_swot_analyses.sql`).
+> - **Team Talk** (removed 2026-08-08) → the 9 `chat_*` tables: `chat_channels`, `chat_channel_auto_rules`, `chat_members`, `chat_mentions`, `chat_messages`, `chat_priority_users`, `chat_read_receipts`, `chat_spaces`, `chat_thread_participants` (drop migration: `20260810_drop_team_talk_tables.sql`).
+>
+> The tier lists below are the **live** tables only, after those drops. This roughly halves the Tier-C surface.
+
+### Tier A — has `client_id` (direct policy) — 3 live tables
+`tenants`, `trainings`, `maintenance_sop_meta`.
 Plus `clients` itself (boundary is its own `id`).
 → Policy: `client_id = app.current_client_id()`.
-\* `swot_analyses` is dead post-Growth-Compass removal; drop it instead of writing a policy (see §7).
+*(Dropped, not secured: `chat_channels`, `swot_analyses`.)*
 
-### Tier B — only `tenant_id` (resolve through `tenants`) — ~17 tables
-`checklists`, `notices`, `tasks`, `notifications`, `users`, `training_attempts`, `chat_messages`, `chat_spaces`, `chat_mentions`, `maintenance_audits`, `maintenance_checklist_history`, `maintenance_checklist_state`, `maintenance_defects`, `maintenance_equipment`, `digest_tracker`, `whatsapp_inbound_messages`, (`notification_log` stays service-role only).
+### Tier B — only `tenant_id` (resolve through `tenants`) — ~14 live tables
+`checklists`, `notices`, `tasks`, `notifications`, `users`, `training_attempts`, `maintenance_audits`, `maintenance_checklist_history`, `maintenance_checklist_state`, `maintenance_defects`, `maintenance_equipment`, `digest_tracker`, `whatsapp_inbound_messages`, (`notification_log` stays service-role only).
 → Policy: `tenant_id IN (SELECT id FROM tenants WHERE client_id = app.current_client_id())`.
+*(Dropped, not secured: `chat_messages`, `chat_spaces`, `chat_mentions`.)*
 
-### Tier C — neither `client_id` nor `tenant_id` (resolve through a parent FK) — 8 tables
+### Tier C — neither `client_id` nor `tenant_id` (resolve through a parent FK) — 3 live tables
 | Child table | Link column | Parent | Parent's boundary |
 |---|---|---|---|
 | `checklist_items` | `checklist_id` | `checklists` | tenant_id (Tier B) |
 | `task_messages` | `task_id` | `tasks` | tenant_id (Tier B) |
-| `chat_members` | `channel_id` | `chat_channels` | client_id (Tier A) |
-| `chat_channel_auto_rules` | `channel_id` | `chat_channels` | client_id (Tier A) |
-| `chat_read_receipts` | `message_id` | `chat_messages` | tenant_id (Tier B) |
-| `chat_priority_users` | `user_id` | `users` | tenant_id (Tier B) |
 | `notification_claims` | `user_id` | `users` | tenant_id (Tier B) |
-| `chat_thread_participants` | `thread_id` | **confirm FK** | — |
+
+*(Dropped, not secured: `chat_members`, `chat_channel_auto_rules`, `chat_read_receipts`, `chat_priority_users`, `chat_thread_participants`.)*
 
 → Policy: `EXISTS (SELECT 1 FROM <parent> p WHERE p.<pk> = <child>.<link> AND <parent boundary predicate>)`.
 
-**Action item before Stage 3:** confirm `chat_thread_participants.thread_id`'s real parent (likely `chat_messages` or a threads table), and decide whether any Tier-C tables should just get a `tenant_id`/`client_id` column added (denormalize) to avoid a subquery. For the largest / hottest tables (`task_messages`, `checklist_items`) I recommend **adding `tenant_id`** and backfilling — cheaper at query time than an `EXISTS` on every row.
+**Resolved (queried prod 2026-08-10):** all live Tier-C parents are confirmed via foreign-key constraints (see §9). Two caveats:
+- `notification_claims` has **no declared FK** on `user_id` — the policy still joins to `users` by `user_id`, but add the FK for integrity while you're in there.
+- **No denormalization needed.** The live child tables are tiny (`checklist_items` 17 rows, `task_messages` 6, `notification_claims` 13). `EXISTS` subqueries are negligible at this scale — keep the schema as-is and skip the `ALTER`/backfill. Revisit only if a client's data grows by orders of magnitude.
 
 ---
 
@@ -175,11 +181,12 @@ CREATE POLICY parent_rw ON public.checklist_items
 ```
 
 ### 6.2 Order of attack
+0. **First drop the dead tables** (`swot_analyses`, the 9 `chat_*`) — §7 — so you never write a policy for a table that's about to disappear.
 1. Start with **`tenants` and `clients`** (Tier A) — everything else resolves through them.
 2. Then Tier B core: `users`, `checklists`, `notices`, `tasks`, `notifications`, `training_attempts`, `maintenance_*`.
-3. Then Tier C children.
+3. Then the 3 Tier-C children (`checklist_items`, `task_messages`, `notification_claims`).
 4. `notification_log`, `digest_tracker` — leave **service-role only** (no anon policy at all).
-5. Add a **super-admin bypass** where the platform owner genuinely needs cross-client reach (onboarding, support): `OR app.is_super_admin()`.
+5. Add a **super-admin bypass** where the platform owner genuinely needs cross-client reach (onboarding, support): `OR app.is_super_admin()` — scope per §9 decision.
 
 ### 6.3 The isolation test (run after every table)
 Seeded `TEST-A` user must get **zero** rows of `TEST-B` data, and vice-versa:
@@ -200,7 +207,7 @@ Also test the **write** direction: a TEST-A session attempting `INSERT`/`UPDATE`
 Once RLS holds, remove the remaining anon powers:
 - **Deletes, staff provisioning, plan changes, password resets** → edge functions using the service role, called by an authenticated (and authorized) user. You already have the edge-function pattern (`notify-dispatcher` etc.), so this is extension, not invention. Then **drop the anon `tmp_delete` policies** entirely.
 - **Proxy AI keys:** move Groq/Gemini calls behind an edge function; remove `VITE_GROQ_API_KEY` / `VITE_GEMINI_API_KEY` from the client bundle.
-- **Drop `swot_analyses`** (Growth Compass was removed 2026-08-10): `DROP TABLE IF EXISTS public.swot_analyses;` — staging first.
+- **Drop the orphaned feature tables** (do this at the *start* of the RLS work, per §6.2 step 0, not the end): `20260810_drop_swot_analyses.sql` (Growth Compass) and `20260810_drop_team_talk_tables.sql` (Team Talk's 9 `chat_*` tables). Both are written and committed; run against staging first, then prod.
 
 ---
 
@@ -222,9 +229,28 @@ Stage 4  Server-side ops + key proxy + drop swot_analyses
 
 ---
 
-## 9. Open questions to resolve before Stage 3
+## 9. Open questions — RESOLVED (queried prod 2026-08-10)
 
-1. `chat_thread_participants.thread_id` — what's its parent table/PK? (Needed for its Tier-C policy.)
-2. For `task_messages` and `checklist_items` (hot child tables): denormalize a `tenant_id` column + backfill, or accept the `EXISTS` subquery? (Recommend denormalize.)
-3. Phone-only staff auth: confirm the `loginKeyFor` shim (`<phone>@horae.local`) is acceptable, or enable Supabase phone auth.
-4. Super-admin reach: which tables does the platform owner legitimately need cross-client access to, vs. must go through an audited edge function?
+**1. `chat_thread_participants.thread_id` parent → MOOT (table being dropped).**
+The question arose because the `chat_*` tables still exist in the DB — but they're **Team Talk orphans** (feature removed 2026-08-08) and are being **dropped**, not secured (see §2 scope note + `20260810_drop_team_talk_tables.sql`). So none of them need a policy. For the record, the FK did resolve as `chat_thread_participants.thread_id → chat_messages.id`.
+
+Confirmed FK map for the **live** Tier-C children only:
+
+| Child | Link col | Parent (FK-confirmed) | Boundary via |
+|---|---|---|---|
+| `checklist_items` | `checklist_id` | `checklists.id` | tenant_id |
+| `task_messages` | `task_id` | `tasks.id` | tenant_id |
+| `notification_claims` | `user_id` | `users.id` *(no FK declared)* | tenant_id |
+
+**2. Denormalize vs `EXISTS` → RESOLVED: don't denormalize.**
+Row counts (prod, live tables): `users` 36, `checklist_items` 17, `notification_claims` 13, `tasks` 8, `task_messages` 6, `checklists` 1. (The high-row tables — `chat_messages` 240, `chat_members` 98, `chat_thread_participants` 96 — are all Team Talk, being dropped.) At this scale `EXISTS` subqueries cost nothing. Use the Tier-C `EXISTS` policies as written; no `ALTER TABLE`/backfill.
+
+**3. Phone-only staff auth → RESOLVED: use the email-shim.**
+**20 of 36 users are phone-only** (no email); they authenticate by password, not OTP. `loginKeyFor()` already resolves `email → phoneNumber → id`, and `normalizePhone()` stores `+91XXXXXXXXXX`. Recommendation: provision each phone-only user with a synthesized auth email `+91XXXXXXXXXX@horae.local` + password, so `supabase.auth.signInWithPassword` works with **no SMS provider**. Avoid Supabase phone-OTP — it needs a paid SMS gateway and changes the login UX for the majority of staff. Login screen keeps accepting a bare 10-digit number; the client maps it to the shim email before calling auth.
+
+**4. Super-admin reach → DECISION NEEDED (recommendation below).**
+The platform owner (role `Super Admin`, seeded as `admin@horae.ops` under `tenant-system`) needs cross-client reach for onboarding + support. Two options:
+- **(a) Blanket bypass** — `OR app.is_super_admin()` on every policy. Simple, but a stolen super-admin session reads/writes *all* clients.
+- **(b) Scoped bypass + audited functions (recommended)** — `OR app.is_super_admin()` only on the management tables (`clients`, `tenants`, `users`, `trainings`); all other cross-client access goes through service-role edge functions that log who/what. Smaller blast radius if that one account is compromised.
+
+Faizal to pick (a) or (b) before Stage 3. Everything else in §1–§8 can proceed regardless.

@@ -165,8 +165,6 @@ export interface Task {
   chat: ChatMessage[];
   translations?: Record<string, string>;
   photos?: string[];
-  linkedChannelId?: string;
-  linkedMessageId?: string;
 }
 
 export interface OperationalNotification {

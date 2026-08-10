@@ -1758,8 +1758,6 @@ export class StoreService {
       let assigneeIds: string[] = [t.assigned_user_id].filter(Boolean);
       let translations: Record<string, string> | undefined = undefined;
       let photos: string[] = [];
-      let linkedChannelId: string | undefined = undefined;
-      let linkedMessageId: string | undefined = undefined;
 
       const parts = desc.split('\n\n---HORAE-METADATA---\n');
       if (parts.length > 1) {
@@ -1768,8 +1766,6 @@ export class StoreService {
           if (metadata.assigneeIds) assigneeIds = metadata.assigneeIds;
           if (metadata.translations) translations = metadata.translations;
           if (metadata.photos) photos = metadata.photos;
-          if (metadata.linkedChannelId) linkedChannelId = metadata.linkedChannelId;
-          if (metadata.linkedMessageId) linkedMessageId = metadata.linkedMessageId;
           desc = parts[0];
         } catch (e) {
           // ignore parsing error
@@ -1791,8 +1787,6 @@ export class StoreService {
         chat,
         translations,
         photos,
-        linkedChannelId,
-        linkedMessageId
       };
     });
 
@@ -1810,7 +1804,7 @@ export class StoreService {
     }).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
-  public async addTask(title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[], tenantId: string, channelId?: string, msgId?: string): Promise<Task> {
+  public async addTask(title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[], tenantId: string): Promise<Task> {
     const me = await this.getActiveUser();
     const primaryAssignee = assignedUserIds[0] || me.id;
 
@@ -1827,8 +1821,6 @@ export class StoreService {
     const metadata = {
       ...existingMetadata,
       assigneeIds: assignedUserIds,
-      linkedChannelId: channelId || existingMetadata.linkedChannelId,
-      linkedMessageId: msgId || existingMetadata.linkedMessageId
     };
     const packedDescription = `${cleanDescription}\n\n---HORAE-METADATA---\n${JSON.stringify(metadata)}`;
 
@@ -1976,24 +1968,6 @@ export class StoreService {
 
     const { error } = await supabase.functions.invoke('notify-dispatcher', {
       body: { type: 'URGENT_PUSH', kind, record, userIds, tenantId: me.tenantId },
-    });
-    if (error) throw error;
-  }
-
-  public async sendUrgentMessageWhatsAppPush(messageId: string, channelId: string, content: string, senderName: string, mentionedUserIds?: string[]): Promise<void> {
-    const me = await this.getActiveUser();
-    let userIds = mentionedUserIds && mentionedUserIds.length ? mentionedUserIds : [];
-
-    if (!userIds.length) {
-      const { data: members } = await supabase.from('chat_members').select('user_id').eq('channel_id', channelId);
-      userIds = (members || []).map((m: any) => m.user_id).filter((id: string) => id !== me.id);
-    }
-
-    if (!userIds.length) throw new Error("No recipients found for this message");
-
-    const record = { id: messageId, channelId, title: content.slice(0, 100), senderName };
-    const { error } = await supabase.functions.invoke('notify-dispatcher', {
-      body: { type: 'URGENT_PUSH', kind: 'message', record, userIds, tenantId: me.tenantId },
     });
     if (error) throw error;
   }

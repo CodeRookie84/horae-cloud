@@ -761,8 +761,8 @@ function AppInner() {
   };
 
   // Task Manager Actions
-  const handleAddTask = async (title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[], tenantId: string, channelId?: string, msgId?: string): Promise<string> => {
-    const task = await store.addTask(title, description, priority, dueDate, assignedUserIds, tenantId, channelId, msgId);
+  const handleAddTask = async (title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[], tenantId: string): Promise<string> => {
+    const task = await store.addTask(title, description, priority, dueDate, assignedUserIds, tenantId);
     await refreshLocalState();
     triggerToast("Operational task designated successfully.");
     return task.id;
