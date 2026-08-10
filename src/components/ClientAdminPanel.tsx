@@ -2677,8 +2677,8 @@ export default function ClientAdminPanel({
                               <div>
                                 <span className="font-semibold block text-slate-800">{usr.name}</span>
                                 <span className="text-[10px] text-slate-400 block font-mono">{usr.email || usr.phoneNumber || "—"}</span>
-                                <span className="text-[9px] text-slate-500 font-mono font-bold bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded w-fit block mt-0.5" title="Login Password">
-                                  🔑 {store.getPasswordForEmail(store.loginKeyFor(usr))}
+                                <span className="text-[9px] text-slate-400 font-mono px-1.5 py-0.2 rounded w-fit block mt-0.5" title="Passwords are encrypted and cannot be viewed. Use “Reset Password” to set a new one.">
+                                  🔒 Password hidden
                                 </span>
                               </div>
                             </td>
@@ -3240,12 +3240,12 @@ export default function ClientAdminPanel({
                   targetPassword = store.generateRandomPassword();
                 }
                 try {
-                  await store.updateUserPassword(store.loginKeyFor(resetPwdUser), targetPassword);
-                  alert(`Password for ${resetPwdUser.name} has been reset to: ${targetPassword}`);
+                  await store.adminResetPassword(resetPwdUser.id, targetPassword);
+                  alert(`Password for ${resetPwdUser.name} has been reset.`);
                   setResetPwdUser(null);
-                } catch (err) {
+                } catch (err: any) {
                   console.error(err);
-                  alert("Failed to reset password. Please try again.");
+                  alert(err?.message || "Failed to reset password. Please try again.");
                 }
               }} className="space-y-4">
                 <div className="space-y-1.5 text-left">

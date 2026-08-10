@@ -550,8 +550,7 @@ export default function Sidebar({
                  type="button"
                  onClick={() => {
                    const loginKey = store.loginKeyFor(activeUser);
-                   const currentPwd = store.getPasswordForEmail(loginKey);
-                   const newPwd = prompt(`Change Password for ${activeUser.name}:\n\nCurrent Password: ${currentPwd}\n\nEnter new password (min 6 characters):`);
+                   const newPwd = prompt(`Change Password for ${activeUser.name}:\n\nEnter new password (min 6 characters):`);
                    if (newPwd !== null) {
                      const trimmed = newPwd.trim();
                      if (trimmed.length < 6) {
@@ -560,8 +559,8 @@ export default function Sidebar({
                        store.updateUserPassword(loginKey, trimmed).then(() => {
                         alert("Password updated successfully!");
                       }).catch((err) => {
-                        console.error("Failed to sync password to DB:", err);
-                        alert("Password updated locally, but failed to sync to database.");
+                        console.error("Failed to update password:", err);
+                        alert("Failed to update password. Please try again.");
                       });
                      }
                    }

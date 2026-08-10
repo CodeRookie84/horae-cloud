@@ -143,40 +143,10 @@ export class StoreService {
   }
 
   private mapUserRecord(u: any): User {
+    // Passwords now live in Supabase Auth (one-way hashed) — never on the row.
+    // Strip any legacy "#pwd=" tail so a password can never surface via the avatar.
     let avatar = u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
-    let pwd = "";
-    const pwdKey = this.loginKeyFor(u);
-    if (avatar.includes("#pwd=")) {
-      const parts = avatar.split("#pwd=");
-      avatar = parts[0];
-      pwd = parts[1];
-      this.saveStaffPassword(pwdKey, pwd);
-    } else {
-      const passwords = this.getStaffPasswords();
-      const localPwd = passwords[pwdKey];
-      if (localPwd) {
-        pwd = localPwd;
-        const updatedAvatar = (u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150") + "#pwd=" + localPwd;
-        supabase
-          .from('users')
-          .update({ avatar: updatedAvatar })
-          .eq('id', u.id)
-          .then(({ error }) => {
-            if (error) console.error("Auto-sync password to DB failed:", error);
-          });
-      } else {
-        pwd = this.generateRandomPassword();
-        this.saveStaffPassword(pwdKey, pwd);
-        const updatedAvatar = (u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150") + "#pwd=" + pwd;
-        supabase
-          .from('users')
-          .update({ avatar: updatedAvatar })
-          .eq('id', u.id)
-          .then(({ error }) => {
-            if (error) console.error("Auto-sync generated password to DB failed:", error);
-          });
-      }
-    }
+    if (avatar.includes("#pwd=")) avatar = avatar.split("#pwd=")[0];
     return {
       id: u.id,
       name: u.name,
@@ -406,83 +376,38 @@ export class StoreService {
     const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const numbers = "0123456789";
     const all = alphabet + numbers;
-    
-    // Retrieve existing passwords to ensure uniqueness
-    const passwords = this.getStaffPasswords();
-    const existing = new Set(Object.values(passwords));
-    
-    while (true) {
-      let pass = "";
-      pass += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-      pass += numbers.charAt(Math.floor(Math.random() * numbers.length));
-      for (let i = 2; i < 6; i++) {
-        pass += all.charAt(Math.floor(Math.random() * all.length));
-      }
-      const shuffled = pass.split('').sort(() => 0.5 - Math.random()).join('');
-      if (!existing.has(shuffled)) {
-        return shuffled;
-      }
-    }
+    let pass = alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+    pass += numbers.charAt(Math.floor(Math.random() * numbers.length));
+    for (let i = 2; i < 8; i++) pass += all.charAt(Math.floor(Math.random() * all.length));
+    return pass.split('').sort(() => 0.5 - Math.random()).join('');
   }
 
-  public getStaffPasswords(): Record<string, string> {
-    const data = localStorage.getItem("horae_staff_passwords");
-    const passwords = data ? JSON.parse(data) : {};
-    // Only seed under 'admin@horae.ops' — the super admin's real DB email and
-    // the key loginKeyFor() actually computes for that account. A prior
-    // version also seeded 'coderookie84@gmail.com' (the login identifier, a
-    // DIFFERENT key), which verifyLogin used to check the password against —
-    // so changing the password never updated the key login actually checked,
-    // and the original hardcoded default kept working forever.
-    if (!passwords["admin@horae.ops"]) {
-      passwords["admin@horae.ops"] = "!Horae@2026";
-    }
-    return passwords;
+  // Legacy plaintext-password helpers — retired by the Supabase Auth migration.
+  // Passwords are one-way hashed in Supabase Auth and can never be read back.
+  // These remain as safe no-ops so any stray caller still compiles; they leak nothing.
+  public getStaffPasswords(): Record<string, string> { return {}; }
+  public saveStaffPassword(_email: string, _password: string) { /* no-op: passwords live in Supabase Auth */ }
+  public getPasswordForEmail(_email: string): string { return ""; }
+
+  /**
+   * Changes the CURRENTLY SIGNED-IN user's own password in Supabase Auth
+   * (one-way hashed). Used by the first-login prompt and the self-service
+   * "change password" in the sidebar. Resetting SOMEONE ELSE's password is a
+   * privileged op — see adminResetPassword — and must not go through here.
+   */
+  public async updateUserPassword(_identifier: string, newPassword: string): Promise<void> {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
   }
 
-  public saveStaffPassword(email: string, password: string) {
-    const passwords = this.getStaffPasswords();
-    passwords[email.toLowerCase().trim()] = password;
-    localStorage.setItem("horae_staff_passwords", JSON.stringify(passwords));
-  }
-
-  public getPasswordForEmail(email: string): string {
-    const passwords = this.getStaffPasswords();
-    const cleanEmail = email.toLowerCase().trim();
-    if (!passwords[cleanEmail]) {
-      const newPwd = this.generateRandomPassword();
-      this.saveStaffPassword(cleanEmail, newPwd);
-      return newPwd;
-    }
-    return passwords[cleanEmail];
-  }
-
-  public async updateUserPassword(identifier: string, newPassword: string): Promise<void> {
-    this.saveStaffPassword(identifier, newPassword);
-
-    // `identifier` is an email or a mobile number — match the right column.
-    // Phones match on the last 10 digits, same as verifyLogin.
-    const clean = identifier.trim();
-    const isEmail = clean.includes('@');
-    let pwdQuery = supabase.from('users').select('*');
-    pwdQuery = isEmail
-      ? pwdQuery.eq('email', clean.toLowerCase())
-      : pwdQuery.like('phone_number', `%${this.normalizePhone(clean).last10}`);
-    const { data: matchedUsers } = await pwdQuery;
-
-    if (matchedUsers && matchedUsers.length > 0) {
-      for (const u of matchedUsers) {
-        let baseAvatar = u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
-        if (baseAvatar.includes("#pwd=")) {
-          baseAvatar = baseAvatar.split("#pwd=")[0];
-        }
-        const newAvatar = baseAvatar + "#pwd=" + newPassword;
-        await supabase
-          .from('users')
-          .update({ avatar: newAvatar })
-          .eq('id', u.id);
-      }
-    }
+  /**
+   * Admin-initiated reset of ANOTHER user's password. Requires service-role
+   * privileges, so it will run in the `auth-admin` edge function (next migration
+   * step). Throws until then, so an admin can never accidentally change their
+   * OWN password via the self-service path above.
+   */
+  public async adminResetPassword(_userId: string, _newPassword: string): Promise<void> {
+    throw new Error("Admin password reset is moving to a secure server step and is temporarily unavailable.");
   }
 
   /**
@@ -505,117 +430,55 @@ export class StoreService {
    * case-insensitively — NOT the opaque internal client id (e.g. "h26cw01").
    * Falls back to an id match so an admin who still has the old id keeps working.
    */
-  public async verifyLogin(companyName: string, identifier: string, password?: string): Promise<User | null> {
+  /**
+   * Authenticates against Supabase Auth (one-way hashed passwords). `identifier`
+   * is an email or a mobile number; phone-only staff resolve to the same shim
+   * email used at provisioning: `91<last10>@horae.local`. `companyName` is no
+   * longer needed for auth (email/phone + password is globally unique) — it's
+   * kept in the signature only so the login form doesn't have to change.
+   */
+  public async verifyLogin(_companyName: string, identifier: string, password?: string): Promise<User | null> {
+    if (!password) return null;
     const cleanId = identifier.trim();
     const isEmail = cleanId.includes('@');
-    const cleanEmail = cleanId.toLowerCase();
-    const phoneLast10 = this.normalizePhone(cleanId).last10;
-    const cleanCompanyName = companyName.trim().toLowerCase().replace(/\s+/g, ' ');
 
-    if (cleanEmail === 'coderookie84@gmail.com') {
-      // Platform Super Admin. Read the current password DIRECTLY from the DB
-      // record's avatar field (same "#pwd=" source-of-truth pattern every
-      // regular user login already uses below) instead of a local cache.
-      // The old cache-only check verified against a key
-      // ('coderookie84@gmail.com', the login identifier) that the
-      // password-change flow never wrote to — it writes to
-      // loginKeyFor(user) = the DB row's real email ('admin@horae.ops'). So a
-      // password change silently succeeded in the database while login kept
-      // accepting the original hardcoded default forever, and a fresh
-      // device/browser with an empty cache couldn't log in with the real
-      // current password either. Reading the DB row directly fixes both.
-      const { data: adminUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', 'user-superadmin')
-        .single();
-      if (!adminUser) return null;
-
-      const adminLoginKey = this.loginKeyFor(adminUser);
-      let correctPassword: string;
-      if (adminUser.avatar && adminUser.avatar.includes('#pwd=')) {
-        correctPassword = adminUser.avatar.split('#pwd=')[1];
-        this.saveStaffPassword(adminLoginKey, correctPassword);
-      } else {
-        correctPassword = this.getPasswordForEmail(adminLoginKey);
-      }
-      if (!password || password !== correctPassword) {
-        return null;
-      }
-
-      localStorage.setItem("horae_logged_in_email", cleanEmail);
-      await this.setActiveUser(adminUser.id);
-      return this.mapUserRecord(adminUser);
-    }
-
-    // Normal client user login
-    // 1. Fetch target client — by display name first (ILIKE is a case-insensitive
-    // exact match here since the value has no wildcard chars), then fall back to
-    // the old opaque id for continuity.
-    if (!cleanCompanyName) return null;
-    let { data: clientMatches } = await supabase
-      .from('clients')
-      .select('id')
-      .ilike('name', cleanCompanyName)
-      .limit(1);
-    if (!clientMatches || clientMatches.length === 0) {
-      const byId = await supabase
-        .from('clients')
-        .select('id')
-        .eq('id', cleanCompanyName.replace(/\s+/g, '-'))
-        .limit(1);
-      clientMatches = byId.data;
-    }
-    const client = clientMatches?.[0];
-    if (!client) return null;
-
-    // 2. Fetch all tenants of this client
-    const { data: tenants } = await supabase
-      .from('tenants')
-      .select('id')
-      .eq('client_id', client.id);
-
-    if (!tenants || tenants.length === 0) return null;
-
-    const tenantIds = tenants.map(t => t.id);
-
-    // 3. Find the user by email OR phone number belonging to one of these tenants.
-    // Phones match on the last 10 digits (`like %XXXXXXXXXX`) so it works whether
-    // the row stores +91XXXXXXXXXX or a bare 10-digit number.
-    let userQuery = supabase.from('users').select('*').in('tenant_id', tenantIds);
+    // Resolve the Supabase Auth email for this identifier.
+    let authEmail: string;
     if (isEmail) {
-      userQuery = userQuery.eq('email', cleanEmail);
+      authEmail = cleanId.toLowerCase();
+      // The platform super-admin types coderookie84@gmail.com, but that account's
+      // real auth email is the DB record's email (admin@horae.ops).
+      if (authEmail === 'coderookie84@gmail.com') authEmail = 'admin@horae.ops';
     } else {
-      if (phoneLast10.length < 10) return null;
-      userQuery = userQuery.like('phone_number', `%${phoneLast10}`);
-    }
-    const { data: matchedUsers } = await userQuery;
-
-    if (!matchedUsers || matchedUsers.length === 0) return null;
-
-    // Found! Use the first matching user persona
-    const user = matchedUsers[0];
-    const pwdKey = this.loginKeyFor(user);
-
-    // Now extract correct password from user record or local storage
-    let correctPassword = "Horae1";
-    if (user.avatar && user.avatar.includes("#pwd=")) {
-      correctPassword = user.avatar.split("#pwd=")[1];
-      this.saveStaffPassword(pwdKey, correctPassword);
-    } else {
-      correctPassword = this.getPasswordForEmail(pwdKey);
+      const last10 = this.normalizePhone(cleanId).last10;
+      if (last10.length < 10) return null;
+      authEmail = `91${last10}@horae.local`; // must match the provisioning shim
     }
 
-    if (!password || password !== correctPassword) {
+    // 1. Authenticate. supabase-js persists the session + JWT, which every
+    //    subsequent PostgREST query automatically carries (this is what makes
+    //    RLS enforceable).
+    const { data: authData, error } = await supabase.auth.signInWithPassword({ email: authEmail, password });
+    if (error || !authData?.user) return null;
+
+    // 2. Load the app profile linked to this auth account.
+    const { data: profile } = await supabase
+      .from('users')
+      .select('*')
+      .eq('auth_id', authData.user.id)
+      .single();
+    if (!profile) {
+      // Authenticated but not linked to a staff row — refuse and drop the session.
+      await supabase.auth.signOut();
       return null;
     }
 
-    localStorage.setItem("horae_logged_in_email", pwdKey);
-    // Clear stale client/tenant context from any previous session before setting the new user
+    localStorage.setItem("horae_logged_in_email", this.loginKeyFor(profile));
+    // Clear stale client/tenant context from any previous session.
     localStorage.removeItem("horae_active_client_id");
     localStorage.removeItem("horae_active_tenant_id");
-    await this.setActiveUser(user.id);
-    return this.mapUserRecord(user);
+    await this.setActiveUser(profile.id);
+    return this.mapUserRecord(profile);
   }
 
   public getLoggedInEmail(): string | null {
@@ -623,6 +486,9 @@ export class StoreService {
   }
 
   public logout() {
+    // End the Supabase Auth session (clears the persisted JWT) as well as the
+    // app's local identity cache.
+    supabase.auth.signOut().catch(() => {});
     localStorage.removeItem("horae_logged_in_email");
     localStorage.removeItem("horae_active_user_id");
     localStorage.removeItem("horae_active_client_id");
