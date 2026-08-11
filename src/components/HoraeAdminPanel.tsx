@@ -19,10 +19,12 @@ import {
   ShieldCheck,
   X,
   Edit2,
-  Trash2
+  Trash2,
+  KeyRound
 } from "lucide-react";
 import { Client, Tenant, User, Role, Department } from "../types";
 import HoraeLogoIcon from "./HoraeLogoIcon";
+import ChangePasswordModal from "./ChangePasswordModal";
 import { store } from "../services/store";
 import * as plans from "../services/plans";
 
@@ -98,6 +100,7 @@ export default function HoraeAdminPanel({
 }: HoraeAdminPanelProps) {
   const clients = rawClients.filter(c => c.id !== "client-system" && c.id !== "client-hq");
   const [activeTab, setActiveTab] = useState<"clients" | "outlets" | "staff">("clients");
+  const [showChangePwd, setShowChangePwd] = useState(false);
 
   // State for adding a client
   const [clientId, setClientId] = useState("");
@@ -273,6 +276,7 @@ export default function HoraeAdminPanel({
 
   return (
     <div className="space-y-6" id="horae-admin-container">
+      <ChangePasswordModal open={showChangePwd} onClose={() => setShowChangePwd(false)} />
       {/* Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
         <div className="flex items-center gap-3">
@@ -291,6 +295,15 @@ export default function HoraeAdminPanel({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowChangePwd(true)}
+            className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 text-slate-600 font-bold rounded-xl text-[10px] uppercase tracking-wider hover:bg-slate-50 transition-colors cursor-pointer"
+            title="Change your own login password"
+          >
+            <KeyRound className="w-3.5 h-3.5" />
+            Change Password
+          </button>
           <select
             onChange={(e) => {
               const val = e.target.value;

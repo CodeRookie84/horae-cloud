@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from "react";
+import ChangePasswordModal from "./ChangePasswordModal";
 import {
   Building2,
   User,
@@ -75,6 +76,7 @@ export default function Sidebar({
   onLogout
 }: SidebarProps) {
   const [pushBusy, setPushBusy] = useState(false);
+  const [showChangePwd, setShowChangePwd] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(
     typeof Notification !== 'undefined' && Notification.permission === 'granted' && !!activeUser.fcmToken
   );
@@ -151,6 +153,7 @@ export default function Sidebar({
 
   return (
     <>
+      <ChangePasswordModal open={showChangePwd} onClose={() => setShowChangePwd(false)} />
       {/* Backdrop backdrop for mobile viewports */}
       {isOpen && (
         <div 
@@ -548,25 +551,9 @@ export default function Sidebar({
                </button>
                <button
                  type="button"
-                 onClick={() => {
-                   const loginKey = store.loginKeyFor(activeUser);
-                   const newPwd = prompt(`Change Password for ${activeUser.name}:\n\nEnter new password (min 6 characters):`);
-                   if (newPwd !== null) {
-                     const trimmed = newPwd.trim();
-                     if (trimmed.length < 6) {
-                       alert("Password must be at least 6 characters long.");
-                     } else {
-                       store.updateUserPassword(loginKey, trimmed).then(() => {
-                        alert("Password updated successfully!");
-                      }).catch((err) => {
-                        console.error("Failed to update password:", err);
-                        alert("Failed to update password. Please try again.");
-                      });
-                     }
-                   }
-                 }}
+                 onClick={() => setShowChangePwd(true)}
                  className="p-1 hover:bg-white rounded-lg text-slate-500 hover:text-slate-700 transition-colors cursor-pointer shrink-0"
-                 title="Change Password"
+                 title="Change your own password"
                >
                  <Key className="w-3.5 h-3.5" />
                </button>
