@@ -2011,62 +2011,12 @@ export class StoreService {
       return false;
     });
 
-    if (quizChecklists.length === 0) {
-      // Seed default quizzes
-      const defaultQuizzes = [
-        {
-          title: "Food Safety & Temperature Standards",
-          description: "Required quiz for all kitchen and baking staff regarding standard storage and baking temperatures.",
-          department: Department.KITCHEN,
-          role: Role.ALL,
-          questions: [
-            {
-              id: "q1",
-              questionText: "What is the minimum internal temperature for cooling baked bread before packaging?",
-              options: ["20°C (68°F)", "32°C (90°F)", "45°C (113°F)", "50°C (122°F)"],
-              correctOptionIndex: 1
-            },
-            {
-              id: "q2",
-              questionText: "Which raw ingredients must be stored on the lowest shelf in the walk-in refrigerator?",
-              options: ["Raw liquid eggs", "Fresh fruit toppings", "Baking butter", "Dry flour bags"],
-              correctOptionIndex: 0
-            },
-            {
-              id: "q3",
-              questionText: "How often should the baking oven's ambient temperature indicators be calibrated?",
-              options: ["Daily", "Weekly", "Monthly", "Every 6 months"],
-              correctOptionIndex: 1
-            }
-          ]
-        },
-        {
-          title: "Cash Billing & Discount Policies",
-          description: "Required quiz for all cashiers and front desk staff regarding daily billing operations.",
-          department: Department.FRONT_DESK,
-          role: Role.ALL,
-          questions: [
-            {
-              id: "qc1",
-              questionText: "What is the maximum instant discount a cashier can apply without manager approval?",
-              options: ["0%", "5%", "10%", "20%"],
-              correctOptionIndex: 1
-            },
-            {
-              id: "qc2",
-              questionText: "Under what category should a canceled transaction due to customer change of mind be logged?",
-              options: ["System Error", "Customer Refusal", "Order Cancelation", "Spoil Log"],
-              correctOptionIndex: 2
-            }
-          ]
-        }
-      ];
-
-      const seededQuizzes = await Promise.all(defaultQuizzes.map(async (q) => {
-        return this.addQuiz(q.title, q.description, q.department, q.role, q.questions, "ALL");
-      }));
-      return seededQuizzes;
-    }
+    // NOTE: previously this auto-seeded two demo quizzes whenever a client had
+    // none, via addQuiz(..., "ALL"). That inserted a checklist row with a literal
+    // tenant_id of "ALL" — not a real tenant — so it never matched the client's
+    // tenants on read and silently re-seeded orphan rows on EVERY load. RLS now
+    // (correctly) rejects that write. Removed: a client simply starts with no
+    // quizzes until an admin creates one.
 
     return quizChecklists.map(c => {
       let descObj: any = {};
