@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import { store } from "./services/store";
+import supabase from "./services/supabaseClient";
 import * as plans from "./services/plans";
 import { Client, Tenant, User as AppUser, Role, Department } from "./types";
 import { listenForSWNavigation } from "./services/fcmService";
@@ -509,7 +510,23 @@ function AppInner() {
   // success handler already calls refreshLocalState() itself.
   useEffect(() => {
     if (!loggedInEmail) { setLoading(false); return; }
-    refreshLocalState();
+    // Boot session guard: localStorage may say "logged in", but RLS requires a
+    // real Supabase Auth session (JWT) on every query. If the session is missing
+    // or expired, don't fire the refresh waterfall (it would hit RLS and fail) —
+    // cleanly drop back to the login screen instead.
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (cancelled) return;
+      if (!data.session) {
+        store.logout();
+        setLoggedInEmail(null);
+        setLoading(false);
+        return;
+      }
+      refreshLocalState();
+    })();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
