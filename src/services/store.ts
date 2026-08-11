@@ -406,8 +406,16 @@ export class StoreService {
    * step). Throws until then, so an admin can never accidentally change their
    * OWN password via the self-service path above.
    */
-  public async adminResetPassword(_userId: string, _newPassword: string): Promise<void> {
-    throw new Error("Admin password reset is moving to a secure server step and is temporarily unavailable.");
+  public async adminResetPassword(userId: string, newPassword: string): Promise<void> {
+    const { data, error } = await supabase.functions.invoke('auth-admin', {
+      body: { action: 'reset_password', targetUserId: userId, newPassword },
+    });
+    if (error) {
+      let msg = error.message;
+      try { const b = await (error as any).context?.json?.(); if (b?.error) msg = b.error; } catch {}
+      throw new Error(msg || "Password reset failed.");
+    }
+    if ((data as any)?.error) throw new Error((data as any).error);
   }
 
   /**
