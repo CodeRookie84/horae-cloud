@@ -769,7 +769,7 @@ export class StoreService {
     whatsappOptedIn?: boolean,
     clitAccess?: boolean,
     clitRole?: string
-  ): Promise<User> {
+  ): Promise<User & { tempPassword: string }> {
     const cleanEmail = (email || "").trim();
     const phone = this.normalizePhone(phoneNumber || "");
     const cleanPhone = phone.last10.length === 10 ? phone.e164 : "";
@@ -806,11 +806,8 @@ export class StoreService {
 
     const userId = "user-" + Date.now();
     const pwd = this.generateRandomPassword();
-    // Cache the password under the same key login will use (email, else phone, else id).
-    this.saveStaffPassword(cleanEmail || cleanPhone || userId, pwd);
 
     const baseAvatar = avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
-    const avatarWithPwd = baseAvatar + "#pwd=" + pwd;
 
     const normRole = this.normalizeRole(role);
     const normDept = this.normalizeDept(department);
@@ -822,7 +819,8 @@ export class StoreService {
       role: normRole,
       department: normDept,
       tenant_id: tenantId,
-      avatar: avatarWithPwd,
+      avatar: baseAvatar,   // no "#pwd=" — passwords live in Supabase Auth
+      pwd_changed: false,   // force a password change on first login
     };
 
     if (cleanPhone) newUser.phone_number = cleanPhone;
@@ -836,6 +834,20 @@ export class StoreService {
     const { error: insertError } = await supabase.from('users').insert([newUser]);
     if (insertError) {
       throw new Error(`Couldn't create the staff member: ${insertError.message}`);
+    }
+
+    // Create the staff member's Supabase Auth login (server-side, service role)
+    // and link it. Phone-only staff get the same shim email verifyLogin computes.
+    const loginEmail = cleanEmail ? cleanEmail.toLowerCase() : `91${phone.last10}@horae.local`;
+    const { data: prov, error: provErr } = await supabase.functions.invoke('auth-admin', {
+      body: { action: 'provision_auth', targetUserId: userId, password: pwd, loginEmail },
+    });
+    if (provErr || (prov as any)?.error) {
+      // Roll back the orphaned users row so the admin can retry cleanly.
+      await supabase.from('users').delete().eq('id', userId);
+      let msg = (prov as any)?.error || provErr?.message;
+      try { const b = await (provErr as any)?.context?.json?.(); if (b?.error) msg = b.error; } catch {}
+      throw new Error(`Couldn't set up the login for this staff member: ${msg || 'unknown error'}`);
     }
 
     // Save to memory so it's available next time entry
@@ -854,6 +866,7 @@ export class StoreService {
       whatsappOptedIn: whatsappOptedIn || false,
       clitAccess: !!clitAccess,
       clitRole: clitAccess ? (clitRole || 'technician') : undefined,
+      tempPassword: pwd,
     };
   }
 

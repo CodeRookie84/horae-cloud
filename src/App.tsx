@@ -639,9 +639,10 @@ function AppInner() {
     await refreshLocalState();
   };
 
-  const handleOnboardStaff = async (tenantId: string, name: string, email: string, role: Role, department: Department, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean, clitAccess?: boolean, clitRole?: string) => {
-    await store.onboardingUser(tenantId, name, email, role, department, avatar, phoneNumber, whatsappOptedIn, clitAccess, clitRole);
+  const handleOnboardStaff = async (tenantId: string, name: string, email: string, role: Role, department: Department, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean, clitAccess?: boolean, clitRole?: string): Promise<string> => {
+    const created = await store.onboardingUser(tenantId, name, email, role, department, avatar, phoneNumber, whatsappOptedIn, clitAccess, clitRole);
     await refreshLocalState();
+    return created.tempPassword;
   };
 
   // Set selected Tenant and automatically sync Persona user

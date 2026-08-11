@@ -102,7 +102,7 @@ interface ClientAdminPanelProps {
   onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
   onDeleteTenant: (tenantId: string) => void;
   
-  onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean, clitAccess?: boolean, clitRole?: string) => void;
+  onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean, clitAccess?: boolean, clitRole?: string) => Promise<string>;
   onUpdateUser: (userId: string, name: string, email: string, role: string, department: string, clitAccess?: boolean, clitRole?: string, phoneNumber?: string) => Promise<void>;
   onDeleteUser: (userId: string) => void;
   onBack?: () => void;
@@ -331,9 +331,8 @@ export default function ClientAdminPanel({
 
     try {
       setStaffErrorMsg("");
-      await onOnboardUser(targetTenant, staffName, staffEmail, roleToOnboard as Role, deptToOnboard as Department, avatarUrl, staffPhone, !!staffPhone);
-      const generatedPwd = store.getPasswordForEmail(staffEmail.trim().toLowerCase() || store.normalizePhone(staffPhone).e164);
-      setStaffSuccessMsg(`Staff member ${staffName} onboarded! Generated Password: ${generatedPwd}`);
+      const generatedPwd = await onOnboardUser(targetTenant, staffName, staffEmail, roleToOnboard as Role, deptToOnboard as Department, avatarUrl, staffPhone, !!staffPhone);
+      setStaffSuccessMsg(`Staff member ${staffName} onboarded! Temporary password: ${generatedPwd} — share it with them; they'll set their own on first login.`);
       setStaffName("");
       setStaffEmail("");
       setStaffPhone("");
@@ -355,7 +354,7 @@ export default function ClientAdminPanel({
 
   const downloadStaffCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Name,Email,Mobile Number,Outlet,Role,Department,Password\n";
+    csvContent += "Name,Email,Mobile Number,Outlet,Role,Department\n";
     // scopedClientUsers = every staff member across this client's outlets,
     // narrowed by the top "Scope" outlet filter (matches the promise made on
     // the Reports tab: "Use the brand/outlet filters at the top... to filter
@@ -368,8 +367,7 @@ export default function ClientAdminPanel({
       const tenant = `"${tenants.find(t => t.id === usr.tenantId)?.name || usr.tenantId}"`;
       const role = `"${usr.role}"`;
       const dept = `"${usr.department}"`;
-      const pwd = `"${store.getPasswordForEmail(store.loginKeyFor(usr))}"`;
-      csvContent += `${name},${email},${phone},${tenant},${role},${dept},${pwd}\n`;
+      csvContent += `${name},${email},${phone},${tenant},${role},${dept}\n`;
     });
     const link = document.createElement("a");
     link.setAttribute("href", encodeURI(csvContent));

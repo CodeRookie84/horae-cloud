@@ -73,7 +73,7 @@ interface HoraeAdminPanelProps {
   users: User[];
   onAddClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean) => void;
   onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
-  onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean) => void;
+  onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean) => Promise<string>;
   onSelectUser: (userId: string) => void;
   onUpdateClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean) => void;
   onDeleteClient: (id: string) => void;
@@ -231,7 +231,7 @@ export default function HoraeAdminPanel({
     setTimeout(() => setOutletSuccessMsg(""), 4000);
   };
 
-  const handleOnboardStaff = (e: React.FormEvent) => {
+  const handleOnboardStaff = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetTenant = staffTenantId || clientOutlets[0]?.id;
     if (!targetTenant || !staffName.trim() || (!staffEmail.trim() && !staffPhone.trim())) return;
@@ -246,17 +246,20 @@ export default function HoraeAdminPanel({
     const randomAvatarId = Math.floor(Math.random() * 70);
     const avatarUrl = `https://i.pravatar.cc/150?img=${randomAvatarId}`;
 
-    onOnboardUser(targetTenant, staffName, staffEmail, finalRole, finalDept, avatarUrl, staffPhone, !!staffPhone);
-    const generatedPwd = store.getPasswordForEmail(staffEmail.trim().toLowerCase() || store.normalizePhone(staffPhone).e164);
-    setStaffSuccessMsg(`Staff member ${staffName} onboarded successfully! Generated Password: ${generatedPwd}`);
-    setStaffName("");
-    setStaffEmail("");
-    setStaffPhone("");
-    setCustomRole("");
-    setCustomDept("");
-    setIsCustomRole(false);
-    setIsCustomDept(false);
-    setTimeout(() => setStaffSuccessMsg(""), 6000);
+    try {
+      const generatedPwd = await onOnboardUser(targetTenant, staffName, staffEmail, finalRole, finalDept, avatarUrl, staffPhone, !!staffPhone);
+      setStaffSuccessMsg(`Staff member ${staffName} onboarded successfully! Temporary password: ${generatedPwd} — share it; they'll set their own on first login.`);
+      setStaffName("");
+      setStaffEmail("");
+      setStaffPhone("");
+      setCustomRole("");
+      setCustomDept("");
+      setIsCustomRole(false);
+      setIsCustomDept(false);
+      setTimeout(() => setStaffSuccessMsg(""), 8000);
+    } catch (err: any) {
+      alert(err?.message || "Failed to onboard staff. Please try again.");
+    }
   };
 
   // Switch client filters cleanly
