@@ -7,10 +7,7 @@
 // trainings + attempts in their own tables (migration 20260714_training.sql).
 
 import { supabase } from "./supabaseClient";
-import { GoogleGenAI } from "@google/genai";
 import type { Training, TrainingAttempt, TrainingQuestion } from "../types";
-
-const genai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
 
 // ── Mapping ──────────────────────────────────────────────────────────────────
 function mapTraining(r: any): Training {
@@ -91,97 +88,13 @@ export async function uploadTrainingDoc(file: File): Promise<{ url: string; name
   return { url: data.publicUrl, name: file.name, type: file.type || "" };
 }
 
-// ── AI question drafting (Groq primary, Gemini fallback) ─────────────────────
-const GROQ_MODEL = "llama-3.3-70b-versatile";
-
-/** Instruction shared by both providers (material is supplied separately). */
-function questionInstruction(title: string, count: number): string {
-  return (
-    `You are creating an internal staff-training assessment titled "${title}". ` +
-    `Based ONLY on the material provided, write ${count} clear multiple-choice questions that test understanding of the key points. ` +
-    `Each question must have exactly 4 options with exactly one correct answer. Keep language simple for frontline staff. ` +
-    `Return ONLY a valid JSON array, no markdown, no commentary, in this exact shape: ` +
-    `[{"question":"...","options":["...","...","...","..."],"correctIndex":0}]`
-  );
-}
-
-/** Extract the JSON array from a model reply and coerce to TrainingQuestion[]. */
-function parseQuestionJson(text: string): TrainingQuestion[] {
-  let t = (text || "").trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
-  const start = t.indexOf("["), end = t.lastIndexOf("]");
-  if (start >= 0 && end > start) t = t.slice(start, end + 1);
-  let raw: any[];
-  try { raw = JSON.parse(t); }
-  catch {
-    console.error("[training] Could not parse AI response as JSON. Raw text:", text);
-    throw new Error("The AI responded but not in the expected format. Try again, or add questions manually.");
-  }
-  return (raw || [])
-    .filter(q => q && q.question && Array.isArray(q.options) && q.options.length >= 2)
-    .map((q, i): TrainingQuestion => ({
-      id: `q-${Date.now().toString(36)}-${i}`,
-      question: String(q.question),
-      options: q.options.slice(0, 6).map((o: any) => String(o)),
-      correctIndex: Math.max(0, Math.min(Number(q.correctIndex) || 0, q.options.length - 1)),
-    }));
-}
-
-/** Groq (free, no billing) — text only, so it works from the source notes. */
-async function generateWithGroq(title: string, count: number, sourceText: string): Promise<TrainingQuestion[]> {
-  const key = import.meta.env.VITE_GROQ_API_KEY;
-  let resp: Response;
-  try {
-    resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        temperature: 0.4,
-        messages: [
-          { role: "system", content: "You write clear multiple-choice staff-training questions and reply with ONLY a valid JSON array — no markdown, no commentary." },
-          { role: "user", content: `${questionInstruction(title, count)}\n\nMaterial:\n${sourceText}` },
-        ],
-      }),
-    });
-  } catch (e: any) {
-    console.error("[training] Groq request error:", e);
-    throw new Error(`Couldn't reach Groq: ${e?.message || e}. Check your connection and VITE_GROQ_API_KEY.`);
-  }
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => "");
-    console.error("[training] Groq API error:", resp.status, body);
-    throw new Error(`Groq request failed (${resp.status}). Check VITE_GROQ_API_KEY is valid. ${body.slice(0, 200)}`);
-  }
-  const data = await resp.json();
-  return parseQuestionJson(data?.choices?.[0]?.message?.content || "");
-}
-
-/** Gemini fallback — reads PDFs/images natively; also works from notes. */
-async function generateWithGemini(params: { title: string; docUrl?: string; docType?: string; sourceNotes?: string }, count: number, notes: string): Promise<TrainingQuestion[]> {
-  const parts: any[] = [];
-  if (params.docUrl && /pdf|image\//i.test(params.docType || "")) {
-    const r = await fetch(params.docUrl);
-    const buf = new Uint8Array(await r.arrayBuffer());
-    let binary = ""; for (let i = 0; i < buf.byteLength; i++) binary += String.fromCharCode(buf[i]);
-    parts.push({ inlineData: { mimeType: params.docType, data: btoa(binary) } });
-  }
-  if (notes) parts.push({ text: `Reference notes / key points:\n${notes}` });
-  parts.push({ text: questionInstruction(params.title, count) });
-
-  let response: any;
-  try {
-    response = await genai.models.generateContent({ model: "gemini-2.0-flash", contents: [{ role: "user", parts }] });
-  } catch (e: any) {
-    console.error("[training] Gemini generateContent failed:", e);
-    throw new Error(`Gemini request failed: ${e?.message || e?.error?.message || String(e)}.`);
-  }
-  return parseQuestionJson(response.text || "");
-}
-
+// ── AI question drafting ─────────────────────────────────────────────────────
 /**
- * Draft multiple-choice questions. Uses Groq (free, text-based) when its key is
- * set and source notes are provided; otherwise falls back to Gemini (which can
- * read an uploaded PDF/image directly). The admin always reviews before publishing.
+ * Draft multiple-choice questions via the `ai-draft` edge function. The Groq/
+ * Gemini keys now live as server-side Supabase secrets (never in the browser
+ * bundle); the function verifies the caller is an Admin/Super Admin, picks the
+ * provider, and returns ready-to-review questions. The admin always reviews
+ * before publishing.
  */
 export async function generateQuestions(params: {
   title: string;
@@ -190,21 +103,22 @@ export async function generateQuestions(params: {
   sourceNotes?: string;
   count?: number;
 }): Promise<TrainingQuestion[]> {
-  const count = params.count || 8;
-  const notes = (params.sourceNotes || "").trim();
-  const hasGroq = !!import.meta.env.VITE_GROQ_API_KEY;
-  const hasGemini = !!import.meta.env.VITE_GEMINI_API_KEY;
-  const geminiReadableDoc = !!params.docUrl && /pdf|image\//i.test(params.docType || "");
-
-  // Prefer Groq (free) whenever we have its key and some text to work from.
-  if (hasGroq && notes) return generateWithGroq(params.title, count, notes);
-  // Gemini can read the uploaded PDF/image directly, or work from notes.
-  if (hasGemini && (geminiReadableDoc || notes)) return generateWithGemini(params, count, notes);
-  // Groq key is set but there's no text for it.
-  if (hasGroq && !notes) {
-    throw new Error("Paste the training's key points into the notes box — Groq builds the test from text, not the uploaded file directly.");
+  const { data, error } = await supabase.functions.invoke('ai-draft', {
+    body: {
+      title: params.title,
+      count: params.count || 8,
+      sourceNotes: params.sourceNotes || "",
+      docUrl: params.docUrl,
+      docType: params.docType,
+    },
+  });
+  if (error) {
+    let msg = error.message;
+    try { const b = await (error as any).context?.json?.(); if (b?.error) msg = b.error; } catch {}
+    throw new Error(msg || "Couldn't draft questions. Please try again.");
   }
-  throw new Error("No AI key configured. Add a free Groq key as VITE_GROQ_API_KEY (from console.groq.com) to .env.local and restart the dev server.");
+  if ((data as any)?.error) throw new Error((data as any).error);
+  return (((data as any)?.questions) || []) as TrainingQuestion[];
 }
 
 /**
