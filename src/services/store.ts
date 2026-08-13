@@ -448,6 +448,13 @@ export class StoreService {
   public async verifyLogin(_companyName: string, identifier: string, password?: string): Promise<User | null> {
     if (!password) return null;
     const cleanId = identifier.trim();
+    // Trim the password too. The self-service change-password modal saves
+    // newPassword.trim() (ChangePasswordModal), so a password set there never has
+    // leading/trailing spaces. If login did NOT trim, a stray space typed (or
+    // auto-inserted by a mobile keyboard) at sign-in would never match the stored
+    // hash → permanent "invalid credentials". Trimming both sides keeps them consistent.
+    const cleanPwd = password.trim();
+    if (!cleanPwd) return null;
     const isEmail = cleanId.includes('@');
 
     // Resolve the Supabase Auth email for this identifier.
@@ -466,7 +473,7 @@ export class StoreService {
     // 1. Authenticate. supabase-js persists the session + JWT, which every
     //    subsequent PostgREST query automatically carries (this is what makes
     //    RLS enforceable).
-    const { data: authData, error } = await supabase.auth.signInWithPassword({ email: authEmail, password });
+    const { data: authData, error } = await supabase.auth.signInWithPassword({ email: authEmail, password: cleanPwd });
     if (error || !authData?.user) return null;
 
     // 2. Load the app profile linked to this auth account.
