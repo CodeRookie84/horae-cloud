@@ -53,7 +53,6 @@ export function getAppModules(ctx: ModuleGateContext): AppModule[] {
   if (has('tasks')) push({ id: 'tasks', label: 'Tasks', icon: MessageSquare, accent: 'bg-indigo-100 text-indigo-600' });
   if (has('maintenance') && (clitAccess || isAdmin(role))) push({ id: 'maintenance', label: 'Maintenance', icon: Wrench, accent: 'bg-slate-200 text-slate-700' });
   if (has('training')) push({ id: 'training', label: 'Training', icon: GraduationCap, accent: 'bg-violet-100 text-violet-600' });
-  if (has('quizzes')) push({ id: 'quizzes', label: 'Quizzes', icon: BookOpen, accent: 'bg-sky-100 text-sky-600' });
   if (has('sops')) push({ id: 'sops', label: 'SOPs', icon: FileText, accent: 'bg-teal-100 text-teal-600' });
 
   if (role === 'Admin') push({ id: 'admin-panel', label: 'Admin Panel', icon: ShieldCheck, accent: 'bg-[#C5A880]/20 text-[#9c7d4e]' });

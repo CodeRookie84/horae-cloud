@@ -1,4 +1,4 @@
-const CACHE_NAME = 'horae-ops-cache-v3';
+const CACHE_NAME = 'horae-ops-cache-v4';
 
 // ---------- INSTALL ----------
 self.addEventListener('install', (e) => {
@@ -56,8 +56,22 @@ self.addEventListener('push', (event) => {
       icon = '/app-icon-192.png',
       badge = '/app-icon-192.png',
       tag = 'horae-notif',
-      requireInteraction = false
+      requireInteraction = false,
+      userId,          // Plan B ack fields (set by notify-dispatcher)
+      tenantId,
+      ackUrl
     } = data;
+
+    // Plan B: prove this push actually reached the device. This is the only
+    // reliable delivery signal — it stamps users.last_push_ack_at server-side so
+    // the daily digest knows whether it must fall back to (paid) WhatsApp.
+    if (userId && ackUrl) {
+      fetch(ackUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, tenantId, tag, ackType: 'delivered' })
+      }).catch(() => {});
+    }
 
     const existing = await self.registration.getNotifications({ tag });
     let count = 1;
@@ -76,7 +90,7 @@ self.addEventListener('push', (event) => {
       icon,
       badge,
       tag,
-      data: { url, count },
+      data: { url, count, userId, tenantId, ackUrl },
       requireInteraction,
       vibrate: [200, 100, 200],
       actions: [
@@ -92,6 +106,16 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   if (event.action === 'dismiss') return;
+
+  // A tap is the strongest proof of delivery — record it as a 'seen' ack.
+  const ackData = event.notification.data || {};
+  if (ackData.userId && ackData.ackUrl) {
+    fetch(ackData.ackUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: ackData.userId, tenantId: ackData.tenantId, tag: event.notification.tag, ackType: 'seen' })
+    }).catch(() => {});
+  }
 
   const targetUrl = event.notification.data?.url || '/dashboard';
 

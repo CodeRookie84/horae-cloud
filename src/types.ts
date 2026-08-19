@@ -37,6 +37,8 @@ export interface Client {
   services?: string[];
   /** Training add-on — grants the Training feature on top of Essential/Pro. */
   trainingAddon?: boolean;
+  /** ISO 639-1 codes this client's staff can translate into (chosen at onboarding). */
+  languages?: string[];
 }
 
 export interface Tenant {
@@ -177,42 +179,6 @@ export interface OperationalNotification {
   role: Role | string;
   createdAt: string;
   targetUserId?: string; // Optional direct target
-}
-
-export interface QuizQuestion {
-  id: string;
-  questionText: string;
-  options: string[];
-  correctOptionIndex: number;
-}
-
-export interface Quiz {
-  id: string;
-  tenantId: string;
-  title: string;
-  description: string;
-  department: Department | string;
-  role: Role | string;
-  createdAt: string;
-  createdBy: {
-    userId: string;
-    name: string;
-    role: string;
-  };
-  questions: QuizQuestion[];
-}
-
-export interface QuizAttempt {
-  id: string;
-  quizId: string;
-  quizTitle: string;
-  userId: string;
-  userName: string;
-  userRole: string;
-  score: number;
-  totalQuestions: number;
-  answers: number[]; // Index of selected option for each question
-  completedAt: string;
 }
 
 export interface SOP {

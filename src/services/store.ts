@@ -15,8 +15,6 @@ import {
   Department, 
   Role,
   ChatMessage,
-  Quiz,
-  QuizAttempt,
   SOP,
   SOPReadStatus,
   WhatsAppEngagementRow,
@@ -87,6 +85,7 @@ export class StoreService {
       createdAt: c.created_at,
       trainingAddon,
       services: plans.planFeatures(c.plan, { trainingAddon, createdAt: c.created_at }),
+      languages: Array.isArray(c.languages) ? c.languages : [],
     };
   }
 
@@ -511,7 +510,7 @@ export class StoreService {
   }
 
   // --- Horae ONBOARDING METHODS ---
-  public async addClient(id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false): Promise<Client> {
+  public async addClient(id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false, languages: string[] = []): Promise<Client> {
     const cleanId = id.toLowerCase().trim().replace(/\s+/g, '-');
     const newClient = {
       id: cleanId,
@@ -519,17 +518,20 @@ export class StoreService {
       logo,
       plan,
       training_addon: trainingAddon,
+      languages,
       created_at: new Date().toISOString()
     };
     await supabase.from('clients').insert([newClient]);
     return this.mapClient(newClient);
   }
 
-  public async updateClient(clientId: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false): Promise<void> {
+  public async updateClient(clientId: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false, languages?: string[]): Promise<void> {
     const cleanId = clientId.toLowerCase().trim().replace(/\s+/g, '-');
+    const patch: Record<string, any> = { name, logo, plan, training_addon: trainingAddon };
+    if (languages !== undefined) patch.languages = languages;
     await supabase
       .from('clients')
-      .update({ name, logo, plan, training_addon: trainingAddon })
+      .update(patch)
       .eq('id', cleanId);
   }
 
@@ -576,9 +578,6 @@ export class StoreService {
       await supabase.from('tenants').delete().in('id', tenantIds);
       
       // Clean local storage items
-      const quizzes = await this.getQuizzes();
-      const updatedQuizzes = quizzes.filter(q => q.tenantId === "ALL" || !tenantIds.includes(q.tenantId));
-      localStorage.setItem("horae_quizzes", JSON.stringify(updatedQuizzes));
 
       const sops = await this.getSOPs();
       const updatedSOPs = sops.filter(s => s.tenantId === "ALL" || !tenantIds.includes(s.tenantId));
@@ -666,9 +665,6 @@ export class StoreService {
     await supabase.from('tenants').delete().eq('id', tenantId);
 
     // 5. Clean local storage
-    const quizzes = await this.getQuizzes();
-    const updatedQuizzes = quizzes.filter(q => q.tenantId !== tenantId);
-    localStorage.setItem("horae_quizzes", JSON.stringify(updatedQuizzes));
 
     const sops = await this.getSOPs();
     const updatedSOPs = sops.filter(s => s.tenantId !== tenantId);
@@ -1812,16 +1808,8 @@ export class StoreService {
         }
       }));
 
-      // Push via edge function — client-side so webhook config is not required
-      supabase.functions.invoke('notify-dispatcher', {
-        body: {
-          type: 'UPDATE',
-          table: 'tasks',
-          record: { ...taskRow, status, assigned_user_ids: assigneeIds },
-          old_record: { ...taskRow, status: oldStatus, assigned_user_ids: assigneeIds },
-          actorId: me.id,
-        },
-      }).catch(() => {});
+      // No push/WhatsApp on status change — only the in-app bell above. (Product
+      // decision: only a NEW task assignment sends an external notification.)
     }
 
     const tasks = await this.getTasks();
@@ -1902,19 +1890,8 @@ export class StoreService {
         }
       }));
 
-      // Push — TASK_COMMENT type handled by edge function
-      supabase.functions.invoke('notify-dispatcher', {
-        body: {
-          type: 'TASK_COMMENT',
-          taskId,
-          taskTitle: taskRow.title,
-          senderName: me.name,
-          senderId: me.id,
-          message: messageText,
-          recipientIds,
-          tenantId: taskRow.tenant_id,
-        },
-      }).catch(() => {});
+      // No push/WhatsApp on new chat — only the in-app bell above. New task-chat
+      // messages are surfaced in the twice-daily digest instead.
     }
 
     const tasks = await this.getTasks();
@@ -1996,215 +1973,8 @@ export class StoreService {
     };
     }
 
-  // --- QUIZ & SOP MODULES (Database Backed) ---
+  // --- SOP MODULE (Database Backed) ---
 
-  public async getQuizzes(): Promise<Quiz[]> {
-    const curUser = await this.getActiveUser();
-    const tenants = await this.getTenantsByClient(this.activeClientId);
-    const tenantIds = tenants.map(t => t.id);
-
-    const { data: dbChecklists } = await supabase
-      .from('checklists')
-      .select('*')
-      .in('tenant_id', tenantIds);
-
-    const quizChecklists = (dbChecklists || []).filter(c => {
-      try {
-        if (c.description && c.description.startsWith("{")) {
-          const obj = JSON.parse(c.description);
-          return obj.type === "quiz";
-        }
-      } catch (e) {}
-      return false;
-    });
-
-    // NOTE: previously this auto-seeded two demo quizzes whenever a client had
-    // none, via addQuiz(..., "ALL"). That inserted a checklist row with a literal
-    // tenant_id of "ALL" — not a real tenant — so it never matched the client's
-    // tenants on read and silently re-seeded orphan rows on EVERY load. RLS now
-    // (correctly) rejects that write. Removed: a client simply starts with no
-    // quizzes until an admin creates one.
-
-    return quizChecklists.map(c => {
-      let descObj: any = {};
-      try {
-        descObj = JSON.parse(c.description);
-      } catch (e) {}
-      return {
-        id: c.id,
-        tenantId: c.tenant_id,
-        title: c.title,
-        description: descObj.desc || "",
-        department: c.department,
-        role: c.role,
-        createdAt: c.created_at,
-        createdBy: {
-          userId: c.created_by_user_id,
-          name: c.created_by_name,
-          role: c.created_by_role
-        },
-        questions: descObj.questions || []
-      } as Quiz;
-    });
-  }
-
-  public async addQuiz(title: string, description: string, dept: Department | string, role: Role | string, questions: any[], tenantId: string): Promise<Quiz> {
-    const me = await this.getActiveUser();
-    const formattedQuestions = questions.map((q, idx) => ({
-      id: `q-${Date.now()}-${idx}`,
-      questionText: q.questionText,
-      options: q.options,
-      correctOptionIndex: q.correctOptionIndex
-    }));
-
-    const desc = JSON.stringify({
-      desc: description,
-      questions: formattedQuestions,
-      type: "quiz",
-      submissions: []
-    });
-
-    const chk = {
-      title,
-      description: desc,
-      department: dept,
-      role: role,
-      tenant_id: tenantId,
-      created_by_user_id: me.id,
-      created_by_name: me.name,
-      created_by_role: me.role,
-      created_at: new Date().toISOString()
-    };
-
-    const { data } = await supabase
-      .from('checklists')
-      .insert([chk])
-      .select()
-      .single();
-
-    const quizId = data ? data.id : `quiz-${Date.now()}`;
-
-    return {
-      id: quizId,
-      tenantId,
-      title,
-      description,
-      department: dept,
-      role,
-      createdAt: chk.created_at,
-      createdBy: {
-        userId: me.id,
-        name: me.name,
-        role: me.role
-      },
-      questions: formattedQuestions
-    };
-  }
-
-  public async deleteQuiz(quizId: string): Promise<void> {
-    await supabase
-      .from('checklists')
-      .delete()
-      .eq('id', quizId);
-  }
-
-  public async getQuizAttempts(): Promise<QuizAttempt[]> {
-    const tenants = await this.getTenantsByClient(this.activeClientId);
-    const tenantIds = tenants.map(t => t.id);
-
-    const { data: dbChecklists } = await supabase
-      .from('checklists')
-      .select('*')
-      .in('tenant_id', tenantIds);
-
-    const quizChecklists = (dbChecklists || []).filter(c => {
-      try {
-        if (c.description && c.description.startsWith("{")) {
-          const obj = JSON.parse(c.description);
-          return obj.type === "quiz";
-        }
-      } catch (e) {}
-      return false;
-    });
-
-    const attempts: QuizAttempt[] = [];
-    quizChecklists.forEach(c => {
-      try {
-        const obj = JSON.parse(c.description);
-        if (obj.submissions && obj.submissions.length > 0) {
-          obj.submissions.forEach((sub: any, idx: number) => {
-            attempts.push({
-              id: `attempt-${c.id}-${idx}`,
-              quizId: c.id,
-              quizTitle: c.title,
-              userId: sub.submittedBy.userId,
-              userName: sub.submittedBy.name,
-              userRole: sub.submittedBy.role || "Staff",
-              score: sub.score,
-              totalQuestions: sub.totalQuestions,
-              answers: sub.answers || [],
-              completedAt: sub.submittedAt
-            } as any);
-          });
-        }
-      } catch (e) {}
-    });
-
-    return attempts;
-  }
-
-  public async submitQuizAttempt(quizId: string, quizTitle: string, score: number, totalQuestions: number, answers: number[]): Promise<QuizAttempt> {
-    const me = await this.getActiveUser();
-
-    const { data: c } = await supabase
-      .from('checklists')
-      .select('*')
-      .eq('id', quizId)
-      .single();
-
-    if (!c) throw new Error("Quiz not found");
-
-    let descObj: any = {};
-    try {
-      descObj = JSON.parse(c.description);
-    } catch (e) {
-      descObj = { desc: c.description };
-    }
-
-    if (!descObj.submissions) descObj.submissions = [];
-
-    const newAttemptSub = {
-      submittedAt: new Date().toISOString(),
-      submittedBy: {
-        userId: me.id,
-        name: me.name,
-        role: me.role
-      },
-      score,
-      totalQuestions,
-      answers
-    };
-
-    descObj.submissions.push(newAttemptSub);
-
-    await supabase
-      .from('checklists')
-      .update({ description: JSON.stringify(descObj) })
-      .eq('id', quizId);
-
-    return {
-      id: `attempt-${quizId}-${Date.now()}`,
-      quizId,
-      quizTitle,
-      userId: me.id,
-      userName: me.name,
-      userRole: me.role,
-      score,
-      totalQuestions,
-      answers,
-      completedAt: newAttemptSub.submittedAt
-    } as any;
-  }
 
   public async getSOPs(): Promise<SOP[]> {
     const curUser = await this.getActiveUser();
@@ -2559,18 +2329,46 @@ This guide ensures that cash flows are reconciled correctly at the close of ever
     localStorage.removeItem("horae_active_client_id");
     localStorage.removeItem("horae_active_tenant_id");
     localStorage.removeItem("horae_active_user_id");
-    localStorage.removeItem("horae_quizzes");
-    localStorage.removeItem("horae_quiz_attempts");
     localStorage.removeItem("horae_sops");
     localStorage.removeItem("horae_sop_read_statuses");
     this.loadState();
   }
+
+  // ── WhatsApp task capture (Phase D) ──────────────────────────────────────────
+  // A capture is created by the whatsapp-webhook when a user forwards a message
+  // or sends "new task"; the create-task form reads it via /tasks/new?capture=<id>
+  // to prefill title/description. The UUID is the unguessable key.
+  public async getTaskCapture(id: string): Promise<{ id: string; suggestedTitle: string; rawText: string; status: string } | null> {
+    const { data } = await supabase.from('task_captures').select('*').eq('id', id).maybeSingle();
+    if (!data) return null;
+    return { id: data.id, suggestedTitle: data.suggested_title || '', rawText: data.raw_text || '', status: data.status };
+  }
+
+  public async consumeTaskCapture(id: string, taskId?: string): Promise<void> {
+    await supabase.from('task_captures')
+      .update({ status: 'consumed', consumed_task_id: taskId || null, consumed_at: new Date().toISOString() })
+      .eq('id', id);
+  }
+
+  // Plan B: stamp when this user is running the installed PWA (set once). Lets
+  // the digest distinguish a broken push pipe from a user who never installed.
+  public async markPwaInstalled(userId: string): Promise<void> {
+    await supabase.from('users')
+      .update({ pwa_installed_at: new Date().toISOString() })
+      .eq('id', userId)
+      .is('pwa_installed_at', null);
+  }
 }
 
-export async function translateText(text: string, targetLanguage: 'en' | 'hi' | 'kn' | 'ta'): Promise<string> {
+// Free Google Translate endpoint (no API key, $0). `targetLanguage` is any
+// ISO 639-1 code — widened from the original en/hi/kn/ta union so more languages
+// (Malayalam 'ml', Telugu 'te', Arabic 'ar', ...) can be offered without a code
+// change. Source language is auto-detected. Falls back to the original text.
+export async function translateText(text: string, targetLanguage: string): Promise<string> {
+  if (!text || !text.trim() || !targetLanguage) return text;
   try {
     const response = await fetch(
-      `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=auto&tl=${targetLanguage}&q=${encodeURIComponent(text)}`
+      `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=auto&tl=${encodeURIComponent(targetLanguage)}&q=${encodeURIComponent(text)}`
     );
     const data = await response.json();
     return data[0].map((item: any) => item[0]).join('');

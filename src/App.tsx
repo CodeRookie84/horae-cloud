@@ -47,7 +47,6 @@ const NoticesWorkflows = lazy(() => import("./components/NoticesWorkflows"));
 const ChecklistsWorkflows = lazy(() => import("./components/ChecklistsWorkflows"));
 const TaskManagerWorkflows = lazy(() => import("./components/TaskManagerWorkflows"));
 const HoraeAdminPanel = lazy(() => import("./components/HoraeAdminPanel"));
-const Quizzes = lazy(() => import("./components/Quizzes"));
 const SOPs = lazy(() => import("./components/SOPs"));
 const ClientAdminPanel = lazy(() => import("./components/ClientAdminPanel"));
 const MaintenanceHub = lazy(() => import("./components/maintenance/MaintenanceHub"));
@@ -146,11 +145,14 @@ function AppInner() {
       ? path.slice(prefix.length).split('/')[0] || undefined
       : undefined;
 
+    // WhatsApp capture link: /tasks/new?capture=<id> → open tasks tab + prefill.
+    const captureId = new URLSearchParams(location.search).get('capture');
+    if (captureId) setPrefillCaptureId(captureId);
+
     if (path.startsWith('/tasks'))        deepLinkRef.current = { tab: 'tasks',      itemId: match('/tasks/') };
     else if (path.startsWith('/notices')) deepLinkRef.current = { tab: 'notices',    itemId: match('/notices/') };
     else if (path.startsWith('/checklists')) deepLinkRef.current = { tab: 'checklists', itemId: match('/checklists/') };
     else if (path.startsWith('/maintenance')) deepLinkRef.current = { tab: 'maintenance' };
-    else if (path.startsWith('/quizzes')) deepLinkRef.current = { tab: 'quizzes',    itemId: match('/quizzes/') };
     else if (path.startsWith('/sops'))    deepLinkRef.current = { tab: 'sops',       itemId: match('/sops/') };
     else if (path.startsWith('/digest'))  deepLinkRef.current = { tab: 'dashboard' };
     // else /dashboard or / — no deep link needed
@@ -161,6 +163,8 @@ function AppInner() {
   const [activeTab, setActiveTab] = useState<string>("home");
   // Track which item ID was deep-linked (passed to child components)
   const [deepLinkedItemId, setDeepLinkedItemId] = useState<string | undefined>(undefined);
+  // WhatsApp task capture (/tasks/new?capture=<id>) — prefills the create-task form.
+  const [prefillCaptureId, setPrefillCaptureId] = useState<string | undefined>(undefined);
 
   const handleSetActiveTab = useCallback((tab: string, itemId?: string) => {
     setActiveTab(tab);
@@ -168,7 +172,7 @@ function AppInner() {
     // Push browser URL to match (enables native back-button navigation)
     const urlMap: Record<string, string> = {
       home: '/home', dashboard: '/dashboard', notices: '/notices', checklists: '/checklists',
-      tasks: '/tasks', quizzes: '/quizzes', sops: '/sops', 'admin-panel': '/admin',
+      tasks: '/tasks', sops: '/sops', 'admin-panel': '/admin',
       'horae-admin': '/horae-admin', 'checklist-report': '/checklist-report',
       maintenance: '/maintenance', training: '/training',
     };
@@ -200,7 +204,7 @@ function AppInner() {
 
     const reverseMap: Record<string, string> = {
       '/home': 'home', '/dashboard': 'dashboard', '/notices': 'notices', '/checklists': 'checklists',
-      '/tasks': 'tasks', '/quizzes': 'quizzes', '/sops': 'sops', '/admin': 'admin-panel',
+      '/tasks': 'tasks', '/sops': 'sops', '/admin': 'admin-panel',
       '/horae-admin': 'horae-admin', '/checklist-report': 'checklist-report',
       '/maintenance': 'maintenance', '/training': 'training',
     };
@@ -234,13 +238,20 @@ function AppInner() {
   const [activeTenant, setActiveTenant] = useState<Tenant | null>(null);
   const [tenantUsers, setTenantUsers] = useState<AppUser[]>([]);
   const [activeUser, setActiveUser] = useState<AppUser | null>(null);
+
+  // Plan B: once we know the user, record if they're running the installed PWA,
+  // so the daily digest can tell a broken push pipe from a never-installed user.
+  useEffect(() => {
+    if (!activeUser?.id) return;
+    const standalone = window.matchMedia('(display-mode: standalone)').matches
+      || (window.navigator as any).standalone === true;
+    if (standalone) store.markPwaInstalled(activeUser.id).catch(() => {});
+  }, [activeUser?.id]);
   
   const [notices, setNotices] = useState<any[]>([]);
   const [checklists, setChecklists] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
-  const [quizzes, setQuizzes] = useState<any[]>([]);
-  const [quizAttempts, setQuizAttempts] = useState<any[]>([]);
   const [sops, setSops] = useState<any[]>([]);
   const [sopReadStatuses, setSopReadStatuses] = useState<any[]>([]);
   const [trainings, setTrainings] = useState<any[]>([]);
@@ -253,7 +264,7 @@ function AppInner() {
   // The dashboard is only worth showing when the plan grants something it
   // surfaces. A Training-only client has an empty dashboard, so Training becomes
   // their landing page and the Dashboard tab is hidden.
-  const DASHBOARD_FEATURES = ["tasks", "notices", "checklists", "quizzes"];
+  const DASHBOARD_FEATURES = ["tasks", "notices", "checklists"];
   const dashboardMeaningful = clientFeatures.some(f => DASHBOARD_FEATURES.includes(f));
   const homeTab = dashboardMeaningful ? "dashboard"
     : clientFeatures.includes("training") ? "training"
@@ -343,8 +354,6 @@ function AppInner() {
         checklistsList,
         tasksList,
         notificationsList,
-        quizzesList,
-        attemptsList,
         sopsList,
         readStatusesList,
         trainingsList
@@ -355,8 +364,6 @@ function AppInner() {
         store.getChecklists(),
         store.getTasks(),
         store.getNotifications(),
-        store.getQuizzes(),
-        store.getQuizAttempts(),
         store.getSOPs(),
         store.getSOPReadStatuses(),
         trainingSvc.getTrainings(activeClientObj.id)
@@ -372,8 +379,6 @@ function AppInner() {
       setTenantUsers(matchedUsers);
       setActiveUser(userObj);
 
-      setQuizzes(quizzesList);
-      setQuizAttempts(attemptsList);
       setSops(sopsList);
       setSopReadStatuses(readStatusesList);
       setTrainings(trainingsList);
@@ -587,7 +592,6 @@ function AppInner() {
       else if (path.startsWith('/notices')) handleSetActiveTab('notices',    path.split('/')[2]);
       else if (path.startsWith('/checklists')) handleSetActiveTab('checklists', path.split('/')[2]);
       else if (path.startsWith('/maintenance')) handleSetActiveTab('maintenance');
-      else if (path.startsWith('/quizzes')) handleSetActiveTab('quizzes',    path.split('/')[2]);
       else                                  handleSetActiveTab('dashboard');
     });
     return unsubSW;
@@ -610,13 +614,13 @@ function AppInner() {
     triggerToast("Switched active Brand Client!");
   };
 
-  const handleAddClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean) => {
-    await store.addClient(id, name, logo, plan, trainingAddon);
+  const handleAddClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages: string[] = []) => {
+    await store.addClient(id, name, logo, plan, trainingAddon, languages);
     await refreshLocalState();
   };
 
-  const handleUpdateClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean) => {
-    await store.updateClient(id, name, logo, plan, trainingAddon);
+  const handleUpdateClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages?: string[]) => {
+    await store.updateClient(id, name, logo, plan, trainingAddon, languages);
     await refreshLocalState();
   };
 
@@ -734,24 +738,6 @@ function AppInner() {
     await store.submitChecklist(checklistId, itemStates, customInputs);
     await refreshLocalState();
     triggerToast("Compliance routine recorded successfully!");
-  };
-
-  const handleCreateQuiz = async (title: string, description: string, dept: Department | string, role: Role | string, questions: any[], tenantId: string) => {
-    await store.addQuiz(title, description, dept, role, questions, tenantId);
-    await refreshLocalState();
-    triggerToast("New knowledge assessment published!");
-  };
-
-  const handleDeleteQuiz = async (id: string) => {
-    await store.deleteQuiz(id);
-    await refreshLocalState();
-    triggerToast("Quiz assessment deleted.");
-  };
-
-  const handleSubmitQuizAttempt = async (quizId: string, quizTitle: string, score: number, totalQuestions: number, answers: number[]) => {
-    await store.submitQuizAttempt(quizId, quizTitle, score, totalQuestions, answers);
-    await refreshLocalState();
-    triggerToast("Quiz results logged successfully.");
   };
 
   const handleCreateSOP = async (title: string, description: string, category: string, dept: Department | string, role: Role | string, content: string, fileUrl: string, tenantId: string) => {
@@ -1141,11 +1127,6 @@ function AppInner() {
                               handleSetActiveTab("tasks");
                             } else if (notif.category === "checklist") {
                               handleSetActiveTab("checklists");
-                            } else if (notif.category === "quiz") {
-                              handleSetActiveTab("dashboard");
-                              setTimeout(() => {
-                                document.getElementById("dashboard-quizzes-panel")?.scrollIntoView({ behavior: 'smooth' });
-                              }, 150);
                             }
                           }}
                         />
@@ -1199,7 +1180,7 @@ function AppInner() {
                     {([
                       { name: "Essential", desc: "Task Manager" },
                       { name: "Pro", desc: "Essential + Checklists, Equipment Maintenance & Notice Board" },
-                      { name: "Enterprise", desc: "Pro + Training, Quizzes & SOPs" },
+                      { name: "Enterprise", desc: "Pro + Training & SOPs" },
                       { name: "Training", desc: "Training only — combinable with Essential or Pro" },
                     ] as const).map(p => (
                       <div key={p.name} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
@@ -1254,8 +1235,6 @@ function AppInner() {
                       onAddTask={(title, desc, priority, date, assignees) =>
                         handleAddTask(title, desc, priority, date, assignees, activeUser.tenantId)
                       }
-                      quizzes={quizzes}
-                      quizAttempts={quizAttempts}
                       trainings={trainings}
                       trainingAttempts={trainingAttempts}
                       features={clientFeatures}
@@ -1269,6 +1248,7 @@ function AppInner() {
                       activeUser={activeUser}
                       onBack={backToDashboard}
                       onUrgentNotify={handleUrgentNoticeNotify}
+                      languages={activeClient?.languages || []}
                     />
                   )}
 
@@ -1279,6 +1259,7 @@ function AppInner() {
                       onSubmitChecklist={handleSubmitChecklist}
                       onBack={backToDashboard}
                       onRefresh={refreshLocalState}
+                      languages={activeClient?.languages || []}
                     />
                   )}
 
@@ -1297,18 +1278,12 @@ function AppInner() {
                       onDeleteTask={handleDeleteTask}
                       onUrgentNotify={handleUrgentTaskNotify}
                       onBack={backToDashboard}
+                      prefillCaptureId={prefillCaptureId}
+                      onCapturePrefilled={() => setPrefillCaptureId(undefined)}
+                      languages={activeClient?.languages || []}
                     />
                   )}
 
-                  {activeTab === "quizzes" && (
-                    <Quizzes
-                      quizzes={quizzes}
-                      attempts={quizAttempts}
-                      activeUser={activeUser}
-                      onSubmitAttempt={handleSubmitQuizAttempt}
-                      onBack={backToDashboard}
-                    />
-                  )}
 
                   {activeTab === "sops" && (
                     <SOPs
@@ -1338,6 +1313,7 @@ function AppInner() {
                         activeUser={activeUser}
                         onSubmit={handleSubmitTraining}
                         onBack={backToDashboard}
+                        languages={activeClient?.languages || []}
                       />
                     )
                   )}
@@ -1349,6 +1325,7 @@ function AppInner() {
                       tenants={tenants}
                       clientUsers={allUsers.filter(u => tenants.some(t => t.id === u.tenantId))}
                       onSetClitAccess={handleSetClitAccess}
+                      languages={activeClient?.languages || []}
                     />
                   )}
 
@@ -1371,10 +1348,6 @@ function AppInner() {
                       onUpdateTaskPriority={handleUpdateTaskPriority}
                       onAddMessage={handleAddMessage}
                       onDeleteTask={handleDeleteTask}
-                      quizzes={quizzes}
-                      onCreateQuiz={handleCreateQuiz}
-                      onDeleteQuiz={handleDeleteQuiz}
-                      quizAttempts={quizAttempts}
                       sops={sops}
                       onCreateSOP={handleCreateSOP}
                       onDeleteSOP={handleDeleteSOP}

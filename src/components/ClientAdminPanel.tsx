@@ -11,7 +11,7 @@ import {
   Building2, UserPlus, Edit2, Copy, Languages, ArrowLeft, KeyRound, Eye, EyeOff, MessageCircle
 } from "lucide-react";
 import {
-  Notice, Checklist, Task, User as AppUser, Tenant, Department, Role, Quiz, QuizAttempt, SOP, SOPReadStatus, Client, WhatsAppEngagementRow
+  Notice, Checklist, Task, User as AppUser, Tenant, Department, Role, SOP, SOPReadStatus, Client, WhatsAppEngagementRow
 } from "../types";
 import { store, translateText } from "../services/store";
 
@@ -85,10 +85,6 @@ interface ClientAdminPanelProps {
   onAddMessage: (taskId: string, message: string) => void;
   onDeleteTask: (id: string) => void;
 
-  quizzes: Quiz[];
-  onCreateQuiz: (title: string, description: string, dept: Department | string, role: Role | string, questions: any[], tenantId: string) => void;
-  onDeleteQuiz: (id: string) => void;
-  quizAttempts: QuizAttempt[];
   
   sops: SOP[];
   onCreateSOP: (title: string, description: string, category: string, dept: Department | string, role: Role | string, content: string, fileUrl: string, tenantId: string) => void;
@@ -126,10 +122,6 @@ export default function ClientAdminPanel({
   onUpdateTaskPriority,
   onAddMessage,
   onDeleteTask,
-  quizzes,
-  onCreateQuiz,
-  onDeleteQuiz,
-  quizAttempts,
   sops,
   onCreateSOP,
   onDeleteSOP,
@@ -377,38 +369,12 @@ export default function ClientAdminPanel({
     document.body.removeChild(link);
   };
 
-  const downloadQuizScoreboardCSV = () => {
-    let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Employee,Role,Quiz Assessment,Score,Total Questions,Percentage,Completed Date\n";
-    filteredQuizAttempts.forEach(att => {
-      const emp = `"${att.userName.replace(/"/g, '""')}"`;
-      const role = `"${att.userRole}"`;
-      const title = `"${att.quizTitle.replace(/"/g, '""')}"`;
-      const score = att.score;
-      const total = att.totalQuestions;
-      const pct = `"${Math.round((att.score / att.totalQuestions) * 100)}%"`;
-      const date = `"${new Date(att.completedAt).toLocaleString()}"`;
-      csvContent += `${emp},${role},${title},${score},${total},${pct},${date}\n`;
-    });
-    const link = document.createElement("a");
-    link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", `Quiz_Scoreboard_${new Date().toISOString().split("T")[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   // Filtered lists based on outlet filter
   const filteredOutletTenants = selectedOutletFilter === "ALL" ? tenants : tenants.filter(t => t.id === selectedOutletFilter);
   const filteredNotices = selectedOutletFilter === "ALL" ? notices : notices.filter(n => n.tenantId === selectedOutletFilter);
   const filteredChecklists = selectedOutletFilter === "ALL" ? checklists : checklists.filter(c => c.tenantId === selectedOutletFilter);
   const filteredTasks = selectedOutletFilter === "ALL" ? tasks : tasks.filter(t => t.tenantId === selectedOutletFilter);
-  const filteredQuizzes = selectedOutletFilter === "ALL" ? quizzes : quizzes.filter(q => q.tenantId === selectedOutletFilter || q.tenantId === "ALL");
   const filteredSOPs = selectedOutletFilter === "ALL" ? sops : sops.filter(s => s.tenantId === selectedOutletFilter || s.tenantId === "ALL");
-  const filteredQuizAttempts = selectedOutletFilter === "ALL" ? quizAttempts : quizAttempts.filter(att => {
-    const quiz = quizzes.find(q => q.id === att.quizId);
-    return quiz ? quiz.tenantId === selectedOutletFilter : false;
-  });
 
   // ----------------------------------------------------
   // SUB-TAB 1: Notices State & Logic
@@ -1000,125 +966,6 @@ export default function ClientAdminPanel({
   };
 
   // ----------------------------------------------------
-  // SUB-TAB 4: Quizzes State & Logic
-  // ----------------------------------------------------
-  const [quizTitle, setQuizTitle] = useState("");
-  const [quizDesc, setQuizDesc] = useState("");
-  const [quizDepts, setQuizDepts] = useState<string[]>([Department.ALL]);
-  const [quizRoles, setQuizRoles] = useState<string[]>([Role.ALL]);
-  const [quizTenant, setQuizTenant] = useState("ALL");
-  const [quizPreviewText, setQuizPreviewText] = useState("");
-  const [quizError, setQuizError] = useState("");
-
-  // Quiz Questions builder state
-  const [quizQuestions, setQuizQuestions] = useState<any[]>([
-    { questionText: "", options: ["", "", "", ""], correctOptionIndex: 0 }
-  ]);
-
-  const handleAddQuestionField = () => {
-    setQuizQuestions([
-      ...quizQuestions,
-      { questionText: "", options: ["", "", "", ""], correctOptionIndex: 0 }
-    ]);
-  };
-
-  const handleRemoveQuestionField = (idx: number) => {
-    setQuizQuestions(quizQuestions.filter((_, i) => i !== idx));
-  };
-
-  const handleQuestionTextChange = (qIdx: number, text: string) => {
-    const updated = [...quizQuestions];
-    updated[qIdx].questionText = text;
-    setQuizQuestions(updated);
-  };
-
-  const handleOptionTextChange = (qIdx: number, optIdx: number, text: string) => {
-    const updated = [...quizQuestions];
-    updated[qIdx].options[optIdx] = text;
-    setQuizQuestions(updated);
-  };
-
-  const handleCorrectOptionChange = (qIdx: number, optIdx: number) => {
-    const updated = [...quizQuestions];
-    updated[qIdx].correctOptionIndex = optIdx;
-    setQuizQuestions(updated);
-  };
-
-
-
-  const parseQuizFromText = (text: string): any[] => {
-    const blocks = text.split(/(?:---\r?\n?|\r?\n\r?\n)/).map(b => b.trim()).filter(b => b.length > 0);
-    const questions: any[] = [];
-    for (const block of blocks) {
-      const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-      if (lines.length === 0) continue;
-      const questionText = lines[0];
-      const optionLines = lines.slice(1);
-      let correctOptionIndex = 0;
-      const options: string[] = [];
-      optionLines.forEach((optLine, index) => {
-        let textVal = optLine;
-        let isCorrect = false;
-        if (textVal.startsWith("*")) {
-          isCorrect = true;
-          textVal = textVal.substring(1).trim();
-        }
-        if (textVal.toLowerCase().endsWith("(correct)")) {
-          isCorrect = true;
-          textVal = textVal.substring(0, textVal.length - 9).trim();
-        }
-        textVal = textVal.replace(/^[a-zA-Z][\)\.]\s*/, "");
-        options.push(textVal);
-        if (isCorrect) {
-          correctOptionIndex = index;
-        }
-      });
-      while (options.length < 2) {
-        options.push(`Option ${options.length + 1}`);
-      }
-      questions.push({
-        questionText,
-        options,
-        correctOptionIndex
-      });
-    }
-    return questions;
-  };
-
-  const handleCreateQuizSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!quizTitle.trim()) {
-      setQuizError("Quiz title is required.");
-      return;
-    }
-    let finalQuestions: any[] = [];
-    if (quizPreviewText.trim()) {
-      finalQuestions = parseQuizFromText(quizPreviewText);
-      if (finalQuestions.length === 0) {
-        setQuizError("Could not parse any valid questions from the import text. Check formatting.");
-        return;
-      }
-    } else {
-      const invalidQ = quizQuestions.find(q => !q.questionText.trim() || q.options.some((o: string) => !o.trim()));
-      if (invalidQ) {
-        setQuizError("Please fill out all question texts and options.");
-        return;
-      }
-      finalQuestions = quizQuestions;
-    }
-
-    onCreateQuiz(quizTitle, quizDesc, JSON.stringify(quizDepts), JSON.stringify(quizRoles), finalQuestions, quizTenant);
-    setQuizTitle("");
-    setQuizDesc("");
-    setQuizDepts([Department.ALL]);
-    setQuizRoles([Role.ALL]);
-    setQuizTenant("ALL");
-    setQuizQuestions([{ questionText: "", options: ["", "", "", ""], correctOptionIndex: 0 }]);
-    setQuizPreviewText("");
-    setQuizError("");
-  };
-
-  // ----------------------------------------------------
   // SUB-TAB 5: SOPs State & Logic
   // ----------------------------------------------------
   const [sopTitle, setSopTitle] = useState("");
@@ -1166,7 +1013,7 @@ export default function ClientAdminPanel({
             <ShieldCheck className="w-5 h-5 text-indigo-600 animate-pulse" />
             Client Admin Panel
           </h2>
-          <p className="text-[10px] text-slate-400 font-medium">Manage and audit notices, checklists, tasks, training quizzes, and SOP manuals.</p>
+          <p className="text-[10px] text-slate-400 font-medium">Manage and audit notices, checklists, tasks, training, and SOP manuals.</p>
         </div>
 
         {/* Global Outlet Filter Dropdown */}
@@ -1191,7 +1038,6 @@ export default function ClientAdminPanel({
         {[
           { id: "notices", label: "Notices Board", icon: Megaphone },
           { id: "checklists", label: "Checklists & Reports", icon: ClipboardCheck },
-          { id: "quizzes", label: "Quizzes & Scores", icon: BookOpen },
           { id: "sops", label: "SOP Document Logs", icon: FileText },
           { id: "outlets", label: "Outlets & Facilities", icon: Building2 },
           { id: "staff", label: "Staff Directory", icon: Users },
@@ -1834,281 +1680,6 @@ export default function ClientAdminPanel({
           </div>
         )}
 
-        {/* ========================================================
-            TAB 4: MANAGING QUIZZES
-            ======================================================== */}
-        {activeSubTab === "quizzes" && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* CREATE QUIZ FORM */}
-            <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm space-y-4 h-fit max-h-[700px] overflow-y-auto">
-              <div className="border-b border-slate-50 pb-2">
-                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Create Knowledge Assessment</h3>
-              </div>
-
-              {quizError && (
-                <div className="p-3 bg-red-50 text-red-800 rounded-xl text-xs font-semibold">{quizError}</div>
-              )}
-
-              <form onSubmit={handleCreateQuizSubmit} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Quiz Title</label>
-                  <input
-                    type="text"
-                    value={quizTitle}
-                    onChange={(e) => setQuizTitle(e.target.value)}
-                    placeholder="e.g. Sourdough Hydration Standards"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-750 font-semibold focus:outline-none"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Description</label>
-                  <input
-                    type="text"
-                    value={quizDesc}
-                    onChange={(e) => setQuizDesc(e.target.value)}
-                    placeholder="Brief description of training goals..."
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-750 focus:outline-none font-normal"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <MultiSelectChecklist
-                    label="Target Department"
-                    options={multiSelectDepts}
-                    selectedValues={quizDepts}
-                    onChange={setQuizDepts}
-                    allValue={Department.ALL}
-                  />
-                  <MultiSelectChecklist
-                    label="Target Role"
-                    options={multiSelectRoles}
-                    selectedValues={quizRoles}
-                    onChange={setQuizRoles}
-                    allValue={Role.ALL}
-                  />
-                </div>
-
-                {/* Quiz Bulk Input Editor */}
-                <div className="space-y-2 border-t border-slate-100 pt-3">
-                  <div className="space-y-1 text-left">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Questions Bulk Input Editor</label>
-                    </div>
-                    <textarea
-                      rows={10}
-                      value={quizPreviewText}
-                      onChange={(e) => setQuizPreviewText(e.target.value)}
-                      placeholder="Enter quiz questions and choices here. This helper text will disappear when you start typing.&#10;&#10;Format Example:&#10;What temperature should deck ovens be?&#10;A) 100°C&#10;B) 220°C (correct)&#10;C) 300°C&#10;---&#10;Which yeast type requires proofing in warm water before mixing?&#10;*A) Active Dry Yeast&#10;B) Instant Yeast&#10;C) Fresh Yeast"
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-750 focus:outline-none font-normal"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Target Outlet Scope</label>
-                  <select
-                    value={quizTenant}
-                    onChange={(e) => setQuizTenant(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-750 font-semibold focus:outline-none cursor-pointer"
-                  >
-                    <option value="ALL">All Outlets</option>
-                    {tenants.map(t => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Questions Fields Builder */}
-                <div className="space-y-4 border-t border-slate-100 pt-3 text-left">
-                  <div className="flex justify-between items-center">
-                    <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Questions ({quizQuestions.length})</label>
-                    <button
-                      type="button"
-                      onClick={handleAddQuestionField}
-                      className="flex items-center gap-0.5 text-indigo-600 hover:text-indigo-800 text-[10px] font-bold cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add Question
-                    </button>
-                  </div>
-
-                  {quizQuestions.map((q, qIdx) => (
-                    <div key={qIdx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5 relative">
-                      {quizQuestions.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveQuestionField(qIdx)}
-                          className="absolute top-2 right-2 text-slate-300 hover:text-red-500 cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      
-                      <div className="space-y-1">
-                        <label className="text-[8px] text-slate-400 font-bold block">Question {qIdx + 1}</label>
-                        <input
-                          type="text"
-                          value={q.questionText}
-                          onChange={(e) => handleQuestionTextChange(qIdx, e.target.value)}
-                          placeholder="e.g. What is the oven temperature for Sourdough?"
-                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[8px] text-slate-400 font-bold block">Options — click <span className="text-emerald-600">✓ Correct</span> to mark the right answer</label>
-                        <div className="space-y-1.5">
-                          {q.options.map((opt: string, optIdx: number) => {
-                            const isCorrect = q.correctOptionIndex === optIdx;
-                            const letter = String.fromCharCode(65 + optIdx); // A, B, C, D
-                            return (
-                              <div key={optIdx} className={`flex items-center gap-2 border rounded-lg px-2 py-1.5 transition-all ${
-                                isCorrect
-                                  ? 'bg-emerald-50 border-emerald-300'
-                                  : 'bg-white border-slate-200 hover:border-slate-300'
-                              }`}>
-                                <span className={`text-[10px] font-extrabold w-4 shrink-0 ${
-                                  isCorrect ? 'text-emerald-700' : 'text-slate-400'
-                                }`}>{letter})</span>
-                                <input
-                                  type="text"
-                                  value={opt}
-                                  onChange={(e) => handleOptionTextChange(qIdx, optIdx, e.target.value)}
-                                  placeholder={`Option ${letter}`}
-                                  className="flex-1 text-[10px] focus:outline-none font-medium bg-transparent min-w-0"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handleCorrectOptionChange(qIdx, optIdx)}
-                                  title={isCorrect ? 'This is marked as correct' : 'Click to mark as correct answer'}
-                                  className={`shrink-0 text-[9px] font-extrabold px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
-                                    isCorrect
-                                      ? 'bg-emerald-500 text-white border-emerald-500'
-                                      : 'bg-white text-slate-400 border-slate-200 hover:text-emerald-600 hover:border-emerald-300'
-                                  }`}
-                                >
-                                  {isCorrect ? '✓ Correct' : 'Mark'}
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full py-2.5 bg-slate-900 text-white hover:bg-slate-800 font-bold text-xs rounded-xl shadow cursor-pointer"
-                >
-                  Publish Quiz
-                </button>
-              </form>
-            </div>
-
-            {/* QUIZZES LIST & ATTEMPTS SCORE REPORTS */}
-            <div className="lg:col-span-2 space-y-6">
-              
-              {/* Quizzes List */}
-              <div className="space-y-3">
-                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider block mb-1">Active Quizzes ({filteredQuizzes.length})</h3>
-                {filteredQuizzes.length === 0 ? (
-                  <div className="bg-white rounded-2xl border border-dashed border-slate-200 py-8 text-center text-slate-400 text-xs">
-                    No quizzes created.
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {filteredQuizzes.map(quiz => (
-                      <div key={quiz.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm flex flex-col justify-between space-y-3 text-left">
-                        <div className="space-y-1">
-                          <div className="flex justify-between items-start gap-2">
-                            <div className="flex gap-1 items-center flex-wrap">
-                              <span className="text-[7px] font-bold bg-indigo-50 text-indigo-750 px-1 py-0.2 rounded uppercase">
-                                {tenants.find(t => t.id === quiz.tenantId)?.name || "All Outlets"}
-                              </span>
-                              <span className="text-[7px] font-bold bg-slate-100 text-slate-750 px-1 py-0.2 rounded uppercase">
-                                Dept: {quiz.department}
-                              </span>
-                            </div>
-                            <button
-                              onClick={() => onDeleteQuiz(quiz.id)}
-                              className="p-1 text-slate-300 hover:text-red-500 rounded-lg cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                          <h4 className="text-xs font-bold text-slate-850 mt-1">{quiz.title}</h4>
-                          <p className="text-[10px] text-slate-500 leading-snug">{quiz.description}</p>
-                        </div>
-                        <div className="pt-2 border-t border-slate-50 flex items-center justify-between text-[9px] text-slate-400 font-mono">
-                          <span>{quiz.questions.length} questions</span>
-                          <span>By: {quiz.createdBy.name}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Quiz Results Report */}
-              <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-50 pb-3">
-                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Employee Quiz Performance Report</h3>
-                  <button 
-                    onClick={downloadQuizScoreboardCSV}
-                    disabled={quizAttempts.length === 0}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-xl text-[10px] font-bold hover:bg-slate-800 disabled:opacity-50 cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Download CSV Report
-                  </button>
-                </div>
-
-                <div className="overflow-x-auto max-h-[300px]">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-100 text-[10px] uppercase font-bold text-slate-450 tracking-wider">
-                        <th className="py-2.5 px-2">Employee</th>
-                        <th className="py-2.5 px-2">Role</th>
-                        <th className="py-2.5 px-2">Quiz Assessment</th>
-                        <th className="py-2.5 px-2 text-center">Score</th>
-                        <th className="py-2.5 px-2 text-right">Completed Date</th>
-                      </tr>
-                    </thead>
-                    <tbody className="text-[11px] font-medium text-slate-600">
-                      {quizAttempts.map(att => (
-                        <tr key={att.id} className="border-b border-slate-50/50 hover:bg-slate-50/50">
-                          <td className="py-2 px-2 font-bold text-slate-800">{att.userName}</td>
-                          <td className="py-2 px-2 text-slate-500">{att.userRole}</td>
-                          <td className="py-2 px-2 font-semibold text-slate-600 truncate max-w-[150px]">{att.quizTitle}</td>
-                          <td className="py-2 px-2 text-center">
-                            <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold font-mono ${
-                              (att.score / att.totalQuestions) >= 0.75 
-                                ? "bg-emerald-50 text-emerald-800 border border-emerald-100" 
-                                : "bg-red-50 text-red-800 border border-red-100"
-                            }`}>
-                              {att.score} / {att.totalQuestions} ({Math.round((att.score / att.totalQuestions) * 100)}%)
-                            </span>
-                          </td>
-                          <td className="py-2 px-2 font-mono text-[9px] text-slate-400 text-right">
-                            {new Date(att.completedAt).toLocaleDateString()} at {new Date(att.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </td>
-                        </tr>
-                      ))}
-                      {quizAttempts.length === 0 && (
-                        <tr>
-                          <td colSpan={5} className="py-6 text-center text-slate-400 text-xs">No quiz records submitted.</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        )}
 
         {/* ========================================================
             TAB 5: MANAGING SOPs
@@ -2820,26 +2391,6 @@ export default function ClientAdminPanel({
                 >
                   <Download className="w-3.5 h-3.5" />
                   Download Checklists Report
-                </button>
-              </div>
-
-              {/* Card 4: Quiz Performance Scoreboard */}
-              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 flex flex-col justify-between space-y-4 hover:shadow-md transition-shadow">
-                <div className="space-y-1">
-                  <h4 className="text-xs font-bold text-slate-805 uppercase tracking-wider flex items-center gap-1.5">
-                    <BookOpen className="w-4 h-4 text-indigo-600" />
-                    Quiz Performance Scoreboard
-                  </h4>
-                  <p className="text-xs text-slate-500 leading-normal">
-                    Download quiz scores and performance history, including employee names, assigned roles, quiz titles, question counts, scores, and completion dates.
-                  </p>
-                </div>
-                <button
-                  onClick={downloadQuizScoreboardCSV}
-                  className="w-full sm:w-fit py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm shadow-indigo-100"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Download Scoreboard Report
                 </button>
               </div>
 

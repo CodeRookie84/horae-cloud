@@ -51,6 +51,28 @@ const SINGLE_FIRE_EVENTS = new Set(["task_assigned"]);
 // (status updates, task chat, notices, digests, urgent pushes) — now approved by Meta.
 const GENERIC_TEMPLATE_NAME = "horae_alert";
 
+// ─── Plan B: push-first, WhatsApp only as last-mile fallback ───────────────────
+// WhatsApp is paid; web push is free. So paid WhatsApp is sent ONLY for:
+//   • 'urgent' events (immediate WhatsApp + push, in parallel), and
+//   • the daily digest to users whose push pipe looks dead (the digest is the
+//     safety net that catches everything the free channels missed).
+// Every other ('normal') event goes push + in-app only — no paid message — and
+// anything unread is swept up by the next digest. See horae-whatsapp-flows-build.
+const EVENT_TIERS: Record<string, "urgent" | "normal"> = {
+  urgent_push:        "urgent",
+  task_assigned:      "urgent", // user choice: new-task assignment always pings WhatsApp
+  task_status:        "normal",
+  task_chat:          "normal",
+  notice:             "normal",
+  training_published: "normal",
+  checklist_posted:   "normal",
+  daily_digest:       "normal", // special-cased in whatsappAllowedForEvent()
+};
+
+// Days since the last service-worker push ack before we treat a user's push as
+// dead and route their digest to WhatsApp instead.
+const PUSH_HEALTH_DAYS = 3;
+
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 // Needed because this function is called directly from the browser (urgent
 // push button), not just server-to-server (DB webhooks, cron, curl).
@@ -80,12 +102,20 @@ serve(async (req) => {
 
   try {
     if (table === "tasks") {
-      if (type === "INSERT")       await handleTaskAssigned(record);
-      else if (type === "UPDATE")  await handleTaskUpdated(record, old_record, body.actorId);
+      // Only a NEW task assignment notifies. Status changes and task-chat
+      // messages deliberately do NOT push/WhatsApp (chats surface in the daily
+      // digest instead); handleTaskUpdated/handleTaskComment are left defined
+      // but intentionally unrouted.
+      if (type === "INSERT") await handleTaskAssigned(record);
     } else if (table === "notices" && type === "INSERT") {
       await handleNoticePosted(record);
-    } else if (type === "TASK_COMMENT") {
-      await handleTaskComment(body);
+    } else if (table === "trainings") {
+      // Fire once, when a training becomes published: either it is inserted
+      // already-published, or a draft is flipped published=true on update.
+      if (type === "INSERT" && record?.published) await handleTrainingPublished(record);
+      else if (type === "UPDATE" && record?.published && !old_record?.published) await handleTrainingPublished(record);
+    } else if (table === "checklists" && type === "INSERT") {
+      await handleChecklistPosted(record);
     } else if (type === "DIGEST") {
       await handleDigest(body.userId, body.tenantId, body.items, body.runMode);
     } else if (type === "URGENT_PUSH") {
@@ -204,6 +234,72 @@ async function handleNoticePosted(notice: any) {
   }
 }
 
+async function handleTrainingPublished(training: any) {
+  const deepLink = `${APP_BASE_URL}/training`;
+  const audience = await getTrainingAudience(training);
+  for (const user of audience) {
+    if (user.id === training.created_by) continue;
+    // Log/dedup under the user's own outlet so a multi-outlet training reports
+    // correctly per tenant.
+    if (!await checkAntiSpam(user.id, user.tenant_id, "training_published", training.id)) continue;
+    await sendNotifications(user, {
+      waMessage: buildTrainingMessage(user.name, training.title, deepLink),
+      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [training.title, `New training assigned — complete it. ${deepLink}`] },
+      pushTitle: `📚 New Training: ${training.title}`,
+      pushBody: "Tap to start your training",
+      url: deepLink,
+      pushTag: `training-${training.id}`,
+    }, user.tenant_id, "training_published", training.id);
+  }
+}
+
+async function handleChecklistPosted(checklist: any) {
+  // The checklists table is overloaded — SOPs and some quizzes are stored here
+  // as JSON in `description`. Only notify for real compliance checklists.
+  try {
+    if (typeof checklist.description === "string" && checklist.description.startsWith("{")) {
+      const obj = JSON.parse(checklist.description);
+      if (obj.type === "sop" || obj.type === "quiz") return;
+    }
+  } catch { /* legacy plain-text description — treat as a real checklist */ }
+
+  const title = checklist.title || "New checklist";
+  const deepLink = `${APP_BASE_URL}/checklists/${checklist.id}`;
+  const { data: users } = await supabase.from("users").select("*").eq("tenant_id", checklist.tenant_id);
+  for (const user of (users || [])) {
+    if (user.id === checklist.created_by || user.id === checklist.created_by_user_id) continue;
+    if (!await checkAntiSpam(user.id, checklist.tenant_id, "checklist_posted", checklist.id)) continue;
+    await sendNotifications(user, {
+      waMessage: buildChecklistMessage(user.name, title, deepLink),
+      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [title, `New checklist to complete. ${deepLink}`] },
+      pushTitle: `✅ New Checklist: ${title}`,
+      pushBody: "Tap to complete your checklist",
+      url: deepLink,
+      pushTag: `checklist-${checklist.id}`,
+    }, checklist.tenant_id, "checklist_posted", checklist.id);
+  }
+}
+
+// Resolves the staff a training targets, mirroring trainingMatchesUser() in
+// src/services/trainingService.ts: outlets ([] = all of the client's outlets),
+// then 'All Departments'/'All Roles' wildcards.
+async function getTrainingAudience(training: any): Promise<any[]> {
+  let tenantIds: string[] = Array.isArray(training.outlets) ? training.outlets : [];
+  if (tenantIds.length === 0) {
+    const { data: tenants } = await supabase.from("tenants").select("id").eq("client_id", training.client_id);
+    tenantIds = (tenants || []).map((t: any) => t.id);
+  }
+  if (tenantIds.length === 0) return [];
+
+  const { data: users } = await supabase.from("users").select("*").in("tenant_id", tenantIds);
+  const dept = String(training.department || "All Departments");
+  const role = String(training.role || "All Roles");
+  return (users || []).filter((u: any) =>
+    (dept === "All Departments" || String(u.department) === dept) &&
+    (role === "All Roles" || String(u.role) === role)
+  );
+}
+
 async function handleDigest(userId: string, tenantId: string, items: any, runMode: "morning" | "evening" = "morning") {
   const user = await getUser(userId);
   if (!user) return;
@@ -213,14 +309,13 @@ async function handleDigest(userId: string, tenantId: string, items: any, runMod
     ? [`Evening wrap-up, ${firstName} 🌙\n`]
     : [`Good morning ${firstName}! Your Horae briefing 🌅\n`];
 
-  if (runMode === "morning") {
-    if (items.checklists?.length) parts.push(`✅ CHECKLIST: "${items.checklists[0].title}" is pending`);
-    if (items.notices?.length)    parts.push(`📢 NOTICE: "${items.notices[0].title}"`);
-    if (items.quizzes?.length)    parts.push(`📝 QUIZ: "${items.quizzes[0].title}" — complete today`);
-    if (items.tasks?.length)      parts.push(`📋 TASKS DUE TODAY: ${items.tasks.length} task(s) need attention`);
-  } else {
-    if (items.tasks?.length)      parts.push(`📋 STILL OPEN: ${items.tasks.length} task(s) — check before tomorrow`);
-  }
+  // Both runs summarise all four areas; only the framing differs by run.
+  const taskLead = runMode === "morning" ? "due today" : "still open — check before tomorrow";
+  if (items.tasks?.length)      parts.push(`📋 TASKS: ${items.tasks.length} ${taskLead}`);
+  if (items.checklists?.length) parts.push(`✅ CHECKLIST: "${items.checklists[0].title}"${items.checklists.length > 1 ? ` +${items.checklists.length - 1} more` : ""} pending`);
+  if (items.training?.length)   parts.push(`📚 TRAINING: ${items.training.length} pending — "${items.training[0].title}"`);
+  if (items.chats?.length)      parts.push(`💬 CHATS: ${items.chats.length} new message(s) on your tasks — latest from ${items.chats[0].sender_name}`);
+  if (items.notices?.length)    parts.push(`📢 NOTICE: "${items.notices[0].title}"${items.notices.length > 1 ? ` +${items.notices.length - 1} more` : ""}`);
   if (parts.length <= 1) return;
 
   const deepLink = `${APP_BASE_URL}/digest`;
@@ -231,7 +326,7 @@ async function handleDigest(userId: string, tenantId: string, items: any, runMod
     waMessage: parts.join("\n"),
     waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [digestHeading, `${parts.slice(1, -1).join(" ")} ${deepLink}`] },
     pushTitle: runMode === "evening" ? "🌙 Your Horae Evening Wrap-up" : "📋 Your Horae Morning Briefing",
-    pushBody: `${items.tasks?.length || 0} tasks${runMode === "evening" ? "" : ", " + (items.checklists?.length || 0) + " checklists"}`,
+    pushBody: `${items.tasks?.length || 0} tasks · ${items.checklists?.length || 0} checklists · ${items.training?.length || 0} training · ${items.chats?.length || 0} chats · ${items.notices?.length || 0} notices`,
     url: deepLink,
     pushTag: "horae-digest",
   }, tenantId, "daily_digest", `digest-${runMode}-` + new Date().toISOString().slice(0, 10));
@@ -341,6 +436,26 @@ async function checkAntiSpam(userId: string, tenantId: string, eventType: string
   return true;
 }
 
+// ─── Plan B channel routing ────────────────────────────────────────────────────
+
+/** Is this user's web-push pipe alive? Used to decide whether the digest (the
+ *  fallback carrier) needs to go via paid WhatsApp. `last_push_ack_at` is null
+ *  until the service worker acks its first push — during that grace period we
+ *  trust the token's presence so a freshly-onboarded user isn't over-messaged. */
+function pushHealthy(user: any): boolean {
+  if (!user.fcm_token) return false;
+  if (!user.last_push_ack_at) return true; // grace: no telemetry yet
+  return (Date.now() - new Date(user.last_push_ack_at).getTime()) < PUSH_HEALTH_DAYS * 86400000;
+}
+
+/** Whether a paid WhatsApp message is allowed for this event+user under Plan B. */
+function whatsappAllowedForEvent(eventType: string, user: any): boolean {
+  // The digest is the safety net: WhatsApp only when free push looks dead.
+  if (eventType === "daily_digest") return !pushHealthy(user);
+  // Everything else: WhatsApp only for urgent events.
+  return (EVENT_TIERS[eventType] || "normal") === "urgent";
+}
+
 // ─── Send to Both Channels ────────────────────────────────────────────────────
 
 async function sendNotifications(user: any, payload: {
@@ -353,7 +468,11 @@ async function sendNotifications(user: any, payload: {
 }, tenantId: string, eventType: string, refId: string, isUrgent: boolean = false, pushOnly: boolean = false) {
   const promises: Promise<void>[] = [];
 
-  if (!pushOnly && user.phone_number && user.whatsapp_opted_in && !DISABLE_WHATSAPP) {
+  // Plan B gate: only spend a paid WhatsApp message when the event tier warrants
+  // it (urgent), or when it's the digest fallback to a push-dead user. `pushOnly`
+  // still forces a push-only send regardless.
+  const waAllowed = whatsappAllowedForEvent(eventType, user);
+  if (waAllowed && !pushOnly && user.phone_number && user.whatsapp_opted_in && !DISABLE_WHATSAPP) {
     // Daily WhatsApp cap — enforced here (WhatsApp-only) so it never suppresses
     // push. Counts only real sends (event_type != 'debug') so diagnostic rows
     // can't inflate the count and lock the user out.
@@ -374,7 +493,7 @@ async function sendNotifications(user: any, payload: {
 
   if (user.fcm_token) {
     promises.push(
-      sendWebPush(user.fcm_token, payload)
+      sendWebPush(user.fcm_token, payload, user.id, tenantId)
         .then(() => logNotif(user.id, tenantId, eventType, refId, "webpush", "sent", undefined, isUrgent))
         .catch(async e => {
           const msg = String(e);
@@ -445,7 +564,7 @@ async function sendWebPush(subscriptionJson: string, payload: {
   pushBody: string;
   url: string;
   pushTag?: string;
-}): Promise<void> {
+}, userId?: string, tenantId?: string): Promise<void> {
   const subscription = JSON.parse(subscriptionJson);
 
   const messagePayload = JSON.stringify({
@@ -455,6 +574,12 @@ async function sendWebPush(subscriptionJson: string, payload: {
     icon: "/app-icon.jpg",
     badge: "/app-icon.jpg",
     tag: payload.pushTag || "horae-notif",
+    // Plan B: the service worker echoes these back to push-ack when the push is
+    // actually delivered/opened, which stamps users.last_push_ack_at — our only
+    // proof a push reached the device (see pushHealthy()).
+    userId,
+    tenantId,
+    ackUrl: `${SUPABASE_URL}/functions/v1/push-ack`,
   });
 
   try {
@@ -536,4 +661,10 @@ function buildChatMessage(sender: string, taskTitle: string, msg: string, link: 
 }
 function buildNoticeMessage(name: string, title: string, preview: string, link: string) {
   return `📢 *Notice — Horae*\n\nHi ${name.split(" ")[0]},\n*${title}*\n${preview}...\n\n👉 ${link}`;
+}
+function buildTrainingMessage(name: string, title: string, link: string) {
+  return `📚 *New Training — Horae*\n\nHi ${name.split(" ")[0]},\nA new training is assigned to you:\n*${title}*\n\n👉 ${link}`;
+}
+function buildChecklistMessage(name: string, title: string, link: string) {
+  return `✅ *New Checklist — Horae*\n\nHi ${name.split(" ")[0]},\nA new checklist is ready for you:\n*${title}*\n\n👉 ${link}`;
 }

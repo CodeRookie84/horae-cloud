@@ -30,8 +30,6 @@ import {
   Task,
   Role,
   Department,
-  Quiz,
-  QuizAttempt,
   Training as TrainingT,
   TrainingAttempt,
   isTargetMatched,
@@ -50,8 +48,6 @@ interface DashboardProps {
   onSubmitChecklist: (chkId: string, itemStates: { [itemId: string]: boolean }) => void;
   onNavigate: (tab: string) => void;
   onAddTask: (title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[]) => void;
-  quizzes?: Quiz[];
-  quizAttempts?: QuizAttempt[];
   trainings?: TrainingT[];
   trainingAttempts?: TrainingAttempt[];
   /** Feature keys the client's plan grants — gates which dashboard sections show. */
@@ -69,8 +65,6 @@ export default function Dashboard({
   onSubmitChecklist,
   onNavigate,
   onAddTask,
-  quizzes: rawQuizzes = [],
-  quizAttempts: rawQuizAttempts = [],
   trainings: rawTrainings = [],
   trainingAttempts: rawTrainingAttempts = [],
   features = [],
@@ -118,17 +112,6 @@ export default function Dashboard({
   const unreadNoticesCount = notices.filter((n) => !readNoticeIds.includes(n.id)).length;
 
   const unsubmittedChecklistsCount = checklists.filter((c) => c.items.some((i) => !i.completed)).length;
-
-  const quizzes = rawQuizzes;
-  const myQuizzes = quizzes.filter((q) => {
-    const matchDept = isTargetMatched(q.department, activeUser.department, Department.ALL);
-    const matchRole = isTargetMatched(q.role, activeUser.role, Role.ALL);
-    const matchesTenant = q.tenantId === "ALL" || q.tenantId === activeUser.tenantId;
-    return matchDept && matchRole && matchesTenant;
-  });
-  const myAttempts = rawQuizAttempts.filter((a) => a.userId === activeUser.id);
-  const unattemptedQuizzes = myQuizzes.filter((q) => !myAttempts.some((a) => a.quizId === q.id));
-  const unattemptedQuizzesCount = unattemptedQuizzes.length;
 
   // Pending training assessments assigned to this user (published + targeted + not yet passed).
   const pendingTrainingCount = rawTrainings.filter((t) =>
@@ -191,7 +174,6 @@ export default function Dashboard({
   const tools = [
     has("notices")    && { key: "notices",    label: "Notices",             Icon: Megaphone,      color: "var(--color-accent)",     count: unreadNoticesCount,        target: "notices" },
     has("checklists") && { key: "checklists", label: "Checklists",          Icon: ClipboardCheck, color: "#5C8567",                 count: unsubmittedChecklistsCount, target: "checklists" },
-    has("quizzes")    && { key: "quizzes",    label: "Quizzes",             Icon: GraduationCap,  color: "var(--color-brand-soft)", count: unattemptedQuizzesCount,   target: "quizzes" },
     has("training")   && { key: "training",   label: "Training Assessment", Icon: Award,          color: "var(--color-brand)",      count: pendingTrainingCount,      target: "training" },
   ].filter(Boolean) as { key: string; label: string; Icon: any; color: string; count: number; target: string }[];
 

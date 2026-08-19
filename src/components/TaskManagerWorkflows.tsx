@@ -41,6 +41,9 @@ import { Task, User as AppUser, Role, Department, Tenant } from "../types";
 import { supabase } from '../services/supabaseClient';
 import { store, translateText } from "../services/store";
 import MemberPicker, { resolveMemberIds, EMPTY_SELECTION, type MemberPickerSelection } from "./MemberPicker";
+import { resolveLanguages } from "../services/languages";
+
+const DEFAULT_LANG_CODES = ['hi', 'kn', 'ta'];
 
 interface TaskManagerWorkflowsProps {
   tasks: Task[];
@@ -54,6 +57,11 @@ interface TaskManagerWorkflowsProps {
   onDeleteTask: (id: string) => void;
   onUrgentNotify: (id: string) => void;
   onBack?: () => void;
+  /** WhatsApp capture id from /tasks/new?capture=<id> — prefills the create form. */
+  prefillCaptureId?: string;
+  onCapturePrefilled?: () => void;
+  /** Translation languages this client chose at onboarding (ISO codes). */
+  languages?: string[];
 }
 
 export default function TaskManagerWorkflows({
@@ -67,8 +75,18 @@ export default function TaskManagerWorkflows({
   onAddMessage,
   onDeleteTask,
   onUrgentNotify,
-  onBack
+  onBack,
+  prefillCaptureId,
+  onCapturePrefilled,
+  languages = [],
 }: TaskManagerWorkflowsProps) {
+  // Display-translation languages: English first, then the client's chosen set.
+  const displayLangs = [
+    { code: "en", native: "English" },
+    ...resolveLanguages(languages.length ? languages : DEFAULT_LANG_CODES)
+      .filter(l => l.code !== "en")
+      .map(l => ({ code: l.code, native: l.native })),
+  ];
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
   const [selectedTaskInitialReadCount, setSelectedTaskInitialReadCount] = useState<number>(0);
   const prevSelectedTaskIdRef = useRef<string>("");
@@ -83,6 +101,27 @@ export default function TaskManagerWorkflows({
   const assignedUserIds = resolveMemberIds(assigneePicked, tenantUsers, tenants);
   const [taskPhotos, setTaskPhotos] = useState<string[]>([]);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+
+  // Prefill the create-task form from a WhatsApp capture (/tasks/new?capture=<id>).
+  // The capture was created by the whatsapp-webhook from a forwarded message or a
+  // "new task" text/voice note; here we drop its content into the form and open it.
+  useEffect(() => {
+    if (!prefillCaptureId) return;
+    let cancelled = false;
+    (async () => {
+      const cap = await store.getTaskCapture(prefillCaptureId);
+      if (cancelled) return;
+      if (cap && cap.status === "pending") {
+        if (cap.suggestedTitle) setTitle(cap.suggestedTitle);
+        if (cap.rawText) setDescription(cap.rawText);
+        setShowCreateForm(true);
+        store.consumeTaskCapture(cap.id).catch(() => {});
+      }
+      onCapturePrefilled?.();
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillCaptureId]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -115,11 +154,11 @@ export default function TaskManagerWorkflows({
   const [translating, setTranslating] = useState(false);
   const [showMobileStatusMenu, setShowMobileStatusMenu] = useState(false);
   const commentRecognitionRef = useRef<any>(null);
-  const [selectedDisplayLang, setSelectedDisplayLang] = useState<"en" | "hi" | "kn" | "ta">("en");
+  const [selectedDisplayLang, setSelectedDisplayLang] = useState<string>("en");
   const [translationsCache, setTranslationsCache] = useState<Record<string, Record<string, string>>>({});
   const recognitionRef = useRef<any>(null);
 
-  const handleLanguageToggle = async (lang: "en" | "hi" | "kn" | "ta") => {
+  const handleLanguageToggle = async (lang: string) => {
     setSelectedDisplayLang(lang);
     if (activeTask && !activeTask.translations?.[lang] && !translationsCache[activeTask.id]?.[lang]) {
       try {
@@ -204,6 +243,62 @@ export default function TaskManagerWorkflows({
                     activeUser.role === Role.SUPERVISOR;
 
   const activeTask = tasks.find(t => t.id === selectedTaskId);
+
+  // ── Task-chat display language ──────────────────────────────────────────────
+  // One control for the whole thread (not per-message, to avoid clutter): the
+  // user picks a default output language once (persisted), and can flip the whole
+  // conversation to English or back to the original at any time. Messages are
+  // translated on-demand and cached by message id.
+  const chatLangOptions = [
+    { code: "original", native: "Original" },
+    { code: "en", native: "English" },
+    ...resolveLanguages(languages.length ? languages : DEFAULT_LANG_CODES)
+      .filter(l => l.code !== "en")
+      .map(l => ({ code: l.code, native: l.native })),
+  ];
+  const [chatViewLang, setChatViewLang] = useState<string>(() => {
+    try { return localStorage.getItem("horae_chat_view_lang") || "original"; } catch { return "original"; }
+  });
+  const [chatTrCache, setChatTrCache] = useState<Record<string, Record<string, string>>>({});
+  const setChatLang = (code: string) => {
+    setChatViewLang(code);
+    try { localStorage.setItem("horae_chat_view_lang", code); } catch { /* ignore */ }
+  };
+  const msgText = (m: any) => (chatViewLang === "original" ? m.message : (chatTrCache[m.id]?.[chatViewLang] ?? m.message));
+
+  // Single per-thread control: pick the language the whole chat renders in.
+  const renderChatLangSelect = () => (
+    <select
+      value={chatViewLang}
+      onChange={(e) => setChatLang(e.target.value)}
+      title="Show this conversation in"
+      className="text-[10px] font-semibold bg-slate-50 border border-slate-200 rounded-md px-1.5 py-0.5 text-slate-600 cursor-pointer focus:outline-none"
+    >
+      {chatLangOptions.map((o) => (
+        <option key={o.code} value={o.code}>{o.code === "original" ? "🌐 Original" : `🌐 ${o.native}`}</option>
+      ))}
+    </select>
+  );
+
+  // Translate any not-yet-cached chat messages whenever the view language or the
+  // open task's messages change.
+  useEffect(() => {
+    if (chatViewLang === "original" || !activeTask?.chat?.length) return;
+    const todo = activeTask.chat.filter((m: any) => m.id && chatTrCache[m.id]?.[chatViewLang] === undefined);
+    if (!todo.length) return;
+    let cancelled = false;
+    (async () => {
+      const pairs = await Promise.all(todo.map(async (m: any) => [m.id, await translateText(m.message, chatViewLang)] as const));
+      if (cancelled) return;
+      setChatTrCache(prev => {
+        const next = { ...prev };
+        for (const [id, txt] of pairs) next[id] = { ...(next[id] || {}), [chatViewLang]: txt };
+        return next;
+      });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatViewLang, activeTask?.id, activeTask?.chat?.length]);
 
   const getTaskNumber = (task: Task) => {
     const sortedTasks = [...tasks].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
@@ -1427,8 +1522,9 @@ export default function TaskManagerWorkflows({
 
                 {/* Language Toggle */}
                 <div className="flex border-b border-slate-100 justify-start mb-2 gap-1 bg-slate-50 p-1 rounded-xl w-fit">
-                  {(["en", "hi", "kn", "ta"] as const).map((lang) => {
-                    const label = lang === "en" ? "English" : lang === "hi" ? "हिन्दी" : lang === "kn" ? "ಕನ್ನಡ" : "தமிழ்";
+                  {displayLangs.map((dl) => {
+                    const lang = dl.code;
+                    const label = dl.native;
                     const isSelected = selectedDisplayLang === lang;
                     return (
                       <button
@@ -1511,7 +1607,10 @@ export default function TaskManagerWorkflows({
                       </span>
                     )}
                   </span>
-                  <span>Assignees & Managers Only</span>
+                  <span className="flex items-center gap-2">
+                    {renderChatLangSelect()}
+                    <span>Assignees & Managers Only</span>
+                  </span>
                 </div>
 
                 {/* Messages feed */}
@@ -1555,7 +1654,7 @@ export default function TaskManagerWorkflows({
                                 ? "bg-emerald-50/50 text-slate-800 border-2 border-emerald-200 rounded-tl-none ring-2 ring-emerald-500/10" 
                                 : "bg-white text-slate-800 border border-slate-100 rounded-tl-none"
                             }`}>
-                              {m.message}
+                              {msgText(m)}
                             </div>
                           </div>
                         </React.Fragment>
@@ -1883,8 +1982,9 @@ export default function TaskManagerWorkflows({
 
                 {/* Language Selector & Translation */}
                 <div className="flex border-b border-slate-100 justify-start gap-1 bg-slate-500/5 p-1 rounded-xl w-fit">
-                  {(["en", "hi", "kn", "ta"] as const).map((lang) => {
-                    const label = lang === "en" ? "EN" : lang === "hi" ? "हि" : lang === "kn" ? "ಕ" : "த";
+                  {displayLangs.map((dl) => {
+                    const lang = dl.code;
+                    const label = dl.native;
                     const isSelected = selectedDisplayLang === lang;
                     return (
                       <button
@@ -1924,6 +2024,9 @@ export default function TaskManagerWorkflows({
               </div>
             ) : (
               <div className="flex-1 flex flex-col bg-slate-50/50 overflow-hidden">
+                <div className="px-3.5 py-1.5 border-b border-slate-100 flex justify-end shrink-0">
+                  {renderChatLangSelect()}
+                </div>
                 <div className="flex-1 p-3.5 space-y-2.5 overflow-y-auto">
                   {activeTask.chat.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-20 text-slate-400 space-y-2">
@@ -1937,7 +2040,7 @@ export default function TaskManagerWorkflows({
                           <span>{msg.senderName} ({msg.senderRole})</span>
                           <span className="text-slate-400 font-mono font-medium text-[11px]">{new Date(msg.timestamp).toLocaleString()}</span>
                         </div>
-                        <p className="text-sm text-slate-700 leading-normal font-normal">{msg.message}</p>
+                        <p className="text-sm text-slate-700 leading-normal font-normal">{msgText(msg)}</p>
                       </div>
                     ))
                   )}
@@ -2070,8 +2173,9 @@ export default function TaskManagerWorkflows({
                   <div className="flex items-center justify-between">
                     <span className="text-[12px] font-semibold tracking-wide text-slate-400 block">Task Description</span>
                     <div className="flex border border-slate-200 justify-start gap-1 bg-slate-500/5 p-0.5 rounded-lg w-fit">
-                      {(["en", "hi", "kn", "ta"] as const).map((lang) => {
-                        const label = lang === "en" ? "English" : lang === "hi" ? "हिन्दी" : lang === "kn" ? "ಕನ್ನಡ" : "தமிழ்";
+                      {displayLangs.map((dl) => {
+                    const lang = dl.code;
+                    const label = dl.native;
                         const isSelected = selectedDisplayLang === lang;
                         return (
                           <button
@@ -2138,7 +2242,10 @@ export default function TaskManagerWorkflows({
                       </span>
                     )}
                   </span>
-                  <span>Coordinators Only</span>
+                  <span className="flex items-center gap-2">
+                    {renderChatLangSelect()}
+                    <span>Coordinators Only</span>
+                  </span>
                 </div>
 
                 {/* Chat Feed */}
@@ -2165,7 +2272,7 @@ export default function TaskManagerWorkflows({
                               ? "bg-slate-900 text-slate-100 rounded-tr-none" 
                               : "bg-white text-slate-800 border border-slate-100 rounded-tl-none"
                           }`}>
-                            {m.message}
+                            {msgText(m)}
                           </div>
                         </div>
                       );

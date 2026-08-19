@@ -5,6 +5,7 @@
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import LanguageMultiSelect from "./LanguageMultiSelect";
 import { 
   Building2, 
   Users, 
@@ -71,11 +72,11 @@ interface HoraeAdminPanelProps {
   clients: Client[];
   tenants: Tenant[];
   users: User[];
-  onAddClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean) => void;
+  onAddClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages: string[]) => void;
   onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
   onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean) => Promise<string>;
   onSelectUser: (userId: string) => void;
-  onUpdateClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean) => void;
+  onUpdateClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages: string[]) => void;
   onDeleteClient: (id: string) => void;
   onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
   onDeleteTenant: (tenantId: string) => void;
@@ -108,6 +109,7 @@ export default function HoraeAdminPanel({
   const [clientLogo, setClientLogo] = useState("🍰");
   const [clientPlan, setClientPlan] = useState<plans.PlanId>("Pro");
   const [clientTrainingAddon, setClientTrainingAddon] = useState<boolean>(false);
+  const [clientLanguages, setClientLanguages] = useState<string[]>(["hi", "kn", "ta"]);
   const [clientSuccessMsg, setClientSuccessMsg] = useState("");
 
   // State for editing a client
@@ -116,6 +118,7 @@ export default function HoraeAdminPanel({
   const [editLogo, setEditLogo] = useState("");
   const [editPlan, setEditPlan] = useState<plans.PlanId>("Pro");
   const [editTrainingAddon, setEditTrainingAddon] = useState<boolean>(false);
+  const [editLanguages, setEditLanguages] = useState<string[]>([]);
 
   // State for deleting a client
   const [deletingClientId, setDeletingClientId] = useState<string | null>(null);
@@ -207,10 +210,11 @@ export default function HoraeAdminPanel({
   const handleCreateClient = (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientId.trim() || !clientName.trim()) return;
-    onAddClient(clientId.toLowerCase().replace(/[^a-z0-9-]/g, ''), clientName, clientLogo, clientPlan, plans.trainingAddonApplies(clientPlan) && clientTrainingAddon);
+    onAddClient(clientId.toLowerCase().replace(/[^a-z0-9-]/g, ''), clientName, clientLogo, clientPlan, plans.trainingAddonApplies(clientPlan) && clientTrainingAddon, clientLanguages);
     setClientSuccessMsg(`Successfully onboarded Client: ${clientName} (ID: ${clientId.toLowerCase().replace(/[^a-z0-9-]/g, '')})!`);
     setClientId("");
     setClientName("");
+    setClientLanguages(["hi", "kn", "ta"]);
     setTimeout(() => setClientSuccessMsg(""), 4000);
   };
 
@@ -457,6 +461,9 @@ export default function HoraeAdminPanel({
                   <TrainingAddonToggle plan={clientPlan} value={clientTrainingAddon} onChange={setClientTrainingAddon} />
                   <PlanFeaturePreview plan={clientPlan} trainingAddon={clientTrainingAddon} />
 
+                  {/* Translation languages available to this client's staff */}
+                  <LanguageMultiSelect value={clientLanguages} onChange={setClientLanguages} />
+
                   {clientSuccessMsg && (
                     <div className="p-2.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-xl text-[10px] font-semibold flex items-center gap-1.5">
                       <Check className="w-3.5 h-3.5 shrink-0" />
@@ -516,6 +523,7 @@ export default function HoraeAdminPanel({
                                 setEditLogo(client.logo);
                                 setEditPlan(client.plan);
                                 setEditTrainingAddon(!!client.trainingAddon);
+                                setEditLanguages(client.languages || []);
                               }}
                               className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
                               title="Edit Client"
@@ -1024,7 +1032,7 @@ export default function HoraeAdminPanel({
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  onUpdateClient(editingClient.id, editName, editLogo, editPlan, plans.trainingAddonApplies(editPlan) && editTrainingAddon);
+                  onUpdateClient(editingClient.id, editName, editLogo, editPlan, plans.trainingAddonApplies(editPlan) && editTrainingAddon, editLanguages);
                   setEditingClient(null);
                 }}
                 className="space-y-4"
@@ -1091,6 +1099,9 @@ export default function HoraeAdminPanel({
                 {/* Training add-on + derived feature preview */}
                 <TrainingAddonToggle plan={editPlan} value={editTrainingAddon} onChange={setEditTrainingAddon} />
                 <PlanFeaturePreview plan={editPlan} trainingAddon={editTrainingAddon} />
+
+                {/* Translation languages available to this client's staff */}
+                <LanguageMultiSelect value={editLanguages} onChange={setEditLanguages} />
 
                 <div className="flex gap-3 pt-2">
                   <button

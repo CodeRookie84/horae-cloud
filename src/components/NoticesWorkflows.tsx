@@ -6,6 +6,11 @@
 import React, { useState } from "react";
 import { Megaphone, Inbox, Building2, ArrowLeft, ChevronRight, ShieldAlert, Clock, MessageSquare } from "lucide-react";
 import { Notice, Tenant, User as AppUser, Role } from "../types";
+import { translateText } from "../services/store";
+import { resolveLanguages } from "../services/languages";
+import { Loader2, Languages } from "lucide-react";
+
+const DEFAULT_LANG_CODES = ['hi', 'kn', 'ta'];
 
 interface NoticesWorkflowsProps {
   notices: Notice[];
@@ -13,6 +18,8 @@ interface NoticesWorkflowsProps {
   activeUser: AppUser;
   onBack?: () => void;
   onUrgentNotify?: (id: string) => void;
+  /** Translation languages this client chose at onboarding (ISO codes). */
+  languages?: string[];
 }
 
 export default function NoticesWorkflows({
@@ -20,11 +27,35 @@ export default function NoticesWorkflows({
   tenants = [],
   activeUser,
   onBack,
-  onUrgentNotify
+  onUrgentNotify,
+  languages = [],
 }: NoticesWorkflowsProps) {
   const canNotify = [Role.ADMIN, Role.SUPER_ADMIN, Role.MANAGER, Role.SUPERVISOR].includes(activeUser.role as Role);
   const [selectedTenantId, setSelectedTenantId] = useState<string>("ALL");
   const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null);
+
+  // ── Notice translation (picker in the detail view) ──────────────────────────
+  const noticePickerLangs = resolveLanguages(languages.length ? languages : DEFAULT_LANG_CODES);
+  const [noticeLang, setNoticeLang] = useState<string>("original");
+  const [noticeTr, setNoticeTr] = useState<Record<string, Record<string, { title: string; content: string }>>>({});
+  const [translatingNotice, setTranslatingNotice] = useState<string | null>(null);
+
+  const handleTranslateNotice = async (notice: Notice, lang: string) => {
+    setNoticeLang(lang);
+    if (lang === "original" || noticeTr[notice.id]?.[lang]) return;
+    setTranslatingNotice(lang);
+    try {
+      const [title, content] = await Promise.all([
+        translateText(notice.title, lang),
+        translateText(notice.content || "", lang),
+      ]);
+      setNoticeTr(prev => ({ ...prev, [notice.id]: { ...(prev[notice.id] || {}), [lang]: { title, content } } }));
+    } catch (e) {
+      console.error("Notice translation failed:", e);
+    } finally {
+      setTranslatingNotice(null);
+    }
+  };
 
   const [readNoticeIds, setReadNoticeIds] = useState<string[]>(() => {
     try {
@@ -81,8 +112,42 @@ export default function NoticesWorkflows({
               <span className="text-[10px] font-bold font-mono bg-rose-50 text-rose-800 border border-rose-150 px-1.5 py-0.5 rounded">Subject: {selectedNotice.subject}</span>
             )}
           </div>
-          <h2 className="text-xl font-bold text-slate-800 leading-snug">{selectedNotice.title}</h2>
-          <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap font-normal">{selectedNotice.content}</p>
+
+          {/* Translate picker (client languages) */}
+          {noticePickerLangs.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Languages className="w-3.5 h-3.5 text-slate-400" />
+              <button
+                onClick={() => setNoticeLang("original")}
+                className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-all cursor-pointer ${
+                  noticeLang === "original" ? "bg-[#162D4E] text-[#C5A880] border-[#162D4E]" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                }`}
+              >
+                Original
+              </button>
+              {noticePickerLangs.map(l => (
+                <button
+                  key={l.code}
+                  onClick={() => handleTranslateNotice(selectedNotice, l.code)}
+                  disabled={translatingNotice !== null}
+                  className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                    noticeLang === l.code ? "bg-[#162D4E] text-[#C5A880] border-[#162D4E]" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  {translatingNotice === l.code
+                    ? <><Loader2 className="w-2.5 h-2.5 animate-spin" /> …</>
+                    : <>{l.native} <span className="text-[8px] text-slate-400">{l.name}</span></>}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <h2 className="text-xl font-bold text-slate-800 leading-snug">
+            {(noticeLang !== "original" && noticeTr[selectedNotice.id]?.[noticeLang]?.title) || selectedNotice.title}
+          </h2>
+          <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap font-normal">
+            {(noticeLang !== "original" && noticeTr[selectedNotice.id]?.[noticeLang]?.content) || selectedNotice.content}
+          </p>
           {selectedNotice.videoUrl && (
             <div className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-950 shadow-inner">
               <video src={selectedNotice.videoUrl} controls className="w-full max-h-64 object-cover" />

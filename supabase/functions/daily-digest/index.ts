@@ -2,13 +2,13 @@
  * Supabase Edge Function: daily-digest
  *
  * Runs twice a day (configured via Supabase cron):
- *  - "morning" (~8:00 AM IST): pending checklists, notices from last 24h,
- *    quizzes not yet attempted, tasks due today.
- *  - "evening" (~6:30 PM IST): tasks still open from today and tasks due
- *    tomorrow.
+ *  - "morning" (~8:00 AM IST)
+ *  - "evening" (~6:30 PM IST)
  *
- * Calls notify-dispatcher with the digest payload.
- * Skips users who already received a digest for that run today.
+ * Both runs summarise, per user: open TASKS assigned to them, pending
+ * CHECKLISTS in their outlet, pending TRAININGS targeted to them, and recent
+ * NOTICES. Calls notify-dispatcher with the digest payload; skips users who
+ * already received this run's digest today.
  */
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
@@ -31,128 +31,164 @@ serve(async (req) => {
     // No body (manual trigger) — default to morning
   }
 
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   const yesterday = new Date(Date.now() - 86400000).toISOString();
-  const startOfToday = today + "T00:00:00Z";
 
   console.log(`[daily-digest] Running ${runMode} digest for ${today}`);
 
-  // Get all active tenants
-  const { data: tenants } = await supabase.from("tenants").select("id");
+  // All outlets, with their client id (needed to scope trainings).
+  const { data: tenants } = await supabase.from("tenants").select("id, client_id");
 
   let dispatched = 0;
   let skipped = 0;
 
   for (const tenant of (tenants || [])) {
-    // Get all staff users in this tenant (excluding admins from digest)
+    // Staff of this outlet (super admins excluded from the digest).
     const { data: users } = await supabase
       .from("users")
-      .select("id, name, whatsapp_opted_in, phone_number, fcm_token")
+      .select("id, name, whatsapp_opted_in, phone_number, fcm_token, department, role, tenant_id")
       .eq("tenant_id", tenant.id)
       .not("role", "eq", "Super Admin");
+    if (!users || users.length === 0) continue;
 
-    for (const user of (users || [])) {
-      // Skip if neither WhatsApp nor FCM is configured
-      if ((!user.phone_number || !user.whatsapp_opted_in) && !user.fcm_token) {
-        skipped++;
-        continue;
+    // ── Per-outlet data shared across its users ─────────────────────────────
+    // Pending checklists (SOP/quiz rows that share the table are filtered out).
+    const { data: tenantChecklists } = await supabase
+      .from("checklists")
+      .select("id, title, description")
+      .eq("tenant_id", tenant.id);
+    const checklists = (tenantChecklists || []).filter((c: any) => {
+      try {
+        if (typeof c.description === "string" && c.description.startsWith("{")) {
+          const o = JSON.parse(c.description);
+          if (o.type === "sop" || o.type === "quiz") return false;
+        }
+      } catch { /* plain-text description = real checklist */ }
+      return true;
+    }).slice(0, 3);
+
+    // Notices posted in the last 24h.
+    const { data: recentNotices } = await supabase
+      .from("notices")
+      .select("id, title")
+      .eq("tenant_id", tenant.id)
+      .gte("created_at", yesterday)
+      .order("created_at", { ascending: false })
+      .limit(3);
+
+    // Published trainings for this outlet's client + who has already passed them,
+    // so we can compute each user's PENDING training list (mirrors
+    // trainingService.trainingMatchesUser: outlets[]/dept/role wildcards).
+    const { data: clientTrainings } = await supabase
+      .from("trainings")
+      .select("id, title, outlets, department, role, questions")
+      .eq("client_id", tenant.client_id)
+      .eq("published", true);
+    const trainingIds = (clientTrainings || []).map((t: any) => t.id);
+    const passedByUser: Record<string, Set<string>> = {};
+    if (trainingIds.length) {
+      const { data: atts } = await supabase
+        .from("training_attempts")
+        .select("training_id, user_id, passed")
+        .in("training_id", trainingIds);
+      for (const a of (atts || [])) {
+        if (a.passed) (passedByUser[a.user_id] ??= new Set<string>()).add(a.training_id);
       }
+    }
 
-      // Skip if this run's digest already sent today
+    // ── Per-user assembly ───────────────────────────────────────────────────
+    for (const user of users) {
+      // Needs at least one delivery channel configured.
+      if ((!user.phone_number || !user.whatsapp_opted_in) && !user.fcm_token) { skipped++; continue; }
+
+      // Already sent this run today?
       const { data: existing } = await supabase
-        .from("digest_tracker")
-        .select("id")
-        .eq("user_id", user.id)
-        .eq("digest_date", today)
-        .eq("run_mode", runMode)
-        .single();
+        .from("digest_tracker").select("id")
+        .eq("user_id", user.id).eq("digest_date", today).eq("run_mode", runMode).single();
       if (existing) { skipped++; continue; }
 
-      const items: { checklists: any[]; notices: any[]; quizzes: any[]; tasks: any[]; mentions: any[] } = {
-        checklists: [],
-        notices: [],
-        quizzes: [],
-        tasks: [],
+      // Tasks assigned to this user (run-specific window).
+      let tasks: any[] = [];
+      if (runMode === "morning") {
+        // Due today or overdue, still open.
+        const { data } = await supabase.from("tasks")
+          .select("id, title, status, priority")
+          .eq("tenant_id", tenant.id)
+          .contains("assigned_user_ids", [user.id])
+          .not("status", "in", '("Completed","Closed")')
+          .lte("due_date", today + "T23:59:59Z");
+        tasks = data || [];
+      } else {
+        // Still open today + anything due tomorrow.
+        const { data: openToday } = await supabase.from("tasks")
+          .select("id, title, status, priority")
+          .eq("tenant_id", tenant.id)
+          .contains("assigned_user_ids", [user.id])
+          .not("status", "in", '("Completed","Closed")')
+          .lte("due_date", today + "T23:59:59Z");
+        const { data: dueTomorrow } = await supabase.from("tasks")
+          .select("id, title, status, priority")
+          .eq("tenant_id", tenant.id)
+          .contains("assigned_user_ids", [user.id])
+          .not("status", "in", '("Completed","Closed")')
+          .gte("due_date", tomorrow + "T00:00:00Z")
+          .lte("due_date", tomorrow + "T23:59:59Z");
+        tasks = [...(openToday || []), ...(dueTomorrow || [])];
+      }
+
+      // Pending trainings targeted to this user.
+      const passed = passedByUser[user.id] || new Set<string>();
+      const training = (clientTrainings || []).filter((t: any) => {
+        if (!(t.questions?.length)) return false;
+        if (passed.has(t.id)) return false;
+        const outletOk = !Array.isArray(t.outlets) || t.outlets.length === 0 || t.outlets.includes(user.tenant_id);
+        const deptOk = String(t.department || "All Departments") === "All Departments" || String(t.department) === String(user.department);
+        const roleOk = String(t.role || "All Roles") === "All Roles" || String(t.role) === String(user.role);
+        return outletOk && deptOk && roleOk;
+      }).slice(0, 3);
+
+      // New task-chat messages (last 24h) on this user's tasks — assigned to them
+      // or created by them — from someone else. Chats don't push; they land here.
+      const { data: aTasks } = await supabase.from("tasks").select("id")
+        .eq("tenant_id", tenant.id).contains("assigned_user_ids", [user.id]);
+      const { data: cTasks } = await supabase.from("tasks").select("id")
+        .eq("tenant_id", tenant.id).eq("created_by_user_id", user.id);
+      const myTaskIds = [...new Set([...(aTasks || []), ...(cTasks || [])].map((t: any) => t.id))];
+      let chats: any[] = [];
+      if (myTaskIds.length) {
+        const { data: msgs } = await supabase.from("task_messages")
+          .select("task_id, sender_name, message")
+          .in("task_id", myTaskIds)
+          .gte("timestamp", yesterday)
+          .neq("user_id", user.id)
+          .order("timestamp", { ascending: false })
+          .limit(20);
+        chats = msgs || [];
+      }
+
+      const items = {
+        checklists,
+        notices: recentNotices || [],
+        tasks,
+        training,
+        chats,
         mentions: [],
       };
 
-      if (runMode === "morning") {
-        // 1. Pending checklists (not yet submitted today by this user)
-        const { data: checklists } = await supabase
-          .from("checklists")
-          .select("id, title, recurrence")
-          .eq("tenant_id", tenant.id);
-        items.checklists = (checklists || []).slice(0, 3);
-
-        // 2. Notices posted in last 24h
-        const { data: notices } = await supabase
-          .from("notices")
-          .select("id, title")
-          .eq("tenant_id", tenant.id)
-          .gte("created_at", yesterday)
-          .order("created_at", { ascending: false })
-          .limit(3);
-        items.notices = notices || [];
-
-        // 3. Tasks due today assigned to this user
-        const { data: tasks } = await supabase
-          .from("tasks")
-          .select("id, title, status, priority")
-          .eq("tenant_id", tenant.id)
-          .contains("assigned_user_ids", [user.id])
-          .not("status", "in", '("Completed","Closed")')
-          .lte("due_date", today + "T23:59:59Z")
-          .gte("due_date", startOfToday);
-        items.tasks = tasks || [];
-      } else {
-        // Evening run: tasks still open from today
-        const { data: openTasks } = await supabase
-          .from("tasks")
-          .select("id, title, status, priority")
-          .eq("tenant_id", tenant.id)
-          .contains("assigned_user_ids", [user.id])
-          .not("status", "in", '("Completed","Closed")')
-          .lte("due_date", today + "T23:59:59Z")
-          .gte("due_date", startOfToday);
-        items.tasks = openTasks || [];
-
-        // Tasks due tomorrow
-        const { data: tomorrowTasks } = await supabase
-          .from("tasks")
-          .select("id, title, status, priority")
-          .eq("tenant_id", tenant.id)
-          .contains("assigned_user_ids", [user.id])
-          .not("status", "in", '("Completed","Closed")')
-          .lte("due_date", tomorrow + "T23:59:59Z")
-          .gte("due_date", tomorrow + "T00:00:00Z");
-        items.notices = []; // not used in evening run
-        items.tasks = [...items.tasks, ...(tomorrowTasks || [])];
-      }
-
-      // Skip empty digest
-      const totalItems = items.checklists.length + items.notices.length + items.tasks.length + items.mentions.length;
+      const totalItems = items.checklists.length + items.notices.length + items.tasks.length + items.training.length + items.chats.length;
       if (totalItems === 0) { skipped++; continue; }
 
-      // Call dispatcher with DIGEST type
       const res = await fetch(DISPATCHER_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Authorization": `Bearer ${SUPABASE_SERVICE}`,
         },
-        body: JSON.stringify({
-          type: "DIGEST",
-          userId: user.id,
-          tenantId: tenant.id,
-          runMode,
-          items,
-        }),
+        body: JSON.stringify({ type: "DIGEST", userId: user.id, tenantId: tenant.id, runMode, items }),
       });
 
       if (res.ok) {
-        // Record digest sent
         await supabase.from("digest_tracker").upsert({
           user_id: user.id,
           tenant_id: tenant.id,

@@ -23,11 +23,10 @@ import MaintenanceAdmin from "./MaintenanceAdmin";
 import * as svc from "../../services/maintenanceService";
 import { AUDIT_PARAMS } from "./maintenanceData";
 import { translateText } from "../../services/store";
+import { resolveLanguages } from "../../services/languages";
 
-type ChkLang = "original" | "kn" | "hi" | "ta";
-const CLIT_LANGS: { c: ChkLang; l: string }[] = [
-  { c: "original", l: "Original" }, { c: "kn", l: "ಕನ್ನಡ" }, { c: "hi", l: "हिंदी" }, { c: "ta", l: "தமிழ்" },
-];
+const DEFAULT_LANG_CODES = ['hi', 'kn', 'ta'];
+type ChkLang = string;
 
 interface Props {
   activeUser: AppUser;
@@ -37,9 +36,15 @@ interface Props {
   clientUsers?: AppUser[];
   /** Grant/revoke CLIT access + role for a staff member (wired to the store). */
   onSetClitAccess?: (userId: string, access: boolean, role: string) => Promise<void>;
+  /** Translation languages this client chose at onboarding (ISO codes). */
+  languages?: string[];
 }
 
-export default function MaintenanceHub({ activeUser, activeTenant, tenants, clientUsers = [], onSetClitAccess }: Props) {
+export default function MaintenanceHub({ activeUser, activeTenant, tenants, clientUsers = [], onSetClitAccess, languages = [] }: Props) {
+  const pickerLangs = [
+    { code: "original", native: "Original" },
+    ...resolveLanguages(languages.length ? languages : DEFAULT_LANG_CODES).map(l => ({ code: l.code, native: l.native })),
+  ];
   const role: ClitRole = useMemo(
     () => effectiveClitRole(activeUser.clitRole, activeUser.role as string),
     [activeUser.clitRole, activeUser.role],
@@ -407,8 +412,8 @@ export default function MaintenanceHub({ activeUser, activeTenant, tenants, clie
       {!loading && !isAdminTab && ((activeSubTab === "equipment" && selectedMachine) || activeSubTab === "audit") && (
         <div className="clit-langbar">
           <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "'JetBrains Mono', monospace" }}>View in:</span>
-          {CLIT_LANGS.map(x => (
-            <button key={x.c} className={`lang-btn ${chkLang === x.c ? "active" : ""}`} disabled={translating} onClick={() => setChkLang(x.c)}>{x.l}</button>
+          {pickerLangs.map(x => (
+            <button key={x.code} className={`lang-btn ${chkLang === x.code ? "active" : ""}`} disabled={translating} onClick={() => setChkLang(x.code)}>{x.native}</button>
           ))}
           {translating && <span style={{ fontSize: 10, color: "var(--muted)" }}>Translating…</span>}
         </div>

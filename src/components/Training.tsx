@@ -14,6 +14,9 @@ import {
 import { Training as TrainingT, TrainingAttempt, User as AppUser } from "../types";
 import { trainingMatchesUser, trainingStatus } from "../services/trainingService";
 import { translateText } from "../services/store";
+import { resolveLanguages } from "../services/languages";
+
+const DEFAULT_LANG_CODES = ['hi', 'kn', 'ta'];
 
 interface Props {
   trainings: TrainingT[];
@@ -21,12 +24,10 @@ interface Props {
   activeUser: AppUser;
   onSubmit: (training: TrainingT, answers: number[], screenLeaves?: number) => Promise<TrainingAttempt>;
   onBack?: () => void;
+  /** Translation languages this client chose at onboarding (ISO codes). */
+  languages?: string[];
 }
 
-const LANGS: { code: "en" | "hi" | "kn" | "ta"; label: string }[] = [
-  { code: "en", label: "English" }, { code: "hi", label: "हिन्दी" },
-  { code: "kn", label: "ಕನ್ನಡ" }, { code: "ta", label: "தமிழ்" },
-];
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -34,7 +35,7 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export default function Training({ trainings, attempts, activeUser, onSubmit, onBack }: Props) {
+export default function Training({ trainings, attempts, activeUser, onSubmit, onBack, languages = [] }: Props) {
   const [selected, setSelected] = useState<TrainingT | null>(null);
 
   const mine = useMemo(
@@ -60,7 +61,7 @@ export default function Training({ trainings, attempts, activeUser, onSubmit, on
       </div>
 
       {selected
-        ? <TrainingRunner training={selected} activeUser={activeUser} attempts={myAttempts} onSubmit={onSubmit} onExit={() => setSelected(null)} />
+        ? <TrainingRunner training={selected} activeUser={activeUser} attempts={myAttempts} onSubmit={onSubmit} onExit={() => setSelected(null)} languages={languages} />
         : <TrainingList mine={mine} myAttempts={myAttempts} userId={activeUser.id} onOpen={setSelected} />}
     </div>
   );
@@ -115,10 +116,15 @@ function TrainingList({ mine, myAttempts, userId, onOpen }: { mine: TrainingT[];
 }
 
 // ── Runner ──────────────────────────────────────────────────────────────────────
-function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
+function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit, languages = [] }: {
   training: TrainingT; activeUser: AppUser; attempts: TrainingAttempt[];
-  onSubmit: Props["onSubmit"]; onExit: () => void;
+  onSubmit: Props["onSubmit"]; onExit: () => void; languages?: string[];
 }) {
+  // English is always the source; then the client's chosen languages.
+  const pickerLangs = [
+    { code: "en", name: "English", native: "English" },
+    ...resolveLanguages(languages.length ? languages : DEFAULT_LANG_CODES).filter(l => l.code !== "en"),
+  ];
   const st = trainingStatus(training, activeUser.id, attempts);
   const topRef = useRef<HTMLDivElement>(null);
 
@@ -147,7 +153,7 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
     : "No retakes remaining — ask your admin to allow a retest";
 
   const [phase, setPhase] = useState<"intro" | "test" | "result">("intro");
-  const [lang, setLang] = useState<"en" | "hi" | "kn" | "ta">("en");
+  const [lang, setLang] = useState<string>("en");
   const [translated, setTranslated] = useState<Record<string, { q: string; options: string[] }>>({});
   const [translating, setTranslating] = useState(false);
   const [answers, setAnswers] = useState<Record<number, number>>({}); // origQIdx -> origOptIdx
@@ -173,7 +179,7 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, [phase]);
 
-  const changeLang = async (code: "en" | "hi" | "kn" | "ta") => {
+  const changeLang = async (code: string) => {
     setLang(code);
     if (code === "en" || translated[code]?.q) return; // 'en' shows source
     setTranslating(true);
@@ -275,10 +281,10 @@ function TrainingRunner({ training, activeUser, attempts, onSubmit, onExit }: {
         <div className="space-y-5">
           <div className="flex items-center gap-2 flex-wrap">
             <Languages className="w-4 h-4 text-slate-400" />
-            {LANGS.map(l => (
+            {pickerLangs.map(l => (
               <button key={l.code} onClick={() => changeLang(l.code)} disabled={translating}
                 className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${lang === l.code ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}>
-                {l.label}
+                {l.native}
               </button>
             ))}
             {translating && <span className="text-[10px] text-slate-400 animate-pulse">Translating…</span>}

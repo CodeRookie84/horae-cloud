@@ -142,14 +142,13 @@ export default function Sidebar({
   const showNotices = clientServices.includes("notices");
   const showChecklists = clientServices.includes("checklists");
   const showTasks = clientServices.includes("tasks");
-  const showQuizzes = clientServices.includes("quizzes");
   const showSOPs = clientServices.includes("sops");
   const showTraining = clientServices.includes("training");
   const showMaintenance = clientServices.includes("maintenance") &&
     (activeUser.clitAccess || activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN);
   // Dashboard only appears when the plan surfaces something on it (Training-only
   // clients land on Training instead).
-  const showDashboard = ["tasks", "notices", "checklists", "quizzes"].some(f => clientServices.includes(f));
+  const showDashboard = ["tasks", "notices", "checklists"].some(f => clientServices.includes(f));
 
   return (
     <>
@@ -421,22 +420,6 @@ export default function Sidebar({
                 </button>
               )}
 
-              {showQuizzes && (
-                <button
-                  id="btn-quizzes"
-                  onClick={() => handleTabClick("quizzes")}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.8 rounded-md text-sm font-medium transition-all cursor-pointer ${
-                    activeTab === "quizzes"
-                      ? "bg-blue-50 text-blue-700 font-semibold rounded-xl"
-                      : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <BookOpen className="w-3.5 h-3.5" />
-                    <span>Quizzes</span>
-                  </div>
-                </button>
-              )}
 
               {showSOPs && (
                 <button

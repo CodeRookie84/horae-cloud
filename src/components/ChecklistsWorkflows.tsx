@@ -7,13 +7,11 @@ import React, { useState } from "react";
 import { ClipboardCheck, CheckCircle2, UserCheck, Building2, Check, ArrowLeft, ChevronRight, Clock, Loader2, Languages } from "lucide-react";
 import { Checklist, ChecklistItem, Tenant } from "../types";
 import { translateText, store } from "../services/store";
+import { resolveLanguages } from "../services/languages";
 
-const CHECKLIST_LANGS = [
-  { code: 'kn', label: 'ಕನ್ನಡ', name: 'Kannada' },
-  { code: 'hi', label: 'हिंदी', name: 'Hindi' },
-  { code: 'ta', label: 'தமிழ்', name: 'Tamil' },
-  { code: 'bn', label: 'বাংলা', name: 'Bengali' },
-] as const;
+// Fallback when a client hasn't chosen any translation languages yet.
+const DEFAULT_LANG_CODES = ['hi', 'kn', 'ta'];
+
 
 interface ChecklistsWorkflowsProps {
   checklists: Checklist[];
@@ -21,6 +19,8 @@ interface ChecklistsWorkflowsProps {
   onSubmitChecklist: (checklistId: string, itemStates: { [itemId: string]: boolean }, customInputs?: { [fieldName: string]: string }) => void;
   onBack?: () => void;
   onRefresh?: () => void;
+  /** Translation languages this client chose at onboarding (ISO codes). */
+  languages?: string[];
 }
 
 export default function ChecklistsWorkflows({
@@ -28,8 +28,10 @@ export default function ChecklistsWorkflows({
   tenants = [],
   onSubmitChecklist,
   onBack,
-  onRefresh
+  onRefresh,
+  languages = [],
 }: ChecklistsWorkflowsProps) {
+  const pickerLangs = (resolveLanguages(languages).length ? resolveLanguages(languages) : resolveLanguages(DEFAULT_LANG_CODES));
   const [selectedTenantId, setSelectedTenantId] = useState<string>("ALL");
   const [showCompleted, setShowCompleted] = useState<boolean>(false);
   const [customInputsState, setCustomInputsState] = useState<{ [checklistId: string]: { [fieldName: string]: string } }>({});
@@ -264,7 +266,7 @@ export default function ChecklistsWorkflows({
               >
                 Original
               </button>
-              {CHECKLIST_LANGS.map(lang => (
+              {pickerLangs.map(lang => (
                 <button
                   key={lang.code}
                   onClick={() => handleTranslate(checklist.id, lang.code, checklist)}
@@ -277,7 +279,7 @@ export default function ChecklistsWorkflows({
                 >
                   {translatingLang === lang.code
                     ? <><Loader2 className="w-2.5 h-2.5 animate-spin" /> Translating...</>
-                    : <>{lang.label} <span className="text-[8px] text-slate-400">{lang.name}</span></>}
+                    : <>{lang.native} <span className="text-[8px] text-slate-400">{lang.name}</span></>}
                 </button>
               ))}
             </div>
