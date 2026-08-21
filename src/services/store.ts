@@ -457,7 +457,18 @@ export class StoreService {
     } else {
       const last10 = this.normalizePhone(cleanId).last10;
       if (last10.length < 10) return null;
-      authEmail = `91${last10}@horae.local`; // must match the provisioning shim
+      // A staff member's auth account lives under their EMAIL if they were
+      // onboarded with one, otherwise under the phone shim `91<last10>@horae.local`.
+      // So resolve their real login email from the users row by phone first —
+      // otherwise mobile login only ever worked for email-less staff. Fall back
+      // to the shim when no row/email is found.
+      const { data: byPhone } = await supabase
+        .from('users')
+        .select('email')
+        .like('phone_number', `%${last10}`)
+        .limit(1);
+      const linkedEmail = byPhone?.[0]?.email;
+      authEmail = linkedEmail ? String(linkedEmail).toLowerCase() : `91${last10}@horae.local`;
     }
 
     // 1. Authenticate. supabase-js persists the session + JWT, which every
