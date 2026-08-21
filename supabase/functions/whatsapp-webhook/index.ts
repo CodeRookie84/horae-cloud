@@ -145,7 +145,12 @@ async function handleInboundMessage(m: any, contact: any) {
   // Interactive replies: main-menu list selections + capture-menu button taps.
   if (m.type === "interactive") {
     const listId = m.interactive?.list_reply?.id;
-    if (listId) { await handleMenuSelection(listId, fromPhone, userId, tenantId); return; }
+    if (listId) {
+      // Task-status picks (from the "Update status" button flow) are prefixed
+      // "ts~"; everything else is a main-menu selection.
+      if (listId.startsWith("ts~")) { await handleTaskStatusUpdate(listId, fromPhone, userId); return; }
+      await handleMenuSelection(listId, fromPhone, userId, tenantId); return;
+    }
     if (m.interactive?.button_reply?.id) { await handleButtonReply(m, fromPhone, userId, tenantId); return; }
     return;
   }
@@ -336,17 +341,22 @@ async function offerCaptureMenu(fromPhone: string, userId: string, tenantId: str
   if (wamid) await supabase.from("whatsapp_conversations").update({ menu_message_id: wamid }).eq("id", conv.id);
 }
 
+// Staff-settable task statuses offered over WhatsApp. "Assigned" is the initial
+// state (nothing to set) and "Closed" is creator/admin-only in the app, so both
+// are intentionally omitted from the self-service list.
+const WA_TASK_STATUSES = ["In Progress", "Pending", "On Hold", "Completed"];
+
 /**
  * A quick-reply button tap on a business-initiated TEMPLATE (task alert, digest,
  * notice…). We match it back to the exact alert via context.id → notification_log
- * (which stores the WAMID + the task/reference id at send time). A "Done"-style
- * tap on a task alert marks that task Completed; anything else just gets a
- * friendly ack — either way the tap has already re-opened the free 24h window.
+ * (which stores the WAMID + the task/reference id at send time).
+ *   • Task alert  → reply with a status LIST so the staff picks the CORRECT
+ *     status (never auto-complete — a fresh task shouldn't jump to Completed).
+ *   • Anything else → a light ack.
+ * Either way the tap has already re-opened the free 24-hour window.
  */
 async function handleTemplateButtonTap(m: any, fromPhone: string, userId: string, tenantId: string | null) {
   const contextId: string | undefined = m?.context?.id;
-  const label = String(m?.button?.text || m?.button?.payload || "").toLowerCase();
-  const isDone = /done|complete|finish/.test(label);
 
   // Resolve which notification this button belonged to.
   let ref: { reference_id: string; event_type: string } | null = null;
@@ -362,30 +372,49 @@ async function handleTemplateButtonTap(m: any, fromPhone: string, userId: string
   const taskEvents = ["task_assigned", "task_reassigned", "task_cc", "task_status", "urgent_push"];
   const looksLikeTask = ref && (taskEvents.includes(ref.event_type) || String(ref.reference_id).startsWith("task-"));
 
-  if (isDone && looksLikeTask && ref) {
+  if (looksLikeTask && ref) {
     // reference_id is the task id, sometimes suffixed with ":status" — strip it.
     const taskId = String(ref.reference_id).split(":")[0];
-    const { data: task } = await supabase.from("tasks").select("id, title, status").eq("id", taskId).single();
-    if (task) {
-      if (task.status === "Completed" || task.status === "Closed") {
-        await sendText(fromPhone, `✅ *${task.title}* is already marked ${task.status}.`);
-        return;
-      }
-      await supabase.from("tasks").update({ status: "Completed" }).eq("id", taskId);
-      const { data: u } = await supabase.from("users").select("name, role").eq("id", userId).limit(1);
-      await supabase.from("task_messages").insert([{
-        id: "msg-" + Date.now(), task_id: taskId, user_id: userId,
-        sender_name: u?.[0]?.name || "Staff", sender_role: u?.[0]?.role || "",
-        message: "✅ Marked Completed via WhatsApp", timestamp: new Date().toISOString(),
-      }]);
-      await sendText(fromPhone, `✅ Done! Marked *${task.title}* as Completed.`);
-      return;
-    }
+    await sendTaskStatusList(fromPhone, taskId);
+    return;
   }
 
   // Digest / notice / non-task, or a task we couldn't resolve — the window is
   // open, that's the win. Acknowledge lightly.
   await sendText(fromPhone, "👍 Got it — thanks!");
+}
+
+/** Show the status picker for one task. Row ids carry the task id + status. */
+async function sendTaskStatusList(fromPhone: string, taskId: string) {
+  const { data: task } = await supabase.from("tasks").select("id, title, status").eq("id", taskId).single();
+  if (!task) { await sendText(fromPhone, "👍 Got it — thanks!"); return; }
+  await sendList(
+    fromPhone,
+    `🔄 *${task.title}*\nCurrently: *${task.status}*\n\nWhat's the new status?`,
+    "Set status",
+    WA_TASK_STATUSES.map(s => ({ id: `ts~${taskId}~${s}`, title: s })),
+  );
+}
+
+/** Apply a status picked from the task-status list (row id `ts~<taskId>~<status>`). */
+async function handleTaskStatusUpdate(listId: string, fromPhone: string, userId: string) {
+  const parts = listId.split("~");            // ["ts", "task-123", "In Progress"]
+  const taskId = parts[1];
+  const status = parts.slice(2).join("~");    // status names have no "~", but be safe
+  if (!taskId || !WA_TASK_STATUSES.includes(status)) { await sendText(fromPhone, "👍 Got it."); return; }
+
+  const { data: task } = await supabase.from("tasks").select("id, title, status").eq("id", taskId).single();
+  if (!task) { await sendText(fromPhone, "That task couldn't be found — it may have been removed."); return; }
+  if (task.status === status) { await sendText(fromPhone, `👍 *${task.title}* is already *${status}*.`); return; }
+
+  await supabase.from("tasks").update({ status }).eq("id", taskId);
+  const { data: u } = await supabase.from("users").select("name, role").eq("id", userId).limit(1);
+  await supabase.from("task_messages").insert([{
+    id: "msg-" + Date.now(), task_id: taskId, user_id: userId,
+    sender_name: u?.[0]?.name || "Staff", sender_role: u?.[0]?.role || "",
+    message: `🔄 Status set to ${status} via WhatsApp`, timestamp: new Date().toISOString(),
+  }]);
+  await sendText(fromPhone, `✅ *${task.title}* is now *${status}*.`);
 }
 
 /** #1 step 2 — a button tap on the menu we offered. */
