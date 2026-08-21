@@ -150,6 +150,15 @@ async function handleInboundMessage(m: any, contact: any) {
     return;
   }
 
+  // Quick-reply button tap on a business TEMPLATE (e.g. "Done ✅" on a task
+  // alert, or "Got it 👍" on the digest). Arrives as type "button" with
+  // context.id = the alert's WAMID. The tap itself already re-opened the free
+  // 24-hour window (the whole point); here we also action it.
+  if (m.type === "button") {
+    await handleTemplateButtonTap(m, fromPhone, userId, tenantId);
+    return;
+  }
+
   // If the user just chose "Create a task"/"Raise a complaint" from the menu,
   // their next text/voice message IS the content — consume it here.
   if (m.type === "text" || m.type === "audio") {
@@ -325,6 +334,58 @@ async function offerCaptureMenu(fromPhone: string, userId: string, tenantId: str
   // Tie the eventual button tap (arrives with context.id = this wamid) back to
   // the stored conversation.
   if (wamid) await supabase.from("whatsapp_conversations").update({ menu_message_id: wamid }).eq("id", conv.id);
+}
+
+/**
+ * A quick-reply button tap on a business-initiated TEMPLATE (task alert, digest,
+ * notice…). We match it back to the exact alert via context.id → notification_log
+ * (which stores the WAMID + the task/reference id at send time). A "Done"-style
+ * tap on a task alert marks that task Completed; anything else just gets a
+ * friendly ack — either way the tap has already re-opened the free 24h window.
+ */
+async function handleTemplateButtonTap(m: any, fromPhone: string, userId: string, tenantId: string | null) {
+  const contextId: string | undefined = m?.context?.id;
+  const label = String(m?.button?.text || m?.button?.payload || "").toLowerCase();
+  const isDone = /done|complete|finish/.test(label);
+
+  // Resolve which notification this button belonged to.
+  let ref: { reference_id: string; event_type: string } | null = null;
+  if (contextId) {
+    const { data: logs } = await supabase
+      .from("notification_log")
+      .select("reference_id, event_type")
+      .eq("wa_message_id", contextId)
+      .limit(1);
+    ref = (logs?.[0] as any) || null;
+  }
+
+  const taskEvents = ["task_assigned", "task_reassigned", "task_cc", "task_status", "urgent_push"];
+  const looksLikeTask = ref && (taskEvents.includes(ref.event_type) || String(ref.reference_id).startsWith("task-"));
+
+  if (isDone && looksLikeTask && ref) {
+    // reference_id is the task id, sometimes suffixed with ":status" — strip it.
+    const taskId = String(ref.reference_id).split(":")[0];
+    const { data: task } = await supabase.from("tasks").select("id, title, status").eq("id", taskId).single();
+    if (task) {
+      if (task.status === "Completed" || task.status === "Closed") {
+        await sendText(fromPhone, `✅ *${task.title}* is already marked ${task.status}.`);
+        return;
+      }
+      await supabase.from("tasks").update({ status: "Completed" }).eq("id", taskId);
+      const { data: u } = await supabase.from("users").select("name, role").eq("id", userId).limit(1);
+      await supabase.from("task_messages").insert([{
+        id: "msg-" + Date.now(), task_id: taskId, user_id: userId,
+        sender_name: u?.[0]?.name || "Staff", sender_role: u?.[0]?.role || "",
+        message: "✅ Marked Completed via WhatsApp", timestamp: new Date().toISOString(),
+      }]);
+      await sendText(fromPhone, `✅ Done! Marked *${task.title}* as Completed.`);
+      return;
+    }
+  }
+
+  // Digest / notice / non-task, or a task we couldn't resolve — the window is
+  // open, that's the win. Acknowledge lightly.
+  await sendText(fromPhone, "👍 Got it — thanks!");
 }
 
 /** #1 step 2 — a button tap on the menu we offered. */
