@@ -459,15 +459,11 @@ export class StoreService {
       if (last10.length < 10) return null;
       // A staff member's auth account lives under their EMAIL if they were
       // onboarded with one, otherwise under the phone shim `91<last10>@horae.local`.
-      // So resolve their real login email from the users row by phone first —
-      // otherwise mobile login only ever worked for email-less staff. Fall back
-      // to the shim when no row/email is found.
-      const { data: byPhone } = await supabase
-        .from('users')
-        .select('email')
-        .like('phone_number', `%${last10}`)
-        .limit(1);
-      const linkedEmail = byPhone?.[0]?.email;
+      // Resolve their real login email from the phone via a SECURITY DEFINER RPC
+      // — a plain SELECT can't be used here because it runs pre-login (no session),
+      // and the users table's RLS is client-scoped so an anon read returns nothing.
+      // Fall back to the shim when the RPC finds no email (phone-only staff).
+      const { data: linkedEmail } = await supabase.rpc('login_email_for_phone', { p_last10: last10 });
       authEmail = linkedEmail ? String(linkedEmail).toLowerCase() : `91${last10}@horae.local`;
     }
 
