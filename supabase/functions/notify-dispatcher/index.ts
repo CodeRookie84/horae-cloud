@@ -68,7 +68,7 @@ const EVENT_TIERS: Record<string, "urgent" | "normal"> = {
   notice:             "urgent", // user choice: new notices always ping WhatsApp too
   training_published: "normal",
   checklist_posted:   "normal",
-  daily_digest:       "normal", // special-cased in whatsappAllowedForEvent()
+  daily_digest:       "urgent", // user priority: digest always pings WhatsApp (not just push-dead fallback)
 };
 
 // Days since the last service-worker push ack before we treat a user's push as
@@ -499,9 +499,10 @@ function pushHealthy(user: any): boolean {
 
 /** Whether a paid WhatsApp message is allowed for this event+user under Plan B. */
 function whatsappAllowedForEvent(eventType: string, user: any): boolean {
-  // The digest is the safety net: WhatsApp only when free push looks dead.
-  if (eventType === "daily_digest") return !pushHealthy(user);
-  // Everything else: WhatsApp only for urgent events.
+  // Urgent-tier events — new task, reassignment, notice, and now the daily
+  // digest (user priority) — always send WhatsApp in addition to push. Everything
+  // else (task_cc, status, chat, training, checklist) is push + in-app only.
+  // NOTE: pushHealthy() is retained as telemetry but no longer gates the digest.
   return (EVENT_TIERS[eventType] || "normal") === "urgent";
 }
 
