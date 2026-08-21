@@ -430,21 +430,12 @@ export class StoreService {
   /**
    * `identifier` may be an email OR a mobile number. Emails match the `email`
    * column; anything without an "@" is treated as a phone number and matched
-   * against `phone_number`. Passwords live on the user row (`avatar#pwd=`), so
-   * phone-only staff (no email) authenticate the same way.
-   *
-   * `companyName` is the client's display name (e.g. "Cakewala"), matched
-   * case-insensitively — NOT the opaque internal client id (e.g. "h26cw01").
-   * Falls back to an id match so an admin who still has the old id keeps working.
-   */
-  /**
    * Authenticates against Supabase Auth (one-way hashed passwords). `identifier`
    * is an email or a mobile number; phone-only staff resolve to the same shim
-   * email used at provisioning: `91<last10>@horae.local`. `companyName` is no
-   * longer needed for auth (email/phone + password is globally unique) — it's
-   * kept in the signature only so the login form doesn't have to change.
+   * email used at provisioning: `91<last10>@horae.local`. No company name is
+   * involved — email/phone + password is globally unique across all clients.
    */
-  public async verifyLogin(_companyName: string, identifier: string, password?: string): Promise<User | null> {
+  public async verifyLogin(identifier: string, password?: string): Promise<User | null> {
     if (!password) return null;
     const cleanId = identifier.trim();
     // Trim the password too. The self-service change-password modal saves
@@ -1645,7 +1636,8 @@ export class StoreService {
 
       // Unpack metadata from description if present
       let desc = t.description || "";
-      let assigneeIds: string[] = [t.assigned_user_id].filter(Boolean);
+      let metaAssignees: string[] = [];
+      let metaCc: string[] = [];
       let translations: Record<string, string> | undefined = undefined;
       let photos: string[] = [];
 
@@ -1653,7 +1645,8 @@ export class StoreService {
       if (parts.length > 1) {
         try {
           const metadata = JSON.parse(parts[1]);
-          if (metadata.assigneeIds) assigneeIds = metadata.assigneeIds;
+          if (metadata.assigneeIds) metaAssignees = metadata.assigneeIds;
+          if (metadata.ccIds) metaCc = metadata.ccIds;
           if (metadata.translations) translations = metadata.translations;
           if (metadata.photos) photos = metadata.photos;
           desc = parts[0];
@@ -1661,6 +1654,17 @@ export class StoreService {
           // ignore parsing error
         }
       }
+
+      // Primary assignees: prefer the real column, but UNION in the metadata list
+      // so legacy rows (whose extra assignees live only in the blob) don't lose
+      // them. Fall back to the single legacy column if both are empty.
+      const colAssignees: string[] = Array.isArray(t.assigned_user_ids) ? t.assigned_user_ids : [];
+      let assigneeIds = Array.from(new Set([...colAssignees, ...metaAssignees]));
+      if (assigneeIds.length === 0) assigneeIds = [t.assigned_user_id].filter(Boolean);
+
+      // CC: prefer the real column, else metadata. A user can't be both — primary wins.
+      const colCc: string[] = Array.isArray(t.cc_user_ids) ? t.cc_user_ids : [];
+      const ccUserIds = (colCc.length ? colCc : metaCc).filter((id: string) => !assigneeIds.includes(id));
 
       return {
         id: t.id,
@@ -1672,6 +1676,7 @@ export class StoreService {
         dueDate: t.due_date,
         assignedUserId: t.assigned_user_id,
         assignedUserIds: assigneeIds,
+        ccUserIds,
         createdByUserId: t.created_by_user_id,
         createdAt: t.created_at,
         chat,
@@ -1690,13 +1695,17 @@ export class StoreService {
       }
       return t.assignedUserId === curUser.id ||
              t.assignedUserIds?.includes(curUser.id) ||
+             t.ccUserIds?.includes(curUser.id) ||
              t.createdByUserId === curUser.id;
     }).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
-  public async addTask(title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[], tenantId: string): Promise<Task> {
+  public async addTask(title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[], ccUserIds: string[], tenantId: string): Promise<Task> {
     const me = await this.getActiveUser();
-    const primaryAssignee = assignedUserIds[0] || me.id;
+    const primaryIds = assignedUserIds.length ? assignedUserIds : [me.id];
+    const primaryAssignee = primaryIds[0];
+    // A user can't be both primary and CC — primary wins.
+    const ccIds = (ccUserIds || []).filter(id => !primaryIds.includes(id));
 
     let cleanDescription = description;
     let existingMetadata: any = {};
@@ -1710,7 +1719,8 @@ export class StoreService {
 
     const metadata = {
       ...existingMetadata,
-      assigneeIds: assignedUserIds,
+      assigneeIds: primaryIds,
+      ccIds,
     };
     const packedDescription = `${cleanDescription}\n\n---HORAE-METADATA---\n${JSON.stringify(metadata)}`;
 
@@ -1723,14 +1733,16 @@ export class StoreService {
       priority,
       due_date: dueDate,
       assigned_user_id: primaryAssignee,
+      assigned_user_ids: primaryIds,
+      cc_user_ids: ccIds,
       created_by_user_id: me.id,
       created_at: new Date().toISOString()
     };
 
     await supabase.from('tasks').insert([newTask]);
 
-    // In-app notifications for all assignees
-    await Promise.all(assignedUserIds.map(async (uId) => {
+    // In-app bell for everyone involved — primaries and CC alike.
+    await Promise.all([...primaryIds, ...ccIds].map(async (uId) => {
       const { data: assignee } = await supabase
         .from('users')
         .select('*')
@@ -1738,9 +1750,10 @@ export class StoreService {
         .single();
 
       if (assignee) {
+        const isCc = ccIds.includes(uId);
         await this.addNotification(
-          "New Task Assigned: " + title,
-          `Assigned to you. Due on ${dueDate}`,
+          (isCc ? "CC — New Task: " : "New Task Assigned: ") + title,
+          isCc ? `You're CC'd on this task. Due on ${dueDate}` : `Assigned to you. Due on ${dueDate}`,
           "task",
           assignee.department as Department,
           assignee.role as Role,
@@ -1750,13 +1763,14 @@ export class StoreService {
       }
     }));
 
-    // Push notification — invoke edge function directly from client so push fires
-    // regardless of whether the Supabase DB webhook is configured.
+    // Push/WhatsApp — invoke edge function directly from client so it fires
+    // regardless of whether the Supabase DB webhook is configured. The dispatcher
+    // WhatsApps only the primaries; CC users get push + in-app + digest only.
     supabase.functions.invoke('notify-dispatcher', {
       body: {
         type: 'INSERT',
         table: 'tasks',
-        record: { ...newTask, assigned_user_ids: assignedUserIds },
+        record: { ...newTask, assigned_user_ids: primaryIds, cc_user_ids: ccIds },
         old_record: null,
       },
     }).catch(() => { /* non-fatal — best-effort push */ });
@@ -1765,16 +1779,111 @@ export class StoreService {
       id: newTask.id,
       tenantId: newTask.tenant_id,
       title: newTask.title,
-      description,
+      description: cleanDescription,
       status: "Assigned",
       priority: newTask.priority,
       dueDate: newTask.due_date,
       assignedUserId: primaryAssignee,
-      assignedUserIds,
+      assignedUserIds: primaryIds,
+      ccUserIds: ccIds,
       createdByUserId: newTask.created_by_user_id,
       createdAt: newTask.created_at,
       chat: []
     };
+  }
+
+  /**
+   * Reassign / escalate a task to a NEW primary assignee. The previous
+   * primary(ies) drop to CC (they stay informed via in-app + digest, but no more
+   * WhatsApp). The new primary gets a WhatsApp escalation ping.
+   *
+   * Allowed callers: a current primary assignee, the task creator, or an
+   * Admin/Super Admin (enforced here, defence-in-depth on top of RLS).
+   */
+  public async reassignTask(taskId: string, newPrimaryId: string, note?: string): Promise<Task | null> {
+    const me = await this.getActiveUser();
+    const { data: row } = await supabase.from('tasks').select('*').eq('id', taskId).single();
+    if (!row) throw new Error("Task not found.");
+
+    // Resolve current primary/cc, preferring columns, falling back to the blob.
+    let meta: any = {};
+    const mp = (row.description || "").split('\n\n---HORAE-METADATA---\n');
+    if (mp.length > 1) { try { meta = JSON.parse(mp[1]); } catch {} }
+    const curPrimary: string[] = (Array.isArray(row.assigned_user_ids) && row.assigned_user_ids.length)
+      ? row.assigned_user_ids
+      : (meta.assigneeIds || [row.assigned_user_id].filter(Boolean));
+    const curCc: string[] = (Array.isArray(row.cc_user_ids) && row.cc_user_ids.length) ? row.cc_user_ids : (meta.ccIds || []);
+
+    const isAdmin = me.role === Role.ADMIN || me.role === Role.SUPER_ADMIN;
+    const isCreator = row.created_by_user_id === me.id;
+    const isPrimary = curPrimary.includes(me.id);
+    if (!(isAdmin || isCreator || isPrimary)) {
+      throw new Error("Only a current assignee, the task creator, or an admin can reassign this task.");
+    }
+    if (!newPrimaryId) throw new Error("Pick who to reassign the task to.");
+
+    // New primary = just the picked user. Old primaries fall to CC (minus the new
+    // primary if they were already CC). Dedup.
+    const newPrimary = [newPrimaryId];
+    const newCc = Array.from(new Set([...curCc, ...curPrimary])).filter(id => id && id !== newPrimaryId);
+
+    // Persist to columns + keep the metadata blob in sync.
+    meta.assigneeIds = newPrimary;
+    meta.ccIds = newCc;
+    const packedDescription = `${mp[0]}\n\n---HORAE-METADATA---\n${JSON.stringify(meta)}`;
+    await supabase.from('tasks').update({
+      assigned_user_id: newPrimaryId,
+      assigned_user_ids: newPrimary,
+      cc_user_ids: newCc,
+      description: packedDescription,
+    }).eq('id', taskId);
+
+    // Leave a visible trail in the task chat.
+    const trail = note?.trim()
+      ? `🔀 Reassigned to ${await this.userName(newPrimaryId)} by ${me.name}: ${note.trim()}`
+      : `🔀 Reassigned to ${await this.userName(newPrimaryId)} by ${me.name}`;
+    await supabase.from('task_messages').insert([{
+      id: "msg-" + Date.now(),
+      task_id: taskId,
+      user_id: me.id,
+      sender_name: me.name,
+      sender_role: me.role,
+      message: trail,
+      timestamp: new Date().toISOString(),
+    }]);
+
+    // In-app bell for the new primary.
+    const { data: np } = await supabase.from('users').select('*').eq('id', newPrimaryId).single();
+    if (np) {
+      await this.addNotification(
+        "Task reassigned to you: " + row.title,
+        note?.trim() ? `Escalated by ${me.name}: ${note.trim()}` : `Escalated by ${me.name}`,
+        "task",
+        np.department as Department,
+        np.role as Role,
+        newPrimaryId,
+        row.tenant_id
+      );
+    }
+
+    // WhatsApp + push the new primary (escalation is urgent).
+    supabase.functions.invoke('notify-dispatcher', {
+      body: {
+        type: 'TASK_REASSIGNED',
+        record: { ...row, assigned_user_ids: newPrimary, cc_user_ids: newCc },
+        newPrimaryId,
+        actorName: me.name,
+        tenantId: row.tenant_id,
+      },
+    }).catch(() => { /* non-fatal — best-effort */ });
+
+    const tasks = await this.getTasks();
+    return tasks.find(t => t.id === taskId) || null;
+  }
+
+  private async userName(userId: string): Promise<string> {
+    const { data } = await supabase.from('users').select('name').eq('id', userId).single();
+    return data?.name || "someone";
   }
 
   public async updateTaskStatus(taskId: string, status: "Assigned" | "In Progress" | "Pending" | "On Hold" | "Completed" | "Closed"): Promise<Task | null> {

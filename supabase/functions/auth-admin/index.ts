@@ -20,6 +20,51 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
+// WhatsApp welcome message (Meta Cloud API) — same creds the notify-dispatcher uses.
+const META_WA_TOKEN     = Deno.env.get("META_WA_TOKEN") || "";
+const META_PHONE_NUM_ID = Deno.env.get("META_PHONE_NUMBER_ID") || "";
+const APP_BASE_URL      = Deno.env.get("APP_BASE_URL") || "https://horae.cloud";
+// A brand-new user has never messaged the business, so the 24h free-text window
+// is closed — the welcome MUST be an approved template. Body params: {{1}} name,
+// {{2}} temp password, {{3}} app link.
+const WELCOME_TEMPLATE_NAME = Deno.env.get("WELCOME_TEMPLATE_NAME") || "horae_welcome";
+
+/**
+ * Sends the one-time welcome WhatsApp (name + temp password + app link) to a
+ * freshly-provisioned staff member. Best-effort: any failure is logged and
+ * swallowed so it never blocks account creation. Returns true if Meta accepted.
+ */
+async function sendWelcomeWhatsApp(phone: string, name: string, password: string): Promise<boolean> {
+  const to = String(phone || "").replace(/\D/g, "");
+  if (!to || !META_WA_TOKEN || !META_PHONE_NUM_ID) return false;
+  const firstName = (name || "there").split(" ")[0];
+  const body = {
+    messaging_product: "whatsapp",
+    to,
+    type: "template",
+    template: {
+      name: WELCOME_TEMPLATE_NAME,
+      language: { code: "en_US" },
+      components: [{
+        type: "body",
+        parameters: [firstName, password, APP_BASE_URL].map((text) => ({ type: "text", text })),
+      }],
+    },
+  };
+  try {
+    const res = await fetch(`https://graph.facebook.com/v19.0/${META_PHONE_NUM_ID}/messages`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${META_WA_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) { console.error("[auth-admin] welcome WA failed:", res.status, await res.text()); return false; }
+    return true;
+  } catch (e) {
+    console.error("[auth-admin] welcome WA error:", e);
+    return false;
+  }
+}
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -96,7 +141,16 @@ serve(async (req) => {
       });
       if (error) throw error;
       await admin.from("users").update({ auth_id: created.user.id, pwd_changed: false }).eq("id", targetUserId);
-      return json({ ok: true, authId: created.user.id });
+
+      // Best-effort welcome WhatsApp with the temp password + app link, so the
+      // staff member gets their credentials on their phone (not just the few
+      // seconds it flashes on the admin's screen). Never blocks provisioning.
+      let welcomeSent = false;
+      const { data: staff } = await admin.from("users").select("name, phone_number").eq("id", targetUserId).single();
+      if (staff?.phone_number) {
+        welcomeSent = await sendWelcomeWhatsApp(staff.phone_number, staff.name || "", String(password));
+      }
+      return json({ ok: true, authId: created.user.id, welcomeSent });
     }
 
     if (action === "delete_auth") {

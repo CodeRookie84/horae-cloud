@@ -5,7 +5,7 @@
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Mail, Building, AlertCircle, RefreshCw, Sparkles, KeyRound, Eye, EyeOff } from "lucide-react";
+import { Mail, AlertCircle, RefreshCw, Sparkles, KeyRound, Eye, EyeOff } from "lucide-react";
 import { store } from "../services/store";
 import { User } from "../types";
 
@@ -15,7 +15,6 @@ interface LoginProps {
 
 export default function Login({ onLoginSuccess }: LoginProps) {
   const [email, setEmail] = useState("");
-  const [companyName, setCompanyName] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -29,7 +28,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   // Secret developer shortcut: double clicking the logo icon auto-fills superadmin
   const handleLogoDoubleClick = () => {
     setEmail("coderookie84@gmail.com");
-    setCompanyName("");
     // Password intentionally left blank, not hardcoded — it's a real password
     // that gets changed, so pre-filling a fixed value here always eventually
     // goes stale and fails.
@@ -53,17 +51,12 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       setErrorMsg("Password is required.");
       return;
     }
-    if (!isSuperAdminEmail && !companyName.trim()) {
-      setErrorMsg("Company name is required for brand logins.");
-      return;
-    }
 
     setLoading(true);
     setErrorMsg("");
 
     try {
-      // If Super Admin, companyName is ignored by verifyLogin
-      const user = await store.verifyLogin(isSuperAdminEmail ? "" : companyName, email, password);
+      const user = await store.verifyLogin(email, password);
       if (user) {
         // Server-side flag (not localStorage) — a new device, cleared browser
         // data, or iOS's aggressive storage-clearing for installed web apps
@@ -76,7 +69,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           onLoginSuccess(user);
         }
       } else {
-        setErrorMsg("Invalid credentials. Please verify your Email, Password, and Company Name.");
+        setErrorMsg("Invalid credentials. Please verify your Email/Mobile Number and Password.");
       }
     } catch (err: any) {
       console.error("Login verification failed:", err);
@@ -266,34 +259,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             </AnimatePresence>
 
             <form onSubmit={handleLogin} className="space-y-5">
-              {/* Company Name Input (Smoothly hides when Super Admin email is typed) */}
-              <AnimatePresence initial={false}>
-                {!isSuperAdminEmail && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-                    animate={{ opacity: 1, height: "auto", marginBottom: 0 }}
-                    exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                    transition={{ duration: 0.35, ease: "easeInOut" }}
-                    className="space-y-1.5 overflow-hidden text-left"
-                  >
-                    <label className="text-[10px] font-bold text-[#6A6390] uppercase tracking-widest block px-1">
-                      Company Name
-                    </label>
-                    <div className="relative">
-                      <Building className="absolute left-3 top-3 w-4 h-4 text-[#8B7CF6]" />
-                      <input
-                        type="text"
-                        required={!isSuperAdminEmail}
-                        placeholder="e.g. cakewala"
-                        value={companyName}
-                        onChange={(e) => setCompanyName(e.target.value.toLowerCase())}
-                        className={`${inputBase} ${inputBrand} pl-10 pr-4 font-mono`}
-                      />
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
               {/* Email or Mobile Input */}
               <div className="space-y-1.5 text-left">
                 <label className="text-[10px] font-bold text-[#6A6390] uppercase tracking-widest block px-1">

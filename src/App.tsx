@@ -765,11 +765,22 @@ function AppInner() {
   };
 
   // Task Manager Actions
-  const handleAddTask = async (title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[], tenantId: string): Promise<string> => {
-    const task = await store.addTask(title, description, priority, dueDate, assignedUserIds, tenantId);
+  const handleAddTask = async (title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[], ccUserIds: string[], tenantId: string): Promise<string> => {
+    const task = await store.addTask(title, description, priority, dueDate, assignedUserIds, ccUserIds, tenantId);
     await refreshLocalState();
     triggerToast("Operational task designated successfully.");
     return task.id;
+  };
+
+  const handleReassignTask = async (taskId: string, newPrimaryId: string, note?: string) => {
+    try {
+      await store.reassignTask(taskId, newPrimaryId, note);
+      await refreshLocalState();
+      triggerToast("Task reassigned — new owner notified on WhatsApp.");
+    } catch (err: any) {
+      console.error("Reassign failed:", err);
+      triggerToast(err?.message || "Failed to reassign task.");
+    }
   };
 
   const handleUpdateTaskStatus = async (taskId: string, status: "Assigned" | "In Progress" | "Pending" | "On Hold" | "Completed" | "Closed") => {
@@ -1232,8 +1243,8 @@ function AppInner() {
                       tenantUsers={tenantUsers}
                       onSubmitChecklist={handleSubmitChecklist}
                       onNavigate={handleSetActiveTab}
-                      onAddTask={(title, desc, priority, date, assignees) =>
-                        handleAddTask(title, desc, priority, date, assignees, activeUser.tenantId)
+                      onAddTask={(title, desc, priority, date, assignees, cc) =>
+                        handleAddTask(title, desc, priority, date, assignees, cc || [], activeUser.tenantId)
                       }
                       trainings={trainings}
                       trainingAttempts={trainingAttempts}
@@ -1269,9 +1280,10 @@ function AppInner() {
                       tenantUsers={allUsers}
                       activeUser={activeUser}
                       tenants={tenants}
-                      onAddTask={(title, desc, priority, date, assignees) =>
-                        handleAddTask(title, desc, priority, date, assignees, activeUser.tenantId)
+                      onAddTask={(title, desc, priority, date, assignees, cc) =>
+                        handleAddTask(title, desc, priority, date, assignees, cc || [], activeUser.tenantId)
                       }
+                      onReassignTask={handleReassignTask}
                       onUpdateTaskStatus={handleUpdateTaskStatus}
                       onUpdateTaskPriority={handleUpdateTaskPriority}
                       onAddMessage={handleAddMessage}
@@ -1343,7 +1355,9 @@ function AppInner() {
                       tasks={tasks}
                       tenantUsers={tenantUsers}
                       tenants={tenants}
-                      onAddTask={handleAddTask}
+                      onAddTask={(title, desc, priority, date, assignees, tenantId) =>
+                        handleAddTask(title, desc, priority, date, assignees, [], tenantId)
+                      }
                       onUpdateTaskStatus={handleUpdateTaskStatus}
                       onUpdateTaskPriority={handleUpdateTaskPriority}
                       onAddMessage={handleAddMessage}

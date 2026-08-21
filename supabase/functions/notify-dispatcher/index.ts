@@ -61,9 +61,11 @@ const GENERIC_TEMPLATE_NAME = "horae_alert";
 const EVENT_TIERS: Record<string, "urgent" | "normal"> = {
   urgent_push:        "urgent",
   task_assigned:      "urgent", // user choice: new-task assignment always pings WhatsApp
+  task_reassigned:    "urgent", // escalation to a new primary owner pings WhatsApp
+  task_cc:            "normal", // CC users: push + digest only, never WhatsApp
   task_status:        "normal",
   task_chat:          "normal",
-  notice:             "normal",
+  notice:             "urgent", // user choice: new notices always ping WhatsApp too
   training_published: "normal",
   checklist_posted:   "normal",
   daily_digest:       "normal", // special-cased in whatsappAllowedForEvent()
@@ -120,6 +122,8 @@ serve(async (req) => {
       await handleDigest(body.userId, body.tenantId, body.items, body.runMode);
     } else if (type === "URGENT_PUSH") {
       await handleUrgentPush(body.kind, body.record, body.userIds, body.tenantId);
+    } else if (type === "TASK_REASSIGNED") {
+      await handleTaskReassigned(body.record, body.newPrimaryId, body.actorName);
     }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
@@ -138,10 +142,13 @@ serve(async (req) => {
 // ─── Event Handlers ───────────────────────────────────────────────────────────
 
 async function handleTaskAssigned(task: any) {
-  const assigneeIds: string[] = task.assigned_user_ids || (task.assigned_user_id ? [task.assigned_user_id] : []);
+  const primaryIds: string[] = task.assigned_user_ids || (task.assigned_user_id ? [task.assigned_user_id] : []);
+  const ccIds: string[] = (task.cc_user_ids || []).filter((id: string) => !primaryIds.includes(id));
   const deepLink = `${APP_BASE_URL}/tasks/${task.id}`;
 
-  for (const userId of assigneeIds) {
+  // PRIMARY assignees — paid WhatsApp ping (+ push + in-app). task_assigned is
+  // the "urgent" tier, so whatsappAllowedForEvent() lets the WhatsApp through.
+  for (const userId of primaryIds) {
     const user = await getUser(userId);
     if (!user) {
       await logNotif(userId, task.tenant_id, "debug", task.id, "whatsapp", "failed", "getUser: User not found in users table for ID: " + userId);
@@ -162,6 +169,46 @@ async function handleTaskAssigned(task: any) {
       pushTag: `task-${task.id}`,
     }, task.tenant_id, "task_assigned", task.id);
   }
+
+  // CC users — push + in-app ONLY (pushOnly=true forces no WhatsApp, so the cost
+  // of a fan-out task stays at just the primary assignees). Anything they miss is
+  // swept up by the daily digest.
+  for (const userId of ccIds) {
+    const user = await getUser(userId);
+    if (!user) continue;
+    if (!await checkAntiSpam(userId, task.tenant_id, "task_cc", task.id)) continue;
+    await sendNotifications(user, {
+      waMessage: buildTaskAssignedMessage(user.name, task.title, task.priority, task.due_date, deepLink),
+      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [task.title, `You're CC'd. ${deepLink}`] },
+      pushTitle: `👀 CC — New Task: ${task.title}`,
+      pushBody: `Priority: ${task.priority}`,
+      url: deepLink,
+      pushTag: `task-${task.id}`,
+    }, task.tenant_id, "task_cc", task.id, false, true);
+  }
+}
+
+// Escalation / reassignment: the NEW primary gets a paid WhatsApp ping (urgent).
+// The previous primary was already dropped to CC by store.reassignTask, so they
+// simply stop getting WhatsApp from here on.
+async function handleTaskReassigned(task: any, newPrimaryId: string, actorName: string) {
+  if (!newPrimaryId) return;
+  const user = await getUser(newPrimaryId);
+  if (!user) return;
+  const deepLink = `${APP_BASE_URL}/tasks/${task.id}`;
+  // Dedup key changes per (task, new owner) so each distinct handoff can notify.
+  const refId = `${task.id}:${newPrimaryId}`;
+  if (!await checkAntiSpam(newPrimaryId, task.tenant_id, "task_reassigned", refId)) return;
+
+  const who = actorName || "A colleague";
+  await sendNotifications(user, {
+    waMessage: `🔀 *Task reassigned to you — Horae*\n\nHi ${user.name.split(" ")[0]},\n${who} handed you:\n*${task.title}*\nPriority: ${task.priority} | Due: ${task.due_date}\n\n👉 ${deepLink}`,
+    waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [task.title, `Reassigned to you by ${who}. ${deepLink}`] },
+    pushTitle: `🔀 Task reassigned to you: ${task.title}`,
+    pushBody: `From ${who} · Priority: ${task.priority}`,
+    url: deepLink,
+    pushTag: `task-${task.id}`,
+  }, task.tenant_id, "task_reassigned", refId, true);
 }
 
 async function handleTaskUpdated(task: any, oldTask: any, actorId?: string) {
@@ -222,7 +269,9 @@ async function handleNoticePosted(notice: any) {
   for (const user of (users || [])) {
     if (user.id === notice.created_by_user_id) continue;
     if (!await checkAntiSpam(user.id, notice.tenant_id, "notice", notice.id)) continue;
-    // Push/in-app only — WhatsApp for notices stays manual, via the "Notify on WhatsApp" button.
+    // New notices now auto-send WhatsApp (notice tier = "urgent") in addition to
+    // push/in-app. The manual "Notify on WhatsApp" button is therefore redundant
+    // for the initial post; keep it only for re-pinging an existing notice.
     await sendNotifications(user, {
       waMessage: buildNoticeMessage(user.name, notice.title, notice.content?.slice(0, 100) || "", deepLink),
       waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [notice.title, `${(notice.content || "").slice(0, 80)} ${deepLink}`] },
@@ -230,7 +279,7 @@ async function handleNoticePosted(notice: any) {
       pushBody: notice.content?.slice(0, 80) || "",
       url: deepLink,
       pushTag: `notice-${notice.id}`,
-    }, notice.tenant_id, "notice", notice.id, false, true);
+    }, notice.tenant_id, "notice", notice.id, false, false);
   }
 }
 

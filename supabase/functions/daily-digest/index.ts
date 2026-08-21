@@ -108,14 +108,16 @@ serve(async (req) => {
         .eq("user_id", user.id).eq("digest_date", today).eq("run_mode", runMode).single();
       if (existing) { skipped++; continue; }
 
-      // Tasks assigned to this user (run-specific window).
+      // Tasks this user is PRIMARY on or CC'd on (CC users get their tasks only
+      // through the digest — no WhatsApp — so both must be included here).
+      const mine = `assigned_user_ids.cs.{${user.id}},cc_user_ids.cs.{${user.id}}`;
       let tasks: any[] = [];
       if (runMode === "morning") {
         // Due today or overdue, still open.
         const { data } = await supabase.from("tasks")
           .select("id, title, status, priority")
           .eq("tenant_id", tenant.id)
-          .contains("assigned_user_ids", [user.id])
+          .or(mine)
           .not("status", "in", '("Completed","Closed")')
           .lte("due_date", today + "T23:59:59Z");
         tasks = data || [];
@@ -124,13 +126,13 @@ serve(async (req) => {
         const { data: openToday } = await supabase.from("tasks")
           .select("id, title, status, priority")
           .eq("tenant_id", tenant.id)
-          .contains("assigned_user_ids", [user.id])
+          .or(mine)
           .not("status", "in", '("Completed","Closed")')
           .lte("due_date", today + "T23:59:59Z");
         const { data: dueTomorrow } = await supabase.from("tasks")
           .select("id, title, status, priority")
           .eq("tenant_id", tenant.id)
-          .contains("assigned_user_ids", [user.id])
+          .or(mine)
           .not("status", "in", '("Completed","Closed")')
           .gte("due_date", tomorrow + "T00:00:00Z")
           .lte("due_date", tomorrow + "T23:59:59Z");
@@ -151,7 +153,7 @@ serve(async (req) => {
       // New task-chat messages (last 24h) on this user's tasks — assigned to them
       // or created by them — from someone else. Chats don't push; they land here.
       const { data: aTasks } = await supabase.from("tasks").select("id")
-        .eq("tenant_id", tenant.id).contains("assigned_user_ids", [user.id]);
+        .eq("tenant_id", tenant.id).or(mine);
       const { data: cTasks } = await supabase.from("tasks").select("id")
         .eq("tenant_id", tenant.id).eq("created_by_user_id", user.id);
       const myTaskIds = [...new Set([...(aTasks || []), ...(cTasks || [])].map((t: any) => t.id))];

@@ -161,7 +161,8 @@ export interface Task {
   priority: "Low" | "Medium" | "High" | "Critical" | string;
   dueDate: string;
   assignedUserId: string; // The primary assignee in the database
-  assignedUserIds?: string[]; // Multiple assignees list
+  assignedUserIds?: string[]; // Primary assignees — they get the WhatsApp ping
+  ccUserIds?: string[]; // CC / keep-informed users — in-app + daily digest only, no WhatsApp
   createdByUserId: string;
   createdAt: string;
   chat: ChatMessage[];

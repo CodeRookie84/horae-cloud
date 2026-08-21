@@ -47,7 +47,7 @@ interface DashboardProps {
   tenantUsers: AppUser[];
   onSubmitChecklist: (chkId: string, itemStates: { [itemId: string]: boolean }) => void;
   onNavigate: (tab: string) => void;
-  onAddTask: (title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[]) => void;
+  onAddTask: (title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[], ccUserIds?: string[]) => void;
   trainings?: TrainingT[];
   trainingAttempts?: TrainingAttempt[];
   /** Feature keys the client's plan grants — gates which dashboard sections show. */

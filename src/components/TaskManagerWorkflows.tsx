@@ -50,7 +50,8 @@ interface TaskManagerWorkflowsProps {
   tenantUsers: AppUser[];
   activeUser: AppUser;
   tenants: Tenant[];
-  onAddTask: (title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[]) => void;
+  onAddTask: (title: string, description: string, priority: string, dueDate: string, assignedUserIds: string[], ccUserIds?: string[]) => void;
+  onReassignTask: (taskId: string, newPrimaryId: string, note?: string) => void;
   onUpdateTaskStatus: (taskId: string, status: "Assigned" | "In Progress" | "Pending" | "On Hold" | "Completed" | "Closed") => void;
   onUpdateTaskPriority: (taskId: string, priority: string) => void;
   onAddMessage: (taskId: string, message: string) => void;
@@ -70,6 +71,7 @@ export default function TaskManagerWorkflows({
   activeUser,
   tenants,
   onAddTask,
+  onReassignTask,
   onUpdateTaskStatus,
   onUpdateTaskPriority,
   onAddMessage,
@@ -99,7 +101,16 @@ export default function TaskManagerWorkflows({
   const [dueDate, setDueDate] = useState<string>(new Date().toLocaleDateString('en-CA'));
   const [assigneePicked, setAssigneePicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
   const assignedUserIds = resolveMemberIds(assigneePicked, tenantUsers, tenants);
+  const [ccPicked, setCcPicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
+  // CC = keep-informed users, minus anyone already a primary assignee.
+  const ccUserIds = resolveMemberIds(ccPicked, tenantUsers, tenants).filter(id => !assignedUserIds.includes(id));
   const [taskPhotos, setTaskPhotos] = useState<string[]>([]);
+  // Reassign / escalate flow (task detail).
+  const [reassignOpen, setReassignOpen] = useState<boolean>(false);
+  const [reassignTo, setReassignTo] = useState<string>("");
+  const [reassignNote, setReassignNote] = useState<string>("");
+  // Collapse the reassign panel whenever a different task is opened.
+  useEffect(() => { setReassignOpen(false); setReassignTo(""); setReassignNote(""); }, [selectedTaskId]);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   // Prefill the create-task form from a WhatsApp capture (/tasks/new?capture=<id>).
@@ -478,11 +489,12 @@ export default function TaskManagerWorkflows({
 
     const metaString = `\n\n---HORAE-METADATA---\n${JSON.stringify({
       assigneeIds: assignedUserIds,
+      ccIds: ccUserIds,
       translations,
       photos: taskPhotos
     })}`;
 
-    onAddTask(title, description + metaString, priority, dueDate, assignedUserIds);
+    onAddTask(title, description + metaString, priority, dueDate, assignedUserIds, ccUserIds);
 
     // reset creation states
     setTitle("");
@@ -490,6 +502,7 @@ export default function TaskManagerWorkflows({
     setPriority("High");
     setDueDate(new Date().toLocaleDateString('en-CA'));
     setAssigneePicked(EMPTY_SELECTION);
+    setCcPicked(EMPTY_SELECTION);
     setTaskPhotos([]);
     setShowCreateForm(false);
   };
@@ -509,6 +522,82 @@ export default function TaskManagerWorkflows({
   const getAssigneeAvatar = (uid: string) => {
     const found = tenantUsers.find(u => u.id === uid);
     return found ? found.avatar : "https://i.pravatar.cc/150?img=10";
+  };
+
+  // Who is allowed to reassign/escalate: a current primary, the creator, or an admin.
+  const canReassign = (task: Task) => {
+    const primaries = task.assignedUserIds && task.assignedUserIds.length > 0 ? task.assignedUserIds : [task.assignedUserId];
+    return primaries.includes(activeUser.id)
+      || task.createdByUserId === activeUser.id
+      || activeUser.role === Role.ADMIN
+      || activeUser.role === Role.SUPER_ADMIN;
+  };
+
+  const submitReassign = (taskId: string) => {
+    if (!reassignTo) return;
+    onReassignTask(taskId, reassignTo, reassignNote.trim() || undefined);
+    setReassignOpen(false);
+    setReassignTo("");
+    setReassignNote("");
+  };
+
+  // CC chips + Reassign/Escalate control, shared by every task-detail layout.
+  const renderAssigneeExtras = (task: Task) => {
+    const primaries = task.assignedUserIds && task.assignedUserIds.length > 0 ? task.assignedUserIds : [task.assignedUserId];
+    const cc = task.ccUserIds || [];
+    // Reassign candidates: everyone except the people who are already primary.
+    const candidates = tenantUsers.filter(u => !primaries.includes(u.id));
+    return (
+      <div className="space-y-2.5">
+        {cc.length > 0 && (
+          <div className="space-y-1.5">
+            <span className="text-sm font-medium tracking-wide text-slate-500 block">CC (kept informed):</span>
+            <div className="flex flex-wrap gap-1.5">
+              {cc.map(uid => (
+                <div key={uid} className="flex items-center gap-1.5 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
+                  <img src={getAssigneeAvatar(uid)} alt="" className="w-4 h-4 rounded-full object-cover" />
+                  <span className="text-[13px] text-slate-600 font-medium">{getAssigneeName(uid)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {canReassign(task) && (
+          reassignOpen ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2 shadow-2xs">
+              <label className="text-[12px] font-semibold text-slate-600 block">Reassign / escalate to</label>
+              <select
+                value={reassignTo}
+                onChange={(e) => setReassignTo(e.target.value)}
+                className="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none cursor-pointer"
+              >
+                <option value="">Select a person…</option>
+                {candidates.map(u => (
+                  <option key={u.id} value={u.id}>{u.name}{cc.includes(u.id) ? " (CC)" : ""} — {u.role}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={reassignNote}
+                onChange={(e) => setReassignNote(e.target.value)}
+                placeholder="Reason / note (optional)"
+                className="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none"
+              />
+              <p className="text-[11px] text-slate-400">The new owner gets a WhatsApp ping. You and the current owner drop to CC.</p>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => { setReassignOpen(false); setReassignTo(""); setReassignNote(""); }} className="px-3 py-1.5 text-[13px] font-medium text-slate-500 hover:bg-slate-100 rounded-lg cursor-pointer">Cancel</button>
+                <button type="button" disabled={!reassignTo} onClick={() => submitReassign(task.id)} className={`px-3 py-1.5 text-[13px] font-semibold rounded-lg cursor-pointer ${reassignTo ? "bg-slate-900 text-white hover:bg-slate-800" : "bg-slate-200 text-slate-400 cursor-not-allowed"}`}>Reassign</button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setReassignOpen(true)} className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">
+              <ArrowLeft className="w-3.5 h-3.5 rotate-180" /> Reassign / Escalate
+            </button>
+          )
+        )}
+      </div>
+    );
   };
 
   const isTaskOverdue = (task: Task) => {
@@ -1518,6 +1607,8 @@ export default function TaskManagerWorkflows({
                       <strong className="text-slate-800 font-medium">{getAssigneeName(activeTask.createdByUserId)}</strong>
                     </span>
                   </div>
+
+                  {renderAssigneeExtras(activeTask)}
                 </div>
 
                 {/* Language Toggle */}
@@ -1978,6 +2069,8 @@ export default function TaskManagerWorkflows({
                       <strong className="text-slate-800 font-medium">{activeTask.dueDate}</strong>
                     </span>
                   </div>
+
+                  {renderAssigneeExtras(activeTask)}
                 </div>
 
                 {/* Language Selector & Translation */}
@@ -2166,6 +2259,8 @@ export default function TaskManagerWorkflows({
                       <strong className="text-slate-800 font-medium">{getAssigneeName(activeTask.createdByUserId)}</strong>
                     </span>
                   </div>
+
+                  {renderAssigneeExtras(activeTask)}
                 </div>
 
                 {/* Description & Translation */}
@@ -2418,12 +2513,24 @@ export default function TaskManagerWorkflows({
               </div>
 
               <div className="space-y-1">
-                <label className="text-sm text-slate-700 font-semibold tracking-wider block">Assigned to (Select Multiple)</label>
+                <label className="text-sm text-slate-700 font-semibold tracking-wider block">Assign to — Primary owner(s)</label>
+                <p className="text-[12px] text-slate-500 -mt-0.5">Usually one person. Primary owners get a <strong className="text-emerald-700">WhatsApp alert</strong> and own the task.</p>
                 <MemberPicker
                   candidates={tenantUsers}
                   tenants={tenants}
                   value={assigneePicked}
                   onChange={setAssigneePicked}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm text-slate-700 font-semibold tracking-wider block">CC — Keep informed (Optional)</label>
+                <p className="text-[12px] text-slate-500 -mt-0.5">People who should be aware. They get an <strong>in-app notice + daily digest</strong> only — <strong>no WhatsApp</strong>.</p>
+                <MemberPicker
+                  candidates={tenantUsers.filter(u => !assignedUserIds.includes(u.id))}
+                  tenants={tenants}
+                  value={ccPicked}
+                  onChange={setCcPicked}
                 />
               </div>
 
