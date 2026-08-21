@@ -784,6 +784,7 @@ export class StoreService {
     }
 
     // ── Duplicate identifier guard ─────────────────────────────
+    // Email must be unique (when provided).
     if (cleanEmail) {
       const { data: existing, error: lookupError } = await supabase
         .from('users')
@@ -793,7 +794,13 @@ export class StoreService {
       if (!lookupError && existing && existing.length > 0) {
         throw new Error(`A staff member with the email "${cleanEmail}" is already registered. Please use a different email address.`);
       }
-    } else {
+    }
+    // Phone must ALSO be unique (when provided), regardless of whether an email
+    // was given. A number maps to exactly one login/auth account, so two users
+    // sharing it makes mobile login ambiguous (the resolver picks one at random).
+    // The previous guard only checked this for email-less staff, which is how a
+    // duplicate-phone row could slip in.
+    if (cleanPhone) {
       const { data: existing } = await supabase
         .from('users')
         .select('id, phone_number')
