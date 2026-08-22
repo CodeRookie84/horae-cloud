@@ -146,8 +146,10 @@ async function handleInboundMessage(m: any, contact: any) {
   if (m.type === "interactive") {
     const listId = m.interactive?.list_reply?.id;
     if (listId) {
-      // Task-status picks (from the "Update status" button flow) are prefixed
-      // "ts~"; everything else is a main-menu selection.
+      // "tpick~<taskId>" = a task chosen from the menu's status-update picker →
+      // show its status list. "ts~<taskId>~<status>" = a status chosen from that
+      // list → apply it. Everything else is a main-menu selection.
+      if (listId.startsWith("tpick~")) { await sendTaskStatusList(fromPhone, listId.slice(6)); return; }
       if (listId.startsWith("ts~")) { await handleTaskStatusUpdate(listId, fromPhone, userId); return; }
       await handleMenuSelection(listId, fromPhone, userId, tenantId); return;
     }
@@ -248,7 +250,7 @@ async function handleMenuSelection(id: string, fromPhone: string, userId: string
   switch (id) {
     case "menu_create_task":   await startAwaitingInput(fromPhone, userId, tenantId, "create_task"); break;
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
-    case "menu_update_status": await sendOpenTasksList(fromPhone, userId, tenantId, "update"); break;
+    case "menu_update_status": await sendTaskPickerForStatus(fromPhone, userId, tenantId); break;
     case "menu_view_tasks":    await sendOpenTasksList(fromPhone, userId, tenantId, "view"); break;
     case "menu_help":          await sendHelp(fromPhone, userId); break;
     default:                   await sendMainMenu(fromPhone);
@@ -281,6 +283,33 @@ async function takePendingInput(userId: string): Promise<{ id: string; intent: s
   await supabase.from("whatsapp_conversations")
     .update({ state: "done", updated_at: new Date().toISOString() }).eq("id", row.id);
   return row as { id: string; intent: string };
+}
+
+/**
+ * Menu → "Update task status": show the user's open tasks as a TAPPABLE list.
+ * Tapping a task (row id `tpick~<taskId>`) then shows the status picker — so the
+ * whole update happens inside WhatsApp, no app link needed. This is the
+ * button-free equivalent of the task-alert "Update status" button.
+ */
+async function sendTaskPickerForStatus(fromPhone: string, userId: string, tenantId: string | null) {
+  let q = supabase.from("tasks")
+    .select("id, title, status")
+    .contains("assigned_user_ids", [userId])
+    .not("status", "in", '("Completed","Closed")')
+    .order("created_at", { ascending: false }).limit(10);
+  if (tenantId) q = q.eq("tenant_id", tenantId);
+  const { data: tasks } = await q;
+
+  if (!tasks || tasks.length === 0) {
+    await sendText(fromPhone, "✅ You have no open tasks to update right now.");
+    return;
+  }
+  await sendList(
+    fromPhone,
+    "🔄 *Update a task* — pick which one:",
+    "Pick task",
+    tasks.map((t: any) => ({ id: `tpick~${t.id}`, title: t.title, description: `Currently: ${t.status}` })),
+  );
 }
 
 /** Reply with the user's open tasks, each as its own deep link. */
@@ -506,7 +535,7 @@ async function sendButtons(to: string, bodyText: string, buttons: { id: string; 
   });
 }
 
-async function sendList(to: string, bodyText: string, buttonLabel: string, rows: { id: string; title: string }[]): Promise<string | undefined> {
+async function sendList(to: string, bodyText: string, buttonLabel: string, rows: { id: string; title: string; description?: string }[]): Promise<string | undefined> {
   return waSend({
     type: "interactive",
     to: to.replace(/\D/g, ""),
@@ -515,7 +544,11 @@ async function sendList(to: string, bodyText: string, buttonLabel: string, rows:
       body: { text: bodyText },
       action: {
         button: buttonLabel.slice(0, 20),
-        sections: [{ title: "Options", rows: rows.slice(0, 10).map(r => ({ id: r.id, title: r.title.slice(0, 24) })) }],
+        sections: [{ title: "Options", rows: rows.slice(0, 10).map(r => {
+          const row: Record<string, string> = { id: r.id, title: r.title.slice(0, 24) };
+          if (r.description) row.description = r.description.slice(0, 72);
+          return row;
+        }) }],
       },
     },
   });
