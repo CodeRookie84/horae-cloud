@@ -1038,7 +1038,7 @@ export default function HoraeAdminPanel({
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-md p-6 space-y-4 relative"
+              className="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-md p-6 space-y-4 relative max-h-[90vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-base text-slate-800">Edit Brand Client Details</h3>
@@ -1193,7 +1193,7 @@ export default function HoraeAdminPanel({
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-md p-6 space-y-4 relative"
+              className="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-md p-6 space-y-4 relative max-h-[90vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-base text-slate-800">Edit Outlet Workspace</h3>
@@ -1350,7 +1350,7 @@ export default function HoraeAdminPanel({
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-md p-6 space-y-4 relative"
+              className="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-md p-6 space-y-4 relative max-h-[90vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-base text-slate-800">Edit Staff Details & Roles</h3>
