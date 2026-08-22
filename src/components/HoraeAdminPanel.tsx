@@ -68,6 +68,25 @@ function TrainingAddonToggle({ plan, value, onChange }: { plan: plans.PlanId; va
   );
 }
 
+/** Per-client daily-digest kill switch. Unchecked = no morning/evening digest
+ *  (push + WhatsApp) for any of this client's staff. */
+function DigestToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-700 cursor-pointer select-none border border-slate-100 p-3 rounded-xl bg-slate-50/50">
+      <input
+        type="checkbox"
+        checked={value}
+        onChange={(e) => onChange(e.target.checked)}
+        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
+      />
+      <span>
+        Send the <span className="text-indigo-700">daily digest</span> (morning &amp; evening)
+        <span className="block text-[10px] font-medium text-slate-400">Uncheck to silence all digest push &amp; WhatsApp for this client.</span>
+      </span>
+    </label>
+  );
+}
+
 interface HoraeAdminPanelProps {
   clients: Client[];
   tenants: Tenant[];
@@ -76,7 +95,7 @@ interface HoraeAdminPanelProps {
   onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
   onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean) => Promise<string>;
   onSelectUser: (userId: string) => void;
-  onUpdateClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages: string[]) => void;
+  onUpdateClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages: string[], digestEnabled: boolean) => void;
   onDeleteClient: (id: string) => void;
   onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
   onDeleteTenant: (tenantId: string) => void;
@@ -118,6 +137,7 @@ export default function HoraeAdminPanel({
   const [editLogo, setEditLogo] = useState("");
   const [editPlan, setEditPlan] = useState<plans.PlanId>("Pro");
   const [editTrainingAddon, setEditTrainingAddon] = useState<boolean>(false);
+  const [editDigestEnabled, setEditDigestEnabled] = useState<boolean>(true);
   const [editLanguages, setEditLanguages] = useState<string[]>([]);
 
   // State for deleting a client
@@ -523,6 +543,7 @@ export default function HoraeAdminPanel({
                                 setEditLogo(client.logo);
                                 setEditPlan(client.plan);
                                 setEditTrainingAddon(!!client.trainingAddon);
+                                setEditDigestEnabled(client.digestEnabled !== false);
                                 setEditLanguages(client.languages || []);
                               }}
                               className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
@@ -1032,7 +1053,7 @@ export default function HoraeAdminPanel({
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  onUpdateClient(editingClient.id, editName, editLogo, editPlan, plans.trainingAddonApplies(editPlan) && editTrainingAddon, editLanguages);
+                  onUpdateClient(editingClient.id, editName, editLogo, editPlan, plans.trainingAddonApplies(editPlan) && editTrainingAddon, editLanguages, editDigestEnabled);
                   setEditingClient(null);
                 }}
                 className="space-y-4"
@@ -1099,6 +1120,9 @@ export default function HoraeAdminPanel({
                 {/* Training add-on + derived feature preview */}
                 <TrainingAddonToggle plan={editPlan} value={editTrainingAddon} onChange={setEditTrainingAddon} />
                 <PlanFeaturePreview plan={editPlan} trainingAddon={editTrainingAddon} />
+
+                {/* Daily-digest kill switch */}
+                <DigestToggle value={editDigestEnabled} onChange={setEditDigestEnabled} />
 
                 {/* Translation languages available to this client's staff */}
                 <LanguageMultiSelect value={editLanguages} onChange={setEditLanguages} />

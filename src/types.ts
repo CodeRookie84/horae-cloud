@@ -37,6 +37,9 @@ export interface Client {
   services?: string[];
   /** Training add-on — grants the Training feature on top of Essential/Pro. */
   trainingAddon?: boolean;
+  /** Daily-digest kill switch. false = no morning/evening digest (push + WhatsApp)
+   *  for any of this client's staff. Defaults to true (undefined = enabled). */
+  digestEnabled?: boolean;
   /** ISO 639-1 codes this client's staff can translate into (chosen at onboarding). */
   languages?: string[];
 }

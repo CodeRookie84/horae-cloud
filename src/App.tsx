@@ -619,8 +619,8 @@ function AppInner() {
     await refreshLocalState();
   };
 
-  const handleUpdateClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages?: string[]) => {
-    await store.updateClient(id, name, logo, plan, trainingAddon, languages);
+  const handleUpdateClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages?: string[], digestEnabled?: boolean) => {
+    await store.updateClient(id, name, logo, plan, trainingAddon, languages, digestEnabled);
     await refreshLocalState();
   };
 

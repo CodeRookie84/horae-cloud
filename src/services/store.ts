@@ -84,6 +84,8 @@ export class StoreService {
       plan: c.plan,
       createdAt: c.created_at,
       trainingAddon,
+      // Missing column / null → enabled (matches the DB default of true).
+      digestEnabled: c.digest_enabled !== false,
       services: plans.planFeatures(c.plan, { trainingAddon, createdAt: c.created_at }),
       languages: Array.isArray(c.languages) ? c.languages : [],
     };
@@ -523,10 +525,11 @@ export class StoreService {
     return this.mapClient(newClient);
   }
 
-  public async updateClient(clientId: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false, languages?: string[]): Promise<void> {
+  public async updateClient(clientId: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false, languages?: string[], digestEnabled?: boolean): Promise<void> {
     const cleanId = clientId.toLowerCase().trim().replace(/\s+/g, '-');
     const patch: Record<string, any> = { name, logo, plan, training_addon: trainingAddon };
     if (languages !== undefined) patch.languages = languages;
+    if (digestEnabled !== undefined) patch.digest_enabled = digestEnabled;
     await supabase
       .from('clients')
       .update(patch)

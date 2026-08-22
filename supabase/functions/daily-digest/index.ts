@@ -20,6 +20,29 @@ const DISPATCHER_URL   = `${SUPABASE_URL}/functions/v1/notify-dispatcher`;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE);
 
+// ── Plan → feature entitlements (mirrors src/services/plans.ts) ───────────────
+// The digest is plan-gated: each client only gets the sections its plan pays for
+// (tasks/chats → tasks, checklists → checklists, notices → notices, training →
+// training). Keep this table in sync with plans.ts PLAN_BASE.
+type FeatureKey = "tasks" | "notices" | "checklists" | "maintenance" | "training" | "sops";
+const TRIAL_MS = 15 * 24 * 60 * 60 * 1000;
+const ALL_FEATURES: FeatureKey[] = ["tasks", "notices", "checklists", "maintenance", "training", "sops"];
+const PLAN_BASE: Record<string, FeatureKey[]> = {
+  Essential: ["tasks"],
+  Pro: ["tasks", "checklists", "maintenance", "notices"],
+  Enterprise: ["tasks", "checklists", "maintenance", "notices", "training", "sops"],
+  Training: ["training"],
+};
+function planFeatures(plan?: string, trainingAddon?: boolean, createdAt?: string): Set<FeatureKey> {
+  if (plan === "Free") {
+    const created = createdAt ? new Date(createdAt).getTime() : Date.now();
+    return new Set(Date.now() - created <= TRIAL_MS ? ALL_FEATURES : []);
+  }
+  const base = [...(PLAN_BASE[plan || ""] || PLAN_BASE.Enterprise)]; // unknown plan → all sections
+  if (trainingAddon && (plan === "Essential" || plan === "Pro") && !base.includes("training")) base.push("training");
+  return new Set(base);
+}
+
 type RunMode = "morning" | "evening";
 
 serve(async (req) => {
@@ -40,10 +63,27 @@ serve(async (req) => {
   // All outlets, with their client id (needed to scope trainings).
   const { data: tenants } = await supabase.from("tenants").select("id, client_id");
 
+  // Client-level plan + digest opt-out. digest_enabled = false silences the whole
+  // client's digest (both channels, every section); flip it back to true to
+  // re-activate with no redeploy. plan/training_addon/created_at drive section
+  // gating (#4). digest_enabled defaults to true, so a client missing the column
+  // (or the whole client row) is treated as enabled.
+  const { data: clientRows } = await supabase
+    .from("clients")
+    .select("id, plan, training_addon, created_at, digest_enabled");
+  const clientsById = new Map((clientRows || []).map((c: any) => [c.id, c]));
+
   let dispatched = 0;
   let skipped = 0;
 
   for (const tenant of (tenants || [])) {
+    const client = clientsById.get(tenant.client_id);
+    // Whole-client kill switch — skip every user of a disabled client.
+    if (client && client.digest_enabled === false) continue;
+    // Sections the client's plan actually pays for (#4). Anything not in `feat`
+    // is left empty below, so the digest never mentions a feature they lack.
+    const feat = planFeatures(client?.plan, client?.training_addon, client?.created_at);
+
     // Staff of this outlet (super admins excluded from the digest).
     const { data: users } = await supabase
       .from("users")
@@ -52,48 +92,59 @@ serve(async (req) => {
       .not("role", "eq", "Super Admin");
     if (!users || users.length === 0) continue;
 
-    // ── Per-outlet data shared across its users ─────────────────────────────
+    // ── Per-outlet data shared across its users (each section plan-gated) ────
     // Pending checklists (SOP/quiz rows that share the table are filtered out).
-    const { data: tenantChecklists } = await supabase
-      .from("checklists")
-      .select("id, title, description")
-      .eq("tenant_id", tenant.id);
-    const checklists = (tenantChecklists || []).filter((c: any) => {
-      try {
-        if (typeof c.description === "string" && c.description.startsWith("{")) {
-          const o = JSON.parse(c.description);
-          if (o.type === "sop" || o.type === "quiz") return false;
-        }
-      } catch { /* plain-text description = real checklist */ }
-      return true;
-    }).slice(0, 3);
+    let checklists: any[] = [];
+    if (feat.has("checklists")) {
+      const { data: tenantChecklists } = await supabase
+        .from("checklists")
+        .select("id, title, description")
+        .eq("tenant_id", tenant.id);
+      checklists = (tenantChecklists || []).filter((c: any) => {
+        try {
+          if (typeof c.description === "string" && c.description.startsWith("{")) {
+            const o = JSON.parse(c.description);
+            if (o.type === "sop" || o.type === "quiz") return false;
+          }
+        } catch { /* plain-text description = real checklist */ }
+        return true;
+      }).slice(0, 3);
+    }
 
     // Notices posted in the last 24h.
-    const { data: recentNotices } = await supabase
-      .from("notices")
-      .select("id, title")
-      .eq("tenant_id", tenant.id)
-      .gte("created_at", yesterday)
-      .order("created_at", { ascending: false })
-      .limit(3);
+    let recentNotices: any[] = [];
+    if (feat.has("notices")) {
+      const { data } = await supabase
+        .from("notices")
+        .select("id, title")
+        .eq("tenant_id", tenant.id)
+        .gte("created_at", yesterday)
+        .order("created_at", { ascending: false })
+        .limit(3);
+      recentNotices = data || [];
+    }
 
     // Published trainings for this outlet's client + who has already passed them,
     // so we can compute each user's PENDING training list (mirrors
     // trainingService.trainingMatchesUser: outlets[]/dept/role wildcards).
-    const { data: clientTrainings } = await supabase
-      .from("trainings")
-      .select("id, title, outlets, department, role, questions")
-      .eq("client_id", tenant.client_id)
-      .eq("published", true);
-    const trainingIds = (clientTrainings || []).map((t: any) => t.id);
+    let clientTrainings: any[] = [];
     const passedByUser: Record<string, Set<string>> = {};
-    if (trainingIds.length) {
-      const { data: atts } = await supabase
-        .from("training_attempts")
-        .select("training_id, user_id, passed")
-        .in("training_id", trainingIds);
-      for (const a of (atts || [])) {
-        if (a.passed) (passedByUser[a.user_id] ??= new Set<string>()).add(a.training_id);
+    if (feat.has("training")) {
+      const { data } = await supabase
+        .from("trainings")
+        .select("id, title, outlets, department, role, questions")
+        .eq("client_id", tenant.client_id)
+        .eq("published", true);
+      clientTrainings = data || [];
+      const trainingIds = clientTrainings.map((t: any) => t.id);
+      if (trainingIds.length) {
+        const { data: atts } = await supabase
+          .from("training_attempts")
+          .select("training_id, user_id, passed")
+          .in("training_id", trainingIds);
+        for (const a of (atts || [])) {
+          if (a.passed) (passedByUser[a.user_id] ??= new Set<string>()).add(a.training_id);
+        }
       }
     }
 
@@ -112,31 +163,33 @@ serve(async (req) => {
       // through the digest — no WhatsApp — so both must be included here).
       const mine = `assigned_user_ids.cs.{${user.id}},cc_user_ids.cs.{${user.id}}`;
       let tasks: any[] = [];
-      if (runMode === "morning") {
-        // Due today or overdue, still open.
-        const { data } = await supabase.from("tasks")
-          .select("id, title, status, priority")
-          .eq("tenant_id", tenant.id)
-          .or(mine)
-          .not("status", "in", '("Completed","Closed")')
-          .lte("due_date", today + "T23:59:59Z");
-        tasks = data || [];
-      } else {
-        // Still open today + anything due tomorrow.
-        const { data: openToday } = await supabase.from("tasks")
-          .select("id, title, status, priority")
-          .eq("tenant_id", tenant.id)
-          .or(mine)
-          .not("status", "in", '("Completed","Closed")')
-          .lte("due_date", today + "T23:59:59Z");
-        const { data: dueTomorrow } = await supabase.from("tasks")
-          .select("id, title, status, priority")
-          .eq("tenant_id", tenant.id)
-          .or(mine)
-          .not("status", "in", '("Completed","Closed")')
-          .gte("due_date", tomorrow + "T00:00:00Z")
-          .lte("due_date", tomorrow + "T23:59:59Z");
-        tasks = [...(openToday || []), ...(dueTomorrow || [])];
+      if (feat.has("tasks")) {
+        if (runMode === "morning") {
+          // Due today or overdue, still open.
+          const { data } = await supabase.from("tasks")
+            .select("id, title, status, priority")
+            .eq("tenant_id", tenant.id)
+            .or(mine)
+            .not("status", "in", '("Completed","Closed")')
+            .lte("due_date", today + "T23:59:59Z");
+          tasks = data || [];
+        } else {
+          // Still open today + anything due tomorrow.
+          const { data: openToday } = await supabase.from("tasks")
+            .select("id, title, status, priority")
+            .eq("tenant_id", tenant.id)
+            .or(mine)
+            .not("status", "in", '("Completed","Closed")')
+            .lte("due_date", today + "T23:59:59Z");
+          const { data: dueTomorrow } = await supabase.from("tasks")
+            .select("id, title, status, priority")
+            .eq("tenant_id", tenant.id)
+            .or(mine)
+            .not("status", "in", '("Completed","Closed")')
+            .gte("due_date", tomorrow + "T00:00:00Z")
+            .lte("due_date", tomorrow + "T23:59:59Z");
+          tasks = [...(openToday || []), ...(dueTomorrow || [])];
+        }
       }
 
       // Pending trainings targeted to this user.
@@ -152,21 +205,24 @@ serve(async (req) => {
 
       // New task-chat messages (last 24h) on this user's tasks — assigned to them
       // or created by them — from someone else. Chats don't push; they land here.
-      const { data: aTasks } = await supabase.from("tasks").select("id")
-        .eq("tenant_id", tenant.id).or(mine);
-      const { data: cTasks } = await supabase.from("tasks").select("id")
-        .eq("tenant_id", tenant.id).eq("created_by_user_id", user.id);
-      const myTaskIds = [...new Set([...(aTasks || []), ...(cTasks || [])].map((t: any) => t.id))];
+      // Gated with tasks: a client without the tasks feature has no task chats.
       let chats: any[] = [];
-      if (myTaskIds.length) {
-        const { data: msgs } = await supabase.from("task_messages")
-          .select("task_id, sender_name, message")
-          .in("task_id", myTaskIds)
-          .gte("timestamp", yesterday)
-          .neq("user_id", user.id)
-          .order("timestamp", { ascending: false })
-          .limit(20);
-        chats = msgs || [];
+      if (feat.has("tasks")) {
+        const { data: aTasks } = await supabase.from("tasks").select("id")
+          .eq("tenant_id", tenant.id).or(mine);
+        const { data: cTasks } = await supabase.from("tasks").select("id")
+          .eq("tenant_id", tenant.id).eq("created_by_user_id", user.id);
+        const myTaskIds = [...new Set([...(aTasks || []), ...(cTasks || [])].map((t: any) => t.id))];
+        if (myTaskIds.length) {
+          const { data: msgs } = await supabase.from("task_messages")
+            .select("task_id, sender_name, message")
+            .in("task_id", myTaskIds)
+            .gte("timestamp", yesterday)
+            .neq("user_id", user.id)
+            .order("timestamp", { ascending: false })
+            .limit(20);
+          chats = msgs || [];
+        }
       }
 
       const items = {
