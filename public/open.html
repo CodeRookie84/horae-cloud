@@ -86,14 +86,12 @@
       var isStandalone = window.matchMedia('(display-mode: standalone)').matches
         || window.navigator.standalone === true;
 
-      // Android "intent://" launch, targeted at Chrome specifically
-      // (package=com.android.chrome). A PWA installed via Chrome is a
-      // Chrome-owned WebAPK, so only Chrome can open it as the standalone app —
-      // handing the link to the phone's *default* browser (e.g. Samsung
-      // Internet) just opens a tab it can't promote to the app. If Chrome isn't
-      // installed, browser_fallback_url loads the page in the current browser.
+      // Android "intent://" launch. Without a package it hands the URL to the OS
+      // intent resolver — the same layer where PWA link-capturing / App Links
+      // live — so it respects the user's default browser and can open the
+      // installed PWA. browser_fallback_url covers the "no handler" case.
       var intentUrl = 'intent://' + location.host + to
-        + '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url='
+        + '#Intent;scheme=https;S.browser_fallback_url='
         + encodeURIComponent(destination) + ';end';
 
       // Already running inside the installed PWA (or standalone) — just go there.
@@ -110,8 +108,6 @@
 
         if (isAndroid) {
           openBtn.setAttribute('href', intentUrl);
-          document.getElementById('manual-copy').textContent =
-            'Tap to open Horae in the app (via Chrome).';
         } else if (isIOS) {
           openBtn.setAttribute('href', destination);
           document.getElementById('ios-hint').hidden = false;
