@@ -2514,7 +2514,6 @@ export default function TaskManagerWorkflows({
 
               <div className="space-y-1">
                 <label className="text-sm text-slate-700 font-semibold tracking-wider block">Assign to — Primary owner(s)</label>
-                <p className="text-[12px] text-slate-500 -mt-0.5">Usually one person. Primary owners get a <strong className="text-emerald-700">WhatsApp alert</strong> and own the task.</p>
                 <MemberPicker
                   candidates={tenantUsers}
                   tenants={tenants}
@@ -2525,7 +2524,6 @@ export default function TaskManagerWorkflows({
 
               <div className="space-y-1">
                 <label className="text-sm text-slate-700 font-semibold tracking-wider block">CC — Keep informed (Optional)</label>
-                <p className="text-[12px] text-slate-500 -mt-0.5">People who should be aware. They get an <strong>in-app notice + daily digest</strong> only — <strong>no WhatsApp</strong>.</p>
                 <MemberPicker
                   candidates={tenantUsers.filter(u => !assignedUserIds.includes(u.id))}
                   tenants={tenants}
