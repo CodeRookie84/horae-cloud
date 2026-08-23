@@ -519,8 +519,28 @@ async function transcribeVoice(mediaId: string): Promise<string> {
 
 // ─── WhatsApp send (free-form + interactive; allowed inside the 24-hr window) ────
 
+// WhatsApp opens links in its own in-app browser, which never hands off to an
+// installed PWA. Route every in-message app deep-link through the /open
+// interstitial (public/open.html): it bounces the tap out of WhatsApp's WebView
+// into the user's real browser / installed PWA, preserving the target via ?to=.
+const APP_LINK_RE = new RegExp(
+  APP_BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+    "(?!/open)(/(?:tasks|notices|checklists|training|sops|digest)[^\\s)]*)?",
+  "g",
+);
+function wrapWaLinks(text: string): string {
+  if (!text) return text;
+  return text.replace(APP_LINK_RE, (_m, path) => {
+    let p = path || "/dashboard";
+    let trail = "";
+    const punct = p.match(/[.,!?;:]+$/); // don't swallow trailing sentence punctuation into the URL
+    if (punct) { trail = punct[0]; p = p.slice(0, -trail.length); }
+    return `${APP_BASE_URL}/open?to=${encodeURIComponent(p)}${trail}`;
+  });
+}
+
 async function sendText(to: string, bodyText: string): Promise<string | undefined> {
-  return waSend({ type: "text", text: { body: bodyText, preview_url: true }, to: to.replace(/\D/g, "") });
+  return waSend({ type: "text", text: { body: wrapWaLinks(bodyText), preview_url: true }, to: to.replace(/\D/g, "") });
 }
 
 async function sendButtons(to: string, bodyText: string, buttons: { id: string; title: string }[]): Promise<string | undefined> {

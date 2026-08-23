@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/open",
+      "destination": "/open.html"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

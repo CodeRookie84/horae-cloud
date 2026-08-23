@@ -566,6 +566,28 @@ async function sendNotifications(user: any, payload: {
 /** Returns the Meta WhatsApp message id (WAMID) for the send, so delivery/
  * read receipts arriving later on the webhook can be matched back to this
  * exact notification_log row. */
+// WhatsApp opens links in its own in-app browser, which never hands off to an
+// installed PWA. Route every in-message app deep-link through the /open
+// interstitial (public/open.html): it bounces the tap out of WhatsApp's WebView
+// into the user's real browser / installed PWA, preserving the target via ?to=.
+// Applied ONLY to outbound WhatsApp text/params here — push (FCM) `url`s
+// navigate in-app via the service worker and are deliberately left untouched.
+const APP_LINK_RE = new RegExp(
+  APP_BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+    "(?!/open)(/(?:tasks|notices|checklists|training|sops|digest)[^\\s)]*)?",
+  "g",
+);
+function wrapWaLinks(text: string): string {
+  if (!text) return text;
+  return text.replace(APP_LINK_RE, (_m, path) => {
+    let p = path || "/dashboard";
+    let trail = "";
+    const punct = p.match(/[.,!?;:]+$/); // don't swallow trailing sentence punctuation into the URL
+    if (punct) { trail = punct[0]; p = p.slice(0, -trail.length); }
+    return `${APP_BASE_URL}/open?to=${encodeURIComponent(p)}${trail}`;
+  });
+}
+
 async function sendWhatsApp(phone: string, message: string, template?: { name: string, params: string[] }): Promise<string | undefined> {
   const body: any = {
     messaging_product: "whatsapp",
@@ -580,13 +602,13 @@ async function sendWhatsApp(phone: string, message: string, template?: { name: s
       components: [
         {
           type: "body",
-          parameters: template.params.map(text => ({ type: "text", text }))
+          parameters: template.params.map(text => ({ type: "text", text: wrapWaLinks(text) }))
         }
       ]
     };
   } else {
     body.type = "text";
-    body.text = { body: message };
+    body.text = { body: wrapWaLinks(message) };
   }
 
   const res = await fetch(`https://graph.facebook.com/v19.0/${META_PHONE_NUM_ID}/messages`, {
