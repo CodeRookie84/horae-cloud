@@ -150,6 +150,7 @@ async function handleInboundMessage(m: any, contact: any) {
       // show its status list. "ts~<taskId>~<status>" = a status chosen from that
       // list → apply it. Everything else is a main-menu selection.
       if (listId.startsWith("tpick~")) { await sendTaskStatusList(fromPhone, listId.slice(6)); return; }
+      if (listId.startsWith("cpick~")) { await startCommentForTask(fromPhone, userId, tenantId, listId.slice(6)); return; }
       if (listId.startsWith("ts~")) { await handleTaskStatusUpdate(listId, fromPhone, userId); return; }
       await handleMenuSelection(listId, fromPhone, userId, tenantId); return;
     }
@@ -177,6 +178,11 @@ async function handleInboundMessage(m: any, contact: any) {
       if (m.type === "audio" && m.audio?.id) {
         content = await transcribeVoice(m.audio.id);
         if (!content) { await sendText(fromPhone, "🎙️ I couldn't read that voice note. Please type it instead."); return; }
+      }
+      // "comment" → the content is a chat message on a task the user just picked.
+      if (pending.intent === "comment") {
+        await addTaskComment(fromPhone, userId, pending.payload?.taskId, content);
+        return;
       }
       const isComplaint = pending.intent === "complaint";
       await createCaptureAndReply(fromPhone, userId, tenantId, isComplaint ? "whatsapp_complaint" : "whatsapp_newtask", content, isComplaint);
@@ -237,9 +243,12 @@ async function sendMainMenu(fromPhone: string) {
     "Choose",
     [
       { id: "menu_create_task",   title: "📋 Create a task" },
-      { id: "menu_complaint",     title: "⚠️ Raise a complaint" },
+      { id: "menu_add_comment",   title: "💬 Comment on a task" },
       { id: "menu_update_status", title: "🔄 Update task status" },
       { id: "menu_view_tasks",    title: "📋 View my tasks" },
+      { id: "menu_checklists",    title: "✅ My checklists" },
+      { id: "menu_training",      title: "📚 My training" },
+      { id: "menu_complaint",     title: "⚠️ Raise a complaint" },
       { id: "menu_go_app",        title: "🔗 Go to Horae app", description: `${APP_BASE_URL}/dashboard` },
     ],
   );
@@ -249,9 +258,12 @@ async function sendMainMenu(fromPhone: string) {
 async function handleMenuSelection(id: string, fromPhone: string, userId: string, tenantId: string | null) {
   switch (id) {
     case "menu_create_task":   await startAwaitingInput(fromPhone, userId, tenantId, "create_task"); break;
+    case "menu_add_comment":   await sendTaskPickerForComment(fromPhone, userId, tenantId); break;
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
     case "menu_update_status": await sendTaskPickerForStatus(fromPhone, userId, tenantId); break;
     case "menu_view_tasks":    await sendOpenTasksList(fromPhone, userId, tenantId, "view"); break;
+    case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
+    case "menu_training":      await sendTrainingList(fromPhone, userId, tenantId); break;
     case "menu_go_app":        await sendText(fromPhone, `👉 *Go to Horae app*:\n${APP_BASE_URL}/dashboard`); break;
     default:                   await sendMainMenu(fromPhone);
   }
@@ -272,9 +284,9 @@ async function startAwaitingInput(fromPhone: string, userId: string, tenantId: s
 }
 
 /** Atomically claim the user's latest pending "awaiting_input" state (or null). */
-async function takePendingInput(userId: string): Promise<{ id: string; intent: string } | null> {
+async function takePendingInput(userId: string): Promise<{ id: string; intent: string; payload: any } | null> {
   const { data } = await supabase.from("whatsapp_conversations")
-    .select("id, intent")
+    .select("id, intent, payload")
     .eq("user_id", userId).eq("state", "awaiting_input")
     .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false }).limit(1);
@@ -282,7 +294,7 @@ async function takePendingInput(userId: string): Promise<{ id: string; intent: s
   if (!row) return null;
   await supabase.from("whatsapp_conversations")
     .update({ state: "done", updated_at: new Date().toISOString() }).eq("id", row.id);
-  return row as { id: string; intent: string };
+  return row as { id: string; intent: string; payload: any };
 }
 
 /**
@@ -310,6 +322,118 @@ async function sendTaskPickerForStatus(fromPhone: string, userId: string, tenant
     "Pick task",
     tasks.map((t: any) => ({ id: `tpick~${t.id}`, title: t.title, description: `Currently: ${t.status}` })),
   );
+}
+
+/**
+ * Menu → "Comment on a task": show the user's open tasks as a tappable list.
+ * Tapping a task (row id `cpick~<taskId>`) then asks for the comment text/voice,
+ * which is captured back into the task chat — mirrors the update-status flow.
+ */
+async function sendTaskPickerForComment(fromPhone: string, userId: string, tenantId: string | null) {
+  let q = supabase.from("tasks")
+    .select("id, title, status")
+    .contains("assigned_user_ids", [userId])
+    .not("status", "in", '("Completed","Closed")')
+    .order("created_at", { ascending: false }).limit(10);
+  if (tenantId) q = q.eq("tenant_id", tenantId);
+  const { data: tasks } = await q;
+
+  if (!tasks || tasks.length === 0) {
+    await sendText(fromPhone, "✅ You have no open tasks to comment on right now.");
+    return;
+  }
+  await sendList(
+    fromPhone,
+    "💬 *Comment on a task* — pick which one:",
+    "Pick task",
+    tasks.map((t: any) => ({ id: `cpick~${t.id}`, title: t.title, description: `Currently: ${t.status}` })),
+  );
+}
+
+/** A task was picked for a comment → remember it and ask for the text/voice note. */
+async function startCommentForTask(fromPhone: string, userId: string, tenantId: string | null, taskId: string) {
+  const { data: task } = await supabase.from("tasks").select("id, title").eq("id", taskId).single();
+  if (!task) { await sendText(fromPhone, "That task couldn't be found — it may have been removed."); return; }
+  await supabase.from("whatsapp_conversations").insert([{
+    user_id: userId, tenant_id: tenantId, from_phone: fromPhone,
+    state: "awaiting_input", intent: "comment", payload: { taskId },
+  }]);
+  await sendText(
+    fromPhone,
+    `💬 Add your comment for *${task.title}*.\nType it or send a voice note.\n\n(Reply *cancel* to go back.)`,
+  );
+}
+
+/** Save a WhatsApp-captured comment into the task chat (task_messages). */
+async function addTaskComment(fromPhone: string, userId: string, taskId: string | undefined, content: string) {
+  const text = (content || "").trim();
+  if (!taskId) { await sendText(fromPhone, "Hmm, I lost track of which task that was for. Reply *menu* and pick it again."); return; }
+  if (!text)   { await sendText(fromPhone, "That comment looked empty — reply *menu* to try again."); return; }
+
+  const { data: task } = await supabase.from("tasks").select("id, title").eq("id", taskId).single();
+  if (!task) { await sendText(fromPhone, "That task couldn't be found — it may have been removed."); return; }
+
+  const { data: u } = await supabase.from("users").select("name, role").eq("id", userId).limit(1);
+  await supabase.from("task_messages").insert([{
+    id: "msg-" + Date.now(), task_id: taskId, user_id: userId,
+    sender_name: u?.[0]?.name || "Staff", sender_role: u?.[0]?.role || "",
+    message: text, timestamp: new Date().toISOString(),
+  }]);
+  await sendText(fromPhone, `💬 Comment added to *${task.title}*.\nEveryone on the task will see it in Horae and their next digest.`);
+}
+
+/** Menu → "My checklists": list this outlet's pending checklists with a deep link. */
+async function sendChecklistsList(fromPhone: string, tenantId: string | null) {
+  if (!tenantId) { await sendText(fromPhone, "✅ No checklists found for your outlet."); return; }
+  const { data: rows } = await supabase.from("checklists")
+    .select("id, title, description").eq("tenant_id", tenantId);
+  // Same filter the digest uses — the checklists table also stores SOP/quiz rows.
+  const checklists = (rows || []).filter((c: any) => {
+    try {
+      if (typeof c.description === "string" && c.description.startsWith("{")) {
+        const o = JSON.parse(c.description);
+        if (o.type === "sop" || o.type === "quiz") return false;
+      }
+    } catch { /* plain-text description = real checklist */ }
+    return true;
+  }).slice(0, 10);
+
+  if (checklists.length === 0) { await sendText(fromPhone, "✅ No checklists pending for your outlet right now."); return; }
+  const lines = checklists.map((c: any, i: number) => `${i + 1}. *${c.title}*`);
+  await sendText(fromPhone, `✅ *Your checklists*\n\n${lines.join("\n")}\n\n👉 Complete them in Horae:\n${APP_BASE_URL}/checklists`);
+}
+
+/** Menu → "My training": list trainings targeted to this user they haven't passed. */
+async function sendTrainingList(fromPhone: string, userId: string, tenantId: string | null) {
+  const { data: u } = await supabase.from("users")
+    .select("department, role, tenant_id").eq("id", userId).single();
+  const { data: t } = await supabase.from("tenants").select("client_id").eq("id", tenantId).single();
+  const clientId = t?.client_id;
+  if (!clientId) { await sendText(fromPhone, "📚 No training assigned to you right now."); return; }
+
+  const { data: trainings } = await supabase.from("trainings")
+    .select("id, title, outlets, department, role, questions")
+    .eq("client_id", clientId).eq("published", true);
+  const ids = (trainings || []).map((x: any) => x.id);
+  const passed = new Set<string>();
+  if (ids.length) {
+    const { data: atts } = await supabase.from("training_attempts")
+      .select("training_id, passed").eq("user_id", userId).in("training_id", ids);
+    for (const a of (atts || [])) if (a.passed) passed.add(a.training_id);
+  }
+  // Mirror trainingService.trainingMatchesUser: outlet/dept/role wildcards.
+  const pending = (trainings || []).filter((x: any) => {
+    if (!(x.questions?.length)) return false;
+    if (passed.has(x.id)) return false;
+    const outletOk = !Array.isArray(x.outlets) || x.outlets.length === 0 || x.outlets.includes(u?.tenant_id);
+    const deptOk = String(x.department || "All Departments") === "All Departments" || String(x.department) === String(u?.department);
+    const roleOk = String(x.role || "All Roles") === "All Roles" || String(x.role) === String(u?.role);
+    return outletOk && deptOk && roleOk;
+  }).slice(0, 10);
+
+  if (pending.length === 0) { await sendText(fromPhone, "📚 You're all caught up — no pending training. 🎉"); return; }
+  const lines = pending.map((x: any, i: number) => `${i + 1}. *${x.title}*`);
+  await sendText(fromPhone, `📚 *Your training*\n\n${lines.join("\n")}\n\n👉 Take them in Horae:\n${APP_BASE_URL}/training`);
 }
 
 /** Reply with the user's open tasks, each as its own deep link. */
@@ -340,10 +464,10 @@ async function sendHelp(fromPhone: string, userId: string) {
   await sendText(
     fromPhone,
     `👋 Hi ${first}! I'm *Horae*.\n\nHere's what I can do:\n\n` +
-    `📋 *Send "menu"* → pick from create task, raise a complaint, update or view your tasks.\n` +
+    `📋 *Send "menu"* → create a task, comment on a task, update or view tasks, see your checklists & training, or raise a complaint.\n` +
     `↪️ *Forward me any message* → I'll offer to turn it into a task.\n` +
     `✍️ Send *"new task <details>"* → I'll create a task from it.\n` +
-    `🎙️ Send a *voice note* → I'll turn it into a task.\n\n` +
+    `🎙️ Send a *voice note* → I'll turn it into a task (or a comment when I ask for one).\n\n` +
     `You'll also get task alerts and your daily briefing right here.\n\n👉 Open Horae: ${APP_BASE_URL}`,
   );
 }

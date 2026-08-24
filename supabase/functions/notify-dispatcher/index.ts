@@ -358,24 +358,33 @@ async function handleDigest(userId: string, tenantId: string, items: any, runMod
     ? [`Evening wrap-up, ${firstName} 🌙\n`]
     : [`Good morning ${firstName}! Your Horae briefing 🌅\n`];
 
-  // Both runs summarise all four areas; only the framing differs by run.
+  // One line per feature. Chats/comments are placed high and flagged with a 🔔
+  // so a staff member never scrolls past them — they're the thing most easily
+  // missed (they don't push on their own; they only surface in the digest).
   const taskLead = runMode === "morning" ? "due today" : "still open — check before tomorrow";
-  if (items.tasks?.length)      parts.push(`📋 TASKS: ${items.tasks.length} ${taskLead}`);
-  if (items.checklists?.length) parts.push(`✅ CHECKLIST: "${items.checklists[0].title}"${items.checklists.length > 1 ? ` +${items.checklists.length - 1} more` : ""} pending`);
-  if (items.training?.length)   parts.push(`📚 TRAINING: ${items.training.length} pending — "${items.training[0].title}"`);
-  if (items.chats?.length)      parts.push(`💬 CHATS: ${items.chats.length} new message(s) on your tasks — latest from ${items.chats[0].sender_name}`);
-  if (items.notices?.length)    parts.push(`📢 NOTICE: "${items.notices[0].title}"${items.notices.length > 1 ? ` +${items.notices.length - 1} more` : ""}`);
-  if (parts.length <= 1) return;
+  const sections: string[] = [];
+  if (items.tasks?.length)      sections.push(`📋 TASKS · ${items.tasks.length} ${taskLead}`);
+  if (items.chats?.length)      sections.push(`🔔 CHATS · ${items.chats.length} new on your tasks — latest from ${items.chats[0].sender_name}`);
+  if (items.checklists?.length) sections.push(`✅ CHECKLISTS · "${items.checklists[0].title}"${items.checklists.length > 1 ? ` +${items.checklists.length - 1} more` : ""} pending`);
+  if (items.training?.length)   sections.push(`📚 TRAINING · ${items.training.length} pending — "${items.training[0].title}"`);
+  if (items.notices?.length)    sections.push(`📢 NOTICES · "${items.notices[0].title}"${items.notices.length > 1 ? ` +${items.notices.length - 1} more` : ""}`);
+  if (sections.length === 0) return;
 
   const deepLink = `${APP_BASE_URL}/digest`;
-  parts.push(`\n👉 Open Horae: ${deepLink}`);
-
   const digestHeading = runMode === "evening" ? "Evening wrap-up" : "Morning briefing";
+
+  // Free-form message (only sendable inside the 24h window) → true line breaks.
+  const waMessage = `${parts[0]}\n${sections.join("\n")}\n\n👉 Open Horae: ${deepLink}`;
+  // Template parameters can't contain newlines/tabs/4+ spaces, so the digest that
+  // actually ships (business-initiated, outside the window) separates features
+  // with a visible ➖ divider — the closest to distinct lines the template allows.
+  const templateBody = `${sections.join("  ➖  ")}  ➖  ${deepLink}`;
+
   await sendNotifications(user, {
-    waMessage: parts.join("\n"),
-    waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [digestHeading, `${parts.slice(1, -1).join(" ")} ${deepLink}`] },
+    waMessage,
+    waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [digestHeading, templateBody] },
     pushTitle: runMode === "evening" ? "🌙 Your Horae Evening Wrap-up" : "📋 Your Horae Morning Briefing",
-    pushBody: `${items.tasks?.length || 0} tasks · ${items.checklists?.length || 0} checklists · ${items.training?.length || 0} training · ${items.chats?.length || 0} chats · ${items.notices?.length || 0} notices`,
+    pushBody: `${items.tasks?.length || 0} tasks · ${items.chats?.length || 0} chats · ${items.checklists?.length || 0} checklists · ${items.training?.length || 0} training · ${items.notices?.length || 0} notices`,
     url: deepLink,
     pushTag: "horae-digest",
   }, tenantId, "daily_digest", `digest-${runMode}-` + new Date().toISOString().slice(0, 10));

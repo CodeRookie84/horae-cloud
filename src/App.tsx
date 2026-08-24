@@ -159,8 +159,10 @@ function AppInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Navigation Track — sync with URL
-  const [activeTab, setActiveTab] = useState<string>("home");
+  // Navigation Track — sync with URL. Default landing is the Dashboard (where the
+  // PWA install prompt surfaces), not the app-grid launcher; the launcher stays
+  // reachable via the nav and every module's back button.
+  const [activeTab, setActiveTab] = useState<string>("dashboard");
   // Track which item ID was deep-linked (passed to child components)
   const [deepLinkedItemId, setDeepLinkedItemId] = useState<string | undefined>(undefined);
   // WhatsApp task capture (/tasks/new?capture=<id>) — prefills the create-task form.
@@ -199,7 +201,7 @@ function AppInner() {
   useEffect(() => {
     const path = location.pathname;
     const pathParts = path.split('/');
-    const mainRoute = '/' + (pathParts[1] || 'home');
+    const mainRoute = '/' + (pathParts[1] || 'dashboard');
     const itemId = pathParts[2] || undefined;
 
     const reverseMap: Record<string, string> = {

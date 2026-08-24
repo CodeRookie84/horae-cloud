@@ -247,6 +247,9 @@ export default function TaskManagerWorkflows({
   const [chatInput, setChatInput] = useState<string>("");
   const [errMess, setErrMess] = useState<string>("");
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
+  // Set when the user taps a task's "NEW" comment badge, so opening that task
+  // jumps straight to the comment box instead of the top of the detail.
+  const focusCommentsRef = useRef(false);
 
   const isManager = activeUser.role === Role.ADMIN || 
                     activeUser.role === Role.SUPER_ADMIN || 
@@ -339,6 +342,22 @@ export default function TaskManagerWorkflows({
   useEffect(() => {
     if (chatBottomRef.current) {
       chatBottomRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+    // Opened via a "NEW" comment badge → bring the comment box into view and
+    // focus it, so the user lands right where they can reply. The detail panel
+    // has just mounted, so wait a tick for the (layout-specific) input to exist.
+    if (focusCommentsRef.current) {
+      focusCommentsRef.current = false;
+      setTimeout(() => {
+        const inputs = Array.from(
+          document.querySelectorAll<HTMLElement>("[data-task-chat-input]"),
+        );
+        const visible = inputs.find((el) => el.offsetParent !== null) || inputs[0];
+        if (visible) {
+          visible.scrollIntoView({ behavior: "smooth", block: "center" });
+          visible.focus();
+        }
+      }, 250);
     }
   }, [selectedTaskId, tasks]);
 
@@ -761,12 +780,19 @@ export default function TaskManagerWorkflows({
     const unreadCount = t.chat.length - readCount;
     if (unreadCount > 0 && t.id !== selectedTaskId) {
       return (
-        <span
-          className="bg-orange-500 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-full flex items-center justify-center shadow-xs shrink-0 animate-pulse font-sans"
-          title={`${unreadCount} new comment${unreadCount > 1 ? "s" : ""}`}
+        <button
+          type="button"
+          onClick={(e) => {
+            // Open the task and jump straight to its comment box.
+            e.stopPropagation();
+            focusCommentsRef.current = true;
+            setSelectedTaskId(t.id);
+          }}
+          className="bg-red-600 hover:bg-red-700 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-full flex items-center justify-center shadow-xs shrink-0 animate-pulse font-sans cursor-pointer"
+          title={`${unreadCount} new comment${unreadCount > 1 ? "s" : ""} — tap to open comments`}
         >
           {unreadCount} NEW
-        </span>
+        </button>
       );
     }
     return null;
@@ -1759,6 +1785,7 @@ export default function TaskManagerWorkflows({
                 <form onSubmit={handleSendChatMessage} className="p-2 bg-white border-t border-slate-100 space-y-1.5 shrink-0">
                   <textarea
                     rows={2}
+                    data-task-chat-input
                     placeholder="Type message… (Ctrl+Enter to send)"
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
@@ -2145,6 +2172,7 @@ export default function TaskManagerWorkflows({
                 >
                   <textarea
                     rows={2}
+                    data-task-chat-input
                     placeholder="Type a comment… (Ctrl+Enter to send)"
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
@@ -2383,6 +2411,7 @@ export default function TaskManagerWorkflows({
                 >
                   <input
                     type="text"
+                    data-task-chat-input
                     placeholder="Comment on task status..."
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
