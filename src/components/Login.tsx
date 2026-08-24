@@ -345,6 +345,18 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                 )}
               </button>
             </form>
+
+            {/* Prospects who guess the bare domain land here — send them to the
+                marketing site (which lives at www.horae.cloud). */}
+            <p className="mt-5 text-center text-[11px] text-[#6A6390]">
+              New to Horae?{" "}
+              <a
+                href="https://www.horae.cloud"
+                className="font-bold text-[#8B7CF6] hover:underline"
+              >
+                Learn more →
+              </a>
+            </p>
           </>
         )}
       </motion.div>
