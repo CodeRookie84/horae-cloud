@@ -204,19 +204,7 @@ async function handleInboundMessage(m: any, contact: any) {
       await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_newtask", content);
       return;
     }
-    // Numbered reply to the main menu (1–4) → run that action directly.
-    const menuPick = text.match(/^\s*([1-4])\s*$/);
-    if (menuPick) {
-      const idMap: Record<string, string> = {
-        "1": "menu_create_task",
-        "2": "menu_complaint",
-        "3": "menu_update_status",
-        "4": "menu_view_tasks",
-      };
-      await handleMenuSelection(idMap[menuPick[1]], fromPhone, userId, tenantId);
-      return;
-    }
-    // Greeting / "menu" → show the main menu.
+    // Greeting / "menu" → show the tappable main menu.
     if (text.length <= 12 && /^\s*(hi|hai|hey|hello|menu|start)\b/i.test(text)) {
       await sendMainMenu(fromPhone);
       return;
@@ -241,19 +229,19 @@ async function handleInboundMessage(m: any, contact: any) {
 
 // ── Main menu (WhatsApp interactive list) ─────────────────────────────────────
 
-// Numbered text menu (not an interactive list): a WhatsApp list always hides its
-// rows behind a "Choose" button that has to be tapped to expand — this shows
-// every option inline in one message. The user replies with a number (handled in
-// handleInboundMessage), and the app link is a direct tap at the bottom.
+/** Show the tappable action menu. Buttons cap at 3, so this uses a list. */
 async function sendMainMenu(fromPhone: string) {
-  await sendText(
+  await sendList(
     fromPhone,
-    "👋 *Horae* — reply with a number:\n\n" +
-    "1️⃣  Create a task\n" +
-    "2️⃣  Raise a complaint\n" +
-    "3️⃣  Update task status\n" +
-    "4️⃣  View my tasks\n\n" +
-    `👉 *Go to Horae app*: ${APP_BASE_URL}/dashboard`,
+    "👋 *Horae* — what would you like to do?",
+    "Choose",
+    [
+      { id: "menu_create_task",   title: "📋 Create a task" },
+      { id: "menu_complaint",     title: "⚠️ Raise a complaint" },
+      { id: "menu_update_status", title: "🔄 Update task status" },
+      { id: "menu_view_tasks",    title: "📋 View my tasks" },
+      { id: "menu_go_app",        title: "🔗 Go to Horae app", description: `${APP_BASE_URL}/dashboard` },
+    ],
   );
 }
 
@@ -264,7 +252,7 @@ async function handleMenuSelection(id: string, fromPhone: string, userId: string
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
     case "menu_update_status": await sendTaskPickerForStatus(fromPhone, userId, tenantId); break;
     case "menu_view_tasks":    await sendOpenTasksList(fromPhone, userId, tenantId, "view"); break;
-    case "menu_help":          await sendHelp(fromPhone, userId); break;
+    case "menu_go_app":        await sendText(fromPhone, `👉 *Go to Horae app*:\n${APP_BASE_URL}/dashboard`); break;
     default:                   await sendMainMenu(fromPhone);
   }
 }
