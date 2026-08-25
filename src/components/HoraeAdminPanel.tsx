@@ -97,6 +97,8 @@ interface HoraeAdminPanelProps {
   onSelectUser: (userId: string) => void;
   onUpdateClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages: string[], digestEnabled: boolean) => void;
   onDeleteClient: (id: string) => void;
+  /** Provision a time-limited demo sandbox; resolves with the login to hand over. */
+  onProvisionDemo: (companyName: string, days: number) => Promise<{ loginEmail: string; password: string; expiresAt: string }>;
   onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
   onDeleteTenant: (tenantId: string) => void;
   onUpdateUser: (userId: string, name: string, email: string, role: string, department: string) => void;
@@ -113,6 +115,7 @@ export default function HoraeAdminPanel({
   onSelectUser,
   onUpdateClient,
   onDeleteClient,
+  onProvisionDemo,
   onUpdateTenant,
   onDeleteTenant,
   onUpdateUser,
@@ -130,6 +133,46 @@ export default function HoraeAdminPanel({
   const [clientTrainingAddon, setClientTrainingAddon] = useState<boolean>(false);
   const [clientLanguages, setClientLanguages] = useState<string[]>(["hi", "kn", "ta"]);
   const [clientSuccessMsg, setClientSuccessMsg] = useState("");
+
+  // State for provisioning a demo sandbox.
+  const [demoName, setDemoName] = useState("");
+  const [demoDays, setDemoDays] = useState<number>(7);
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoError, setDemoError] = useState("");
+  const [demoResult, setDemoResult] = useState<{ loginEmail: string; password: string; expiresAt: string } | null>(null);
+  const [demoCopied, setDemoCopied] = useState(false);
+
+  const handleCreateDemo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (demoBusy) return;
+    setDemoError("");
+    setDemoResult(null);
+    setDemoBusy(true);
+    try {
+      const res = await onProvisionDemo(demoName.trim() || "Demo", demoDays);
+      setDemoResult(res);
+      setDemoName("");
+    } catch (err: any) {
+      setDemoError(err?.message || "Couldn't create the demo. Please try again.");
+    } finally {
+      setDemoBusy(false);
+    }
+  };
+
+  const copyDemoCreds = () => {
+    if (!demoResult) return;
+    const expires = new Date(demoResult.expiresAt).toLocaleString();
+    const text =
+      `Horae demo login\n` +
+      `Sign in at: ${window.location.origin}\n` +
+      `Email: ${demoResult.loginEmail}\n` +
+      `Password: ${demoResult.password}\n` +
+      `Access ends: ${expires}`;
+    navigator.clipboard?.writeText(text).then(() => {
+      setDemoCopied(true);
+      setTimeout(() => setDemoCopied(false), 2000);
+    }).catch(() => {});
+  };
 
   // State for editing a client
   const [editingClient, setEditingClient] = useState<Client | null>(null);
@@ -408,6 +451,95 @@ export default function HoraeAdminPanel({
               exit={{ opacity: 0, y: -10 }}
               className="grid grid-cols-1 lg:grid-cols-3 gap-6"
             >
+              {/* Demo sandbox card — spans full width above the onboarding form. */}
+              <div className="lg:col-span-3 bg-gradient-to-br from-indigo-50 to-violet-50 p-6 rounded-2xl border border-indigo-100 shadow-sm">
+                <div className="flex flex-col lg:flex-row lg:items-start gap-6">
+                  <div className="lg:w-1/3 space-y-2">
+                    <h3 className="font-bold text-sm text-slate-800 flex items-center gap-2">
+                      <Sparkles className="w-4.5 h-4.5 text-indigo-600" />
+                      Create a demo workspace
+                    </h3>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Spin up a self-contained, time-limited sandbox for a prospect. It unlocks every feature, needs no setup, and is cleared automatically. WhatsApp is off in demos. Each demo is isolated — create as many as you need.
+                    </p>
+                  </div>
+
+                  <div className="lg:flex-1">
+                    <form onSubmit={handleCreateDemo} className="flex flex-col sm:flex-row sm:items-end gap-3">
+                      <div className="flex-1 space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                          Prospect / company name
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Sunrise Bakery"
+                          value={demoName}
+                          onChange={(e) => setDemoName(e.target.value)}
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 transition-colors"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                          Duration
+                        </label>
+                        <select
+                          value={demoDays}
+                          onChange={(e) => setDemoDays(Number(e.target.value))}
+                          className="text-xs px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 transition-colors"
+                        >
+                          <option value={3}>3 days</option>
+                          <option value={7}>7 days</option>
+                          <option value={14}>14 days</option>
+                        </select>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={demoBusy}
+                        className="text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 px-4 py-2 rounded-xl transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        {demoBusy ? "Creating…" : "Create demo"}
+                      </button>
+                    </form>
+
+                    {demoError && (
+                      <p className="mt-3 text-[11px] text-rose-600 font-medium">{demoError}</p>
+                    )}
+
+                    {demoResult && (
+                      <div className="mt-4 bg-white border border-indigo-200 rounded-xl p-4 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5" /> Demo ready — hand these over
+                          </span>
+                          <button
+                            onClick={copyDemoCreds}
+                            className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                          >
+                            {demoCopied ? <><Check className="w-3 h-3" /> Copied</> : <>Copy all</>}
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                          <div>
+                            <div className="text-slate-400 font-semibold">Email</div>
+                            <div className="font-mono text-slate-700 break-all">{demoResult.loginEmail}</div>
+                          </div>
+                          <div>
+                            <div className="text-slate-400 font-semibold">Password</div>
+                            <div className="font-mono text-slate-700 break-all">{demoResult.password}</div>
+                          </div>
+                          <div>
+                            <div className="text-slate-400 font-semibold">Access ends</div>
+                            <div className="text-slate-700">{new Date(demoResult.expiresAt).toLocaleString()}</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               {/* Form Card */}
               <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4 h-fit">
                 <h3 className="font-bold text-sm text-slate-800 flex items-center gap-2">

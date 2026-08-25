@@ -61,6 +61,17 @@ export function isTrialActive(createdAt?: string): boolean {
   return Date.now() - created <= TRIAL_MS;
 }
 
+/**
+ * Is a demo client still inside its explicit window? Unlike the Free trial,
+ * a demo's length is set per-client (default 7 days) and stored as an absolute
+ * expiry, so we compare against that timestamp rather than a fixed span.
+ */
+export function isDemoActive(demoExpiresAt?: string): boolean {
+  if (!demoExpiresAt) return false;
+  const expires = new Date(demoExpiresAt).getTime();
+  return Number.isFinite(expires) && Date.now() < expires;
+}
+
 /** Has a Free-trial client's 15-day window elapsed? */
 export function isTrialExpired(plan: PlanId | string, createdAt?: string): boolean {
   return plan === "Free" && !isTrialActive(createdAt);
@@ -73,8 +84,13 @@ export function isTrialExpired(plan: PlanId | string, createdAt?: string): boole
  */
 export function planFeatures(
   plan: PlanId | string,
-  opts: { trainingAddon?: boolean; createdAt?: string } = {},
+  opts: { trainingAddon?: boolean; createdAt?: string; isDemo?: boolean; demoExpiresAt?: string } = {},
 ): FeatureKey[] {
+  // A demo is an all-features sandbox while inside its window, nothing after —
+  // independent of whatever `plan` label the row carries.
+  if (opts.isDemo) {
+    return isDemoActive(opts.demoExpiresAt) ? [...ALL_FEATURES] : [];
+  }
   if (plan === "Free") {
     return isTrialActive(opts.createdAt) ? [...ALL_FEATURES] : [];
   }

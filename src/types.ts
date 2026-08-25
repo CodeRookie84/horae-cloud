@@ -42,6 +42,10 @@ export interface Client {
   digestEnabled?: boolean;
   /** ISO 639-1 codes this client's staff can translate into (chosen at onboarding). */
   languages?: string[];
+  /** True for a time-limited sales-demo sandbox (see 20260825_demo_clients.sql). */
+  isDemo?: boolean;
+  /** ISO timestamp when a demo client's access stops. Only meaningful when isDemo. */
+  demoExpiresAt?: string;
 }
 
 export interface Tenant {

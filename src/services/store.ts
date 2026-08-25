@@ -77,6 +77,8 @@ export class StoreService {
   /** Map a raw `clients` row → Client, deriving feature entitlements from the plan. */
   private mapClient(c: any): Client {
     const trainingAddon = !!c.training_addon;
+    const isDemo = !!c.is_demo;
+    const demoExpiresAt = c.demo_expires_at || undefined;
     return {
       id: c.id,
       name: c.name,
@@ -86,7 +88,9 @@ export class StoreService {
       trainingAddon,
       // Missing column / null → enabled (matches the DB default of true).
       digestEnabled: c.digest_enabled !== false,
-      services: plans.planFeatures(c.plan, { trainingAddon, createdAt: c.created_at }),
+      isDemo,
+      demoExpiresAt,
+      services: plans.planFeatures(c.plan, { trainingAddon, createdAt: c.created_at, isDemo, demoExpiresAt }),
       languages: Array.isArray(c.languages) ? c.languages : [],
     };
   }
@@ -523,6 +527,148 @@ export class StoreService {
     };
     await supabase.from('clients').insert([newClient]);
     return this.mapClient(newClient);
+  }
+
+  /**
+   * Provision a complete, self-contained sales-demo sandbox for a prospect:
+   * a demo client → one outlet → one Admin login → a little seed data. Returns
+   * the credentials to hand over. Isolated by RLS like any other client, so any
+   * number of demos can run at once without touching each other.
+   *
+   * Demo specifics: Free-plan feature set gated by an explicit `demo_expires_at`
+   * (default 7 days), WhatsApp fully off (the admin carries NO phone number and
+   * the client's digest is disabled), and a daily purge job removes it 30 days
+   * after expiry (see the `purge-demos` edge function).
+   *
+   * Option A calls this from the super-admin panel; when the public "Try free"
+   * flow (Option B) lands, the same orchestration moves into an edge function.
+   */
+  public async provisionDemoClient(
+    companyName: string,
+    days: number = 7,
+  ): Promise<{ client: Client; loginEmail: string; password: string; expiresAt: string }> {
+    const clean = (companyName || "").trim() || "Demo";
+    const rand = Math.random().toString(36).slice(2, 6);
+    const slug = clean.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "client";
+    const clientId = `demo-${slug}-${rand}`;
+    const now = Date.now();
+    const expiresAt = new Date(now + Math.max(1, Math.round(days)) * 24 * 60 * 60 * 1000).toISOString();
+
+    // 1. Client row. plan:"Free" carries the all-features set, but the demo gate
+    //    (is_demo + demo_expires_at) overrides the length. digest_enabled:false
+    //    is one of the two belts keeping WhatsApp silent.
+    const clientRow = {
+      id: clientId,
+      name: clean,
+      logo: "",
+      plan: "Free",
+      training_addon: false,
+      languages: [] as string[],
+      is_demo: true,
+      demo_expires_at: expiresAt,
+      digest_enabled: false,
+      created_at: new Date(now).toISOString(),
+    };
+    const { error: cErr } = await supabase.from("clients").insert([clientRow]);
+    if (cErr) throw new Error(`Couldn't create the demo workspace: ${cErr.message}`);
+
+    // 2. One outlet under it.
+    let tenant: Tenant;
+    try {
+      tenant = await this.addTenant(clientId, `${clean} — Main Outlet`, clientId, "", "Free");
+    } catch (e: any) {
+      await supabase.from("clients").delete().eq("id", clientId);
+      throw new Error(`Couldn't set up the demo outlet: ${e?.message || "unknown error"}`);
+    }
+
+    // 3. Admin login. EMAIL-ONLY (no phone) — the second belt that makes it
+    //    impossible for the demo to send WhatsApp. `@horae.local` is a login key,
+    //    not a real mailbox; nothing is emailed.
+    const loginEmail = `${clientId}@horae.local`;
+    let admin: User & { tempPassword: string };
+    try {
+      admin = await this.onboardingUser(
+        tenant.id,
+        "Demo Admin",
+        loginEmail,
+        Role.ADMIN,
+        Department.MANAGEMENT,
+        "",
+      );
+    } catch (e: any) {
+      // Roll back the half-built workspace so a retry starts clean.
+      await this.deleteClient(clientId).catch(() => {});
+      throw new Error(`Couldn't create the demo login: ${e?.message || "unknown error"}`);
+    }
+
+    // 4. A little seed data so the sandbox doesn't open empty.
+    await this.seedDemoData(tenant.id, admin.id).catch(() => { /* best-effort */ });
+
+    return { client: this.mapClient(clientRow), loginEmail, password: admin.tempPassword, expiresAt };
+  }
+
+  /**
+   * Seed a demo outlet with a couple of notices + tasks so a prospect sees a
+   * live-looking app. Direct inserts — deliberately NOT addNotice/addTask —
+   * because those attribute content to the current (super-admin) session and
+   * fire notifications/WhatsApp. Here everything is authored by the demo admin
+   * and nothing is dispatched.
+   */
+  private async seedDemoData(tenantId: string, adminId: string): Promise<void> {
+    const now = Date.now();
+    const iso = (offsetDays: number) => new Date(now + offsetDays * 24 * 60 * 60 * 1000).toISOString();
+
+    const notices = [
+      {
+        id: `notice-${now}-0`,
+        tenant_id: tenantId,
+        title: "Welcome to your Horae demo 👋",
+        content: "This is your sandbox to explore. Post notices, assign tasks, build checklists — anything you create here is yours to play with. Everything resets when the demo ends.",
+        is_urgent: false,
+        department: Department.ALL,
+        role: Role.ALL,
+        created_at: iso(0),
+        created_by_user_id: adminId,
+        created_by_name: "Demo Admin",
+        created_by_role: Role.ADMIN,
+      },
+      {
+        id: `notice-${now}-1`,
+        tenant_id: tenantId,
+        title: "Sample: Weekend roster is up",
+        content: "An example notice. Try posting your own from the Notice Board — you can target a department or role, and mark it urgent.",
+        is_urgent: false,
+        department: Department.MANAGEMENT,
+        role: Role.ALL,
+        created_at: iso(0),
+        created_by_user_id: adminId,
+        created_by_name: "Demo Admin",
+        created_by_role: Role.ADMIN,
+      },
+    ];
+    await supabase.from("notices").insert(notices);
+
+    const mkTask = (i: number, title: string, description: string, priority: string, dueOffset: number) => {
+      const metadata = { assigneeIds: [adminId], ccIds: [] as string[] };
+      return {
+        id: `task-${now}-${i}`,
+        tenant_id: tenantId,
+        title,
+        description: `${description}\n\n---HORAE-METADATA---\n${JSON.stringify(metadata)}`,
+        status: "Assigned",
+        priority,
+        due_date: iso(dueOffset).slice(0, 10),
+        assigned_user_id: adminId,
+        assigned_user_ids: [adminId],
+        cc_user_ids: [] as string[],
+        created_by_user_id: adminId,
+        created_at: iso(0),
+      };
+    };
+    await supabase.from("tasks").insert([
+      mkTask(0, "Try assigning a task to a teammate", "Add a staff member under this outlet, then reassign this task to them to see how it flows.", "Medium", 2),
+      mkTask(1, "Explore checklists", "Head to Checklists and create a simple opening/closing checklist for your outlet.", "Low", 3),
+    ]);
   }
 
   public async updateClient(clientId: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false, languages?: string[], digestEnabled?: boolean): Promise<void> {

@@ -260,6 +260,9 @@ function AppInner() {
   const [trainingAttempts, setTrainingAttempts] = useState<any[]>([]);
 
   const isTrialExpired = !!activeClient && plans.isTrialExpired(activeClient.plan, activeClient.createdAt);
+  // A demo hard-stops on its own explicit clock. Gated strictly on isDemo, so a
+  // real Free-trial client never hits this branch — it keeps the trial screen above.
+  const isDemoExpired = !!activeClient?.isDemo && !plans.isDemoActive(activeClient.demoExpiresAt);
   const clientFeatures = activeClient?.services ?? [];
   const hasFeature = (key: string) => clientFeatures.includes(key);
 
@@ -619,6 +622,12 @@ function AppInner() {
   const handleAddClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages: string[] = []) => {
     await store.addClient(id, name, logo, plan, trainingAddon, languages);
     await refreshLocalState();
+  };
+
+  const handleProvisionDemo = async (companyName: string, days: number) => {
+    const res = await store.provisionDemoClient(companyName, days);
+    await refreshLocalState();
+    return { loginEmail: res.loginEmail, password: res.password, expiresAt: res.expiresAt };
   };
 
   const handleUpdateClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages?: string[], digestEnabled?: boolean) => {
@@ -1176,7 +1185,23 @@ function AppInner() {
                   <RefreshCw className="w-6 h-6 animate-spin text-[color:var(--color-brand,#8B7CF6)]" />
                 </div>
               }>
-              {isTrialExpired && activeUser.role !== Role.SUPER_ADMIN ? (
+              {isDemoExpired && activeUser.role !== Role.SUPER_ADMIN ? (
+                <div className="flex flex-col items-center justify-center min-h-[60vh] p-6 text-center max-w-2xl mx-auto bg-white rounded-3xl border border-slate-200/80 shadow-md space-y-6 my-4">
+                  <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 text-3xl shadow-sm">
+                    ✨
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-2xl font-medium text-slate-800 tracking-tight">Your Horae demo has ended</h2>
+                    <p className="text-slate-500 text-sm leading-relaxed">
+                      Thanks for trying Horae! This demo workspace has reached the end of its window, so it's now read-only and will be cleared automatically.
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-indigo-50 border border-indigo-200/60 rounded-2xl text-[12px] text-indigo-800 font-medium leading-relaxed w-full">
+                    Ready to set up Horae for your own team? Get in touch at <a href="mailto:support@horae.cloud" className="text-indigo-700 underline font-semibold">support@horae.cloud</a> and we'll get you started with a full account.
+                  </div>
+                </div>
+              ) : isTrialExpired && activeUser.role !== Role.SUPER_ADMIN ? (
                 <div className="flex flex-col items-center justify-center min-h-[60vh] p-6 text-center max-w-2xl mx-auto bg-white rounded-3xl border border-slate-200/80 shadow-md space-y-6 my-4">
                   <div className="w-16 h-16 bg-rose-100 rounded-full flex items-center justify-center text-rose-600 text-3xl shadow-sm animate-pulse">
                     ⏳
@@ -1218,6 +1243,7 @@ function AppInner() {
                   onSelectUser={handleSelectUser}
                   onUpdateClient={handleUpdateClient}
                   onDeleteClient={handleDeleteClient}
+                  onProvisionDemo={handleProvisionDemo}
                   onUpdateTenant={handleUpdateTenant}
                   onDeleteTenant={handleDeleteTenant}
                   onUpdateUser={handleUpdateUser}
@@ -1251,6 +1277,8 @@ function AppInner() {
                       trainings={trainings}
                       trainingAttempts={trainingAttempts}
                       features={clientFeatures}
+                      isDemo={!!activeClient?.isDemo}
+                      demoExpiresAt={activeClient?.demoExpiresAt}
                     />
                   )}
 

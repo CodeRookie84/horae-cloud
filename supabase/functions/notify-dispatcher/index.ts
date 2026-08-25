@@ -515,6 +515,26 @@ function whatsappAllowedForEvent(eventType: string, user: any): boolean {
   return (EVENT_TIERS[eventType] || "normal") === "urgent";
 }
 
+// ─── Demo guard ───────────────────────────────────────────────────────────────
+// Resolve tenant → client → is_demo, cached per invocation. Demo clients must
+// never spend a paid WhatsApp message (see the guard in sendNotifications).
+const _demoTenantCache = new Map<string, boolean>();
+async function isDemoTenant(tenantId: string): Promise<boolean> {
+  if (!tenantId) return false;
+  const cached = _demoTenantCache.get(tenantId);
+  if (cached !== undefined) return cached;
+  let isDemo = false;
+  try {
+    const { data: tenant } = await supabase.from("tenants").select("client_id").eq("id", tenantId).single();
+    if (tenant?.client_id) {
+      const { data: client } = await supabase.from("clients").select("is_demo").eq("id", tenant.client_id).single();
+      isDemo = !!client?.is_demo;
+    }
+  } catch (_e) { /* fail open to "not demo" — WhatsApp gating has other belts */ }
+  _demoTenantCache.set(tenantId, isDemo);
+  return isDemo;
+}
+
 // ─── Send to Both Channels ────────────────────────────────────────────────────
 
 async function sendNotifications(user: any, payload: {
@@ -531,7 +551,9 @@ async function sendNotifications(user: any, payload: {
   // it (urgent), or when it's the digest fallback to a push-dead user. `pushOnly`
   // still forces a push-only send regardless.
   const waAllowed = whatsappAllowedForEvent(eventType, user);
-  if (waAllowed && !pushOnly && user.phone_number && user.whatsapp_opted_in && !DISABLE_WHATSAPP) {
+  // Demo workspaces never send paid WhatsApp — a prospect could add staff with
+  // real numbers, so this client-level guard is the reliable belt (push still flows).
+  if (waAllowed && !pushOnly && user.phone_number && user.whatsapp_opted_in && !DISABLE_WHATSAPP && !(await isDemoTenant(tenantId))) {
     // Daily WhatsApp cap — enforced here (WhatsApp-only) so it never suppresses
     // push. Counts only real sends (event_type != 'debug') so diagnostic rows
     // can't inflate the count and lock the user out.

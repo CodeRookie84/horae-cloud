@@ -52,6 +52,9 @@ interface DashboardProps {
   trainingAttempts?: TrainingAttempt[];
   /** Feature keys the client's plan grants — gates which dashboard sections show. */
   features?: string[];
+  /** Demo sandbox flags — drive the banner's copy + countdown when set. */
+  isDemo?: boolean;
+  demoExpiresAt?: string;
 }
 
 export default function Dashboard({
@@ -68,6 +71,8 @@ export default function Dashboard({
   trainings: rawTrainings = [],
   trainingAttempts: rawTrainingAttempts = [],
   features = [],
+  isDemo = false,
+  demoExpiresAt,
 }: DashboardProps) {
   const has = (key: string) => features.includes(key);
   // ── State (unchanged from previous Dashboard) ──────────────────────────
@@ -153,9 +158,14 @@ export default function Dashboard({
       return sum + unread;
     }, 0);
 
-  const isTrialActive = activeTenant.plan === "Free";
+  // A demo drives the banner off its explicit expiry; a real Free trial off the
+  // fixed 15-day window from creation.
+  const isTrialActive = isDemo || activeTenant.plan === "Free";
   let trialDaysLeft = 15;
-  if (isTrialActive && activeTenant.createdAt) {
+  if (isDemo) {
+    const remainingMs = demoExpiresAt ? new Date(demoExpiresAt).getTime() - Date.now() : 0;
+    trialDaysLeft = Math.max(0, Math.ceil(remainingMs / (1000 * 60 * 60 * 24)));
+  } else if (isTrialActive && activeTenant.createdAt) {
     const createdTime = new Date(activeTenant.createdAt).getTime();
     const elapsedMs = Date.now() - createdTime;
     const remainingMs = 15 * 24 * 60 * 60 * 1000 - elapsedMs;
@@ -188,9 +198,9 @@ export default function Dashboard({
           <div className="flex items-center gap-3">
             <Sparkles className="w-5 h-5 text-white/90" />
             <div>
-              <div className="text-xs font-medium tracking-wide uppercase text-white/85">Free trial active</div>
+              <div className="text-xs font-medium tracking-wide uppercase text-white/85">{isDemo ? "Demo workspace" : "Free trial active"}</div>
               <p className="text-base font-semibold mt-0.5">
-                {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} remaining on all premium features.
+                {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} remaining{isDemo ? " in your demo." : " on all premium features."}
               </p>
             </div>
           </div>
