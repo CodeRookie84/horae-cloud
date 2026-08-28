@@ -151,10 +151,17 @@ async function handleInboundMessage(m: any, contact: any) {
       // list → apply it. Everything else is a main-menu selection.
       if (listId.startsWith("tpick~")) { await sendTaskStatusList(fromPhone, listId.slice(6)); return; }
       if (listId.startsWith("cpick~")) { await startCommentForTask(fromPhone, userId, tenantId, listId.slice(6)); return; }
+      if (listId.startsWith("tview~")) { await sendTaskDetail(fromPhone, userId, tenantId, listId.slice(6)); return; }
       if (listId.startsWith("ts~")) { await handleTaskStatusUpdate(listId, fromPhone, userId); return; }
       await handleMenuSelection(listId, fromPhone, userId, tenantId); return;
     }
-    if (m.interactive?.button_reply?.id) { await handleButtonReply(m, fromPhone, userId, tenantId); return; }
+    if (m.interactive?.button_reply?.id) {
+      const bid = m.interactive.button_reply.id;
+      // Action buttons shown under a task's detail view.
+      if (bid.startsWith("tstatus~")) { await sendTaskStatusList(fromPhone, bid.slice(8)); return; }
+      if (bid.startsWith("tcomment~")) { await startCommentForTask(fromPhone, userId, tenantId, bid.slice(9)); return; }
+      await handleButtonReply(m, fromPhone, userId, tenantId); return;
+    }
     return;
   }
 
@@ -342,7 +349,7 @@ async function handleMenuSelection(id: string, fromPhone: string, userId: string
     case "menu_add_comment":   await sendTaskPickerForComment(fromPhone, userId, tenantId); break;
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
     case "menu_update_status": await sendTaskPickerForStatus(fromPhone, userId, tenantId); break;
-    case "menu_view_tasks":    await sendOpenTasksList(fromPhone, userId, tenantId, "view"); break;
+    case "menu_view_tasks":    await sendTaskPickerForView(fromPhone, userId, tenantId); break;
     case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
     case "menu_training":      await sendTrainingList(fromPhone, userId, tenantId); break;
     case "menu_go_app":        await sendText(fromPhone, `👉 *Go to Horae app*:\n${APP_BASE_URL}/dashboard`); break;
@@ -431,6 +438,107 @@ async function sendTaskPickerForComment(fromPhone: string, userId: string, tenan
   );
 }
 
+/**
+ * Menu → "View my tasks": list the user's tasks (primary or CC) as a tappable
+ * list. Tapping one (row id `tview~<taskId>`) shows the FULL task detail —
+ * description, assigned-by, comments and photos — entirely in WhatsApp.
+ */
+async function sendTaskPickerForView(fromPhone: string, userId: string, tenantId: string | null) {
+  let q = supabase.from("tasks")
+    .select("id, title, status")
+    .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
+    .not("status", "in", '("Closed")')
+    .order("created_at", { ascending: false }).limit(10);
+  if (tenantId) q = q.eq("tenant_id", tenantId);
+  const { data: tasks } = await q;
+
+  if (!tasks || tasks.length === 0) {
+    await sendText(fromPhone, "📋 You have no tasks right now.");
+    return;
+  }
+  await sendList(
+    fromPhone,
+    "📋 *Your tasks* — pick one to see the full details:",
+    "View task",
+    tasks.map((t: any) => ({ id: `tview~${t.id}`, title: t.title, description: t.status })),
+  );
+}
+
+/** Send a task's full detail (description, assigned-by, comments, photos) plus
+ *  action buttons — the in-WhatsApp equivalent of opening the task in the app. */
+async function sendTaskDetail(fromPhone: string, userId: string, _tenantId: string | null, taskId: string) {
+  const { data: task } = await supabase.from("tasks").select("*").eq("id", taskId).single();
+  if (!task) { await sendText(fromPhone, "That task couldn't be found — it may have been removed."); return; }
+
+  // Unpack the clean description + photos from the metadata blob.
+  let desc = task.description || "";
+  let photos: string[] = [];
+  const parts = desc.split("\n\n---HORAE-METADATA---\n");
+  if (parts.length > 1) {
+    try { const meta = JSON.parse(parts[1]); if (Array.isArray(meta.photos)) photos = meta.photos; } catch (_) { /* ignore */ }
+    desc = parts[0];
+  }
+
+  const { data: creator } = await supabase.from("users").select("name").eq("id", task.created_by_user_id).limit(1);
+  const by = creator?.[0]?.name || "—";
+  const { data: msgs } = await supabase.from("task_messages")
+    .select("sender_name, message").eq("task_id", taskId)
+    .order("timestamp", { ascending: false }).limit(5);
+  const comments = (msgs || []).reverse();
+
+  let text = `📋 *${task.title}*\n`;
+  text += `Status: *${task.status}*  ·  Priority: ${task.priority || "—"}\n`;
+  if (task.due_date) text += `Due: ${String(task.due_date).slice(0, 10)}\n`;
+  text += `Assigned by: ${by}\n`;
+  if (desc.trim()) text += `\n${desc.trim()}\n`;
+  if (photos.length) text += `\n📎 ${photos.length} photo${photos.length === 1 ? "" : "s"} attached${photos.length ? " (below)" : ""}\n`;
+  if (comments.length) {
+    text += `\n💬 *Recent comments:*\n`;
+    text += comments.map((c: any) => `• ${c.sender_name || "Someone"}: ${(c.message || "").slice(0, 160)}`).join("\n");
+  } else {
+    text += `\n💬 No comments yet.`;
+  }
+
+  await sendText(fromPhone, text.slice(0, 4000));
+
+  // Attached photos as real images (they're base64 data URIs → upload to Meta first).
+  for (const p of photos.slice(0, 3)) {
+    const mediaId = await uploadMediaFromDataUri(p);
+    if (mediaId) await waSend({ type: "image", to: fromPhone.replace(/\D/g, ""), image: { id: mediaId } });
+  }
+
+  // Act-on-this-task buttons.
+  await sendButtons(fromPhone, "What would you like to do with this task?", [
+    { id: `tstatus~${taskId}`, title: "🔄 Update status" },
+    { id: `tcomment~${taskId}`, title: "💬 Add comment" },
+  ]);
+}
+
+/** Upload a base64 data-URI image to the WhatsApp Media API; returns its media id. */
+async function uploadMediaFromDataUri(dataUri: string): Promise<string | null> {
+  try {
+    const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/s.exec(dataUri || "");
+    if (!m) return null;
+    const mime = m[1];
+    const bytes = Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0));
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", mime);
+    form.append("file", new Blob([bytes], { type: mime }), `photo.${mime.split("/")[1] || "jpg"}`);
+    const res = await fetch(`https://graph.facebook.com/v19.0/${META_PHONE_NUM_ID}/media`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${META_WA_TOKEN}` },
+      body: form,
+    });
+    if (!res.ok) { console.error("[whatsapp-webhook] media upload failed:", res.status, (await res.text().catch(() => "")).slice(0, 200)); return null; }
+    const data = await res.json().catch(() => null);
+    return data?.id || null;
+  } catch (e) {
+    console.error("[whatsapp-webhook] uploadMediaFromDataUri error:", e);
+    return null;
+  }
+}
+
 /** A task was picked for a comment → remember it and ask for the text/voice note. */
 async function startCommentForTask(fromPhone: string, userId: string, tenantId: string | null, taskId: string) {
   const { data: task } = await supabase.from("tasks").select("id, title").eq("id", taskId).single();
@@ -515,27 +623,6 @@ async function sendTrainingList(fromPhone: string, userId: string, tenantId: str
   if (pending.length === 0) { await sendText(fromPhone, "📚 You're all caught up — no pending training. 🎉"); return; }
   const lines = pending.map((x: any, i: number) => `${i + 1}. *${x.title}*`);
   await sendText(fromPhone, `📚 *Your training*\n\n${lines.join("\n")}\n\n👉 Take them in Horae:\n${APP_BASE_URL}/training`);
-}
-
-/** Reply with the user's open tasks, each as its own deep link. */
-async function sendOpenTasksList(fromPhone: string, userId: string, tenantId: string | null, mode: "update" | "view") {
-  let q = supabase.from("tasks")
-    .select("id, title, status")
-    .contains("assigned_user_ids", [userId])
-    .not("status", "in", '("Completed","Closed")')
-    .order("created_at", { ascending: false }).limit(10);
-  if (tenantId) q = q.eq("tenant_id", tenantId);
-  const { data: tasks } = await q;
-
-  if (!tasks || tasks.length === 0) {
-    await sendText(fromPhone, "✅ You have no open tasks right now.");
-    return;
-  }
-  const intro = mode === "update"
-    ? "🔄 *Update a task* — tap one to open it in Horae and change its status:"
-    : "📋 *Your open tasks* — tap one to open:";
-  const lines = tasks.map((t: any, i: number) => `${i + 1}. *${t.title}* (${t.status})\n   👉 ${APP_BASE_URL}/tasks/${t.id}`);
-  await sendText(fromPhone, `${intro}\n\n${lines.join("\n\n")}`);
 }
 
 /** Guide a staff member on what they can do over WhatsApp. */
