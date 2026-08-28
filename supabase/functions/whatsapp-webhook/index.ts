@@ -516,7 +516,6 @@ async function sendTaskDetail(fromPhone: string, userId: string, _tenantId: stri
   if (task.due_date) text += `Due: ${String(task.due_date).slice(0, 10)}\n`;
   text += `Assigned by: ${by}\n`;
   if (desc.trim()) text += `\n${desc.trim()}\n`;
-  if (photos.length) text += `\n📎 ${photos.length} photo${photos.length === 1 ? "" : "s"} attached${photos.length ? " (below)" : ""}\n`;
   if (comments.length) {
     text += `\n💬 *Recent comments:*\n`;
     text += comments.map((c: any) => `• ${c.sender_name || "Someone"}: ${(c.message || "").slice(0, 160)}`).join("\n");
@@ -524,13 +523,23 @@ async function sendTaskDetail(fromPhone: string, userId: string, _tenantId: stri
     text += `\n💬 No comments yet.`;
   }
 
-  await sendText(fromPhone, text.slice(0, 4000));
+  const to = fromPhone.replace(/\D/g, "");
+  const pics = photos.slice(0, 3);
 
-  // Attached photos as real images (they're base64 data URIs → upload to Meta first).
-  for (const p of photos.slice(0, 3)) {
-    const mediaId = await uploadMediaFromDataUri(p);
-    if (mediaId) await waSend({ type: "image", to: fromPhone.replace(/\D/g, ""), image: { id: mediaId } });
+  // Photos are base64 data URIs → upload to Meta first, then send. Carry the
+  // detail text as the FIRST photo's caption so the picture and the details land
+  // together as one message, always BEFORE the action buttons. (Separate media
+  // messages can otherwise be delivered after a lighter interactive message.)
+  let captionUsed = false;
+  for (let i = 0; i < pics.length; i++) {
+    const mediaId = await uploadMediaFromDataUri(pics[i]);
+    if (!mediaId) continue;
+    const image: Record<string, string> = { id: mediaId };
+    if (!captionUsed) { image.caption = text.slice(0, 1020); captionUsed = true; }
+    await waSend({ type: "image", to, image });
   }
+  // No photos (or all uploads failed) → send the details as plain text.
+  if (!captionUsed) await sendText(fromPhone, text.slice(0, 4000));
 
   // Act-on-this-task buttons (WhatsApp allows up to 3 quick replies).
   await sendButtons(fromPhone, "What would you like to do with this task?", [
