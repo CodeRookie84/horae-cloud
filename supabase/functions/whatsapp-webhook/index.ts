@@ -173,7 +173,7 @@ async function handleInboundMessage(m: any, contact: any) {
     const pending = await takePendingInput(userId);
     if (pending) {
       const rawText = m.type === "text" ? (m.text?.body || "").trim() : "";
-      if (/^\s*(cancel|menu|back|stop)\b/i.test(rawText)) { await sendMainMenu(fromPhone); return; }
+      if (/^\s*(cancel|menu|back|stop)\b/i.test(rawText)) { await sendMainMenu(fromPhone, userId, tenantId); return; }
       let content = rawText;
       if (m.type === "audio" && m.audio?.id) {
         content = await transcribeVoice(m.audio.id);
@@ -212,7 +212,7 @@ async function handleInboundMessage(m: any, contact: any) {
     }
     // Greeting / "menu" → show the tappable main menu.
     if (text.length <= 12 && /^\s*(hi|hai|hey|hello|menu|start)\b/i.test(text)) {
-      await sendMainMenu(fromPhone);
+      await sendMainMenu(fromPhone, userId, tenantId);
       return;
     }
     // "help" / "?" → the plain-text guide.
@@ -235,11 +235,15 @@ async function handleInboundMessage(m: any, contact: any) {
 
 // ── Main menu (WhatsApp interactive list) ─────────────────────────────────────
 
-/** Show the tappable action menu. Buttons cap at 3, so this uses a list. */
-async function sendMainMenu(fromPhone: string) {
+/** Show the tappable action menu. The list BODY is a live personalised briefing
+ *  (open tasks + overdue, new notices, pending training) so "Hi" doubles as the
+ *  daily digest — all free, since it's inside the user-opened 24h window. */
+async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: string | null) {
+  const body = userId ? await buildBriefingBody(userId, tenantId ?? null)
+                      : "👋 *Horae* — what would you like to do?";
   await sendList(
     fromPhone,
-    "👋 *Horae* — what would you like to do?",
+    body,
     "Choose",
     [
       { id: "menu_create_task",   title: "📋 Create a task" },
@@ -254,6 +258,65 @@ async function sendMainMenu(fromPhone: string) {
   );
 }
 
+/** Build the personalised briefing shown as the menu's body text. Best-effort:
+ *  each section is independently guarded so a query hiccup can't blank the menu. */
+async function buildBriefingBody(userId: string, tenantId: string | null): Promise<string> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: u } = await supabase.from("users").select("name, department, role").eq("id", userId).limit(1);
+  const firstName = (String(u?.[0]?.name || "there")).split(" ")[0];
+  const lines: string[] = [];
+
+  try {
+    const { data: tasks } = await supabase.from("tasks")
+      .select("due_date")
+      .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
+      .not("status", "in", '("Completed","Closed")');
+    const open = tasks?.length || 0;
+    const overdue = (tasks || []).filter((t: any) => (t.due_date || "").slice(0, 10) < today).length;
+    if (open) lines.push(`📋 ${open} task${open === 1 ? "" : "s"} open${overdue ? ` · *${overdue} overdue*` : ""}`);
+  } catch (_) { /* skip tasks line */ }
+
+  try {
+    const since = new Date(Date.now() - 86400000).toISOString();
+    let q = supabase.from("notices").select("id", { count: "exact", head: true }).gte("created_at", since);
+    if (tenantId) q = q.eq("tenant_id", tenantId);
+    const { count } = await q;
+    if (count) lines.push(`📢 ${count} new notice${count === 1 ? "" : "s"} today`);
+  } catch (_) { /* skip notices line */ }
+
+  try {
+    const pending = await pendingTrainingCount(userId, tenantId, u?.[0]);
+    if (pending) lines.push(`📚 ${pending} training pending`);
+  } catch (_) { /* skip training line */ }
+
+  if (lines.length === 0) return `👋 Hi ${firstName}! You're all caught up 🎉\n\nWhat would you like to do?`;
+  return `👋 Hi ${firstName}! Here's your briefing:\n\n${lines.join("\n")}\n\nWhat would you like to do?`;
+}
+
+/** Count published trainings targeted to this user that they haven't passed. */
+async function pendingTrainingCount(userId: string, tenantId: string | null, user: any): Promise<number> {
+  if (!tenantId) return 0;
+  const { data: t } = await supabase.from("tenants").select("client_id").eq("id", tenantId).single();
+  const clientId = t?.client_id;
+  if (!clientId) return 0;
+  const { data: trainings } = await supabase.from("trainings")
+    .select("id, outlets, department, role, questions")
+    .eq("client_id", clientId).eq("published", true);
+  if (!trainings?.length) return 0;
+  const { data: atts } = await supabase.from("training_attempts").select("training_id, passed").eq("user_id", userId);
+  const passed = new Set((atts || []).filter((a: any) => a.passed).map((a: any) => a.training_id));
+  const dept = String(user?.department ?? "");
+  const role = String(user?.role ?? "");
+  return (trainings || []).filter((tr: any) => {
+    if (!(tr.questions?.length)) return false;
+    if (passed.has(tr.id)) return false;
+    const outletOk = !Array.isArray(tr.outlets) || tr.outlets.length === 0 || tr.outlets.includes(tenantId);
+    const deptOk = String(tr.department || "All Departments") === "All Departments" || String(tr.department) === dept;
+    const roleOk = String(tr.role || "All Roles") === "All Roles" || String(tr.role) === role;
+    return outletOk && deptOk && roleOk;
+  }).length;
+}
+
 /** Dispatch a main-menu list selection. */
 async function handleMenuSelection(id: string, fromPhone: string, userId: string, tenantId: string | null) {
   switch (id) {
@@ -265,7 +328,7 @@ async function handleMenuSelection(id: string, fromPhone: string, userId: string
     case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
     case "menu_training":      await sendTrainingList(fromPhone, userId, tenantId); break;
     case "menu_go_app":        await sendText(fromPhone, `👉 *Go to Horae app*:\n${APP_BASE_URL}/dashboard`); break;
-    default:                   await sendMainMenu(fromPhone);
+    default:                   await sendMainMenu(fromPhone, userId, tenantId);
   }
 }
 
