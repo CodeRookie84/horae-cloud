@@ -149,7 +149,7 @@ async function handleInboundMessage(m: any, contact: any) {
       // "tpick~<taskId>" = a task chosen from the menu's status-update picker →
       // show its status list. "ts~<taskId>~<status>" = a status chosen from that
       // list → apply it. Everything else is a main-menu selection.
-      if (listId.startsWith("tpick~")) { await sendTaskStatusList(fromPhone, listId.slice(6)); return; }
+      if (listId.startsWith("tpick~")) { await sendTaskStatusList(fromPhone, listId.slice(6), userId); return; }
       if (listId.startsWith("cpick~")) { await startCommentForTask(fromPhone, userId, tenantId, listId.slice(6)); return; }
       if (listId.startsWith("tview~")) { await sendTaskDetail(fromPhone, userId, tenantId, listId.slice(6)); return; }
       if (listId.startsWith("ts~")) { await handleTaskStatusUpdate(listId, fromPhone, userId); return; }
@@ -158,7 +158,7 @@ async function handleInboundMessage(m: any, contact: any) {
     if (m.interactive?.button_reply?.id) {
       const bid = m.interactive.button_reply.id;
       // Action buttons shown under a task's detail view.
-      if (bid.startsWith("tstatus~")) { await sendTaskStatusList(fromPhone, bid.slice(8)); return; }
+      if (bid.startsWith("tstatus~")) { await sendTaskStatusList(fromPhone, bid.slice(8), userId); return; }
       if (bid.startsWith("tcomment~")) { await startCommentForTask(fromPhone, userId, tenantId, bid.slice(9)); return; }
       await handleButtonReply(m, fromPhone, userId, tenantId); return;
     }
@@ -447,13 +447,13 @@ async function sendTaskPickerForView(fromPhone: string, userId: string, tenantId
   let q = supabase.from("tasks")
     .select("id, title, status")
     .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
-    .not("status", "in", '("Closed")')
+    .not("status", "in", '("Completed","Closed")')
     .order("created_at", { ascending: false }).limit(10);
   if (tenantId) q = q.eq("tenant_id", tenantId);
   const { data: tasks } = await q;
 
   if (!tasks || tasks.length === 0) {
-    await sendText(fromPhone, "📋 You have no tasks right now.");
+    await sendText(fromPhone, "📋 You have no active tasks right now.");
     return;
   }
   await sendList(
@@ -696,7 +696,7 @@ async function handleTemplateButtonTap(m: any, fromPhone: string, userId: string
   if (looksLikeTask && ref) {
     // reference_id is the task id, sometimes suffixed with ":status" — strip it.
     const taskId = String(ref.reference_id).split(":")[0];
-    await sendTaskStatusList(fromPhone, taskId);
+    await sendTaskStatusList(fromPhone, taskId, userId);
     return;
   }
 
@@ -705,15 +705,28 @@ async function handleTemplateButtonTap(m: any, fromPhone: string, userId: string
   await sendText(fromPhone, "👍 Got it — thanks!");
 }
 
+/** Whether this user may CLOSE the task: only its creator or an admin, and only
+ *  once it's already Completed (mirrors the app's close rule). */
+async function canCloseTask(task: any, userId: string): Promise<boolean> {
+  if (task.status !== "Completed") return false;
+  if (task.created_by_user_id === userId) return true;
+  const { data: u } = await supabase.from("users").select("role").eq("id", userId).limit(1);
+  const role = String(u?.[0]?.role || "");
+  return role === "Admin" || role === "Super Admin";
+}
+
 /** Show the status picker for one task. Row ids carry the task id + status. */
-async function sendTaskStatusList(fromPhone: string, taskId: string) {
-  const { data: task } = await supabase.from("tasks").select("id, title, status").eq("id", taskId).single();
+async function sendTaskStatusList(fromPhone: string, taskId: string, userId: string) {
+  const { data: task } = await supabase.from("tasks").select("id, title, status, created_by_user_id").eq("id", taskId).single();
   if (!task) { await sendText(fromPhone, "👍 Got it — thanks!"); return; }
+  const statuses = [...WA_TASK_STATUSES];
+  // "Closed" appears only for the creator/admin once the task is Completed.
+  if (await canCloseTask(task, userId)) statuses.push("Closed");
   await sendList(
     fromPhone,
     `🔄 *${task.title}*\nCurrently: *${task.status}*\n\nWhat's the new status?`,
     "Set status",
-    WA_TASK_STATUSES.map(s => ({ id: `ts~${taskId}~${s}`, title: s })),
+    statuses.map(s => ({ id: `ts~${taskId}~${s}`, title: s })),
   );
 }
 
@@ -722,10 +735,20 @@ async function handleTaskStatusUpdate(listId: string, fromPhone: string, userId:
   const parts = listId.split("~");            // ["ts", "task-123", "In Progress"]
   const taskId = parts[1];
   const status = parts.slice(2).join("~");    // status names have no "~", but be safe
-  if (!taskId || !WA_TASK_STATUSES.includes(status)) { await sendText(fromPhone, "👍 Got it."); return; }
+  if (!taskId || !(WA_TASK_STATUSES.includes(status) || status === "Closed")) { await sendText(fromPhone, "👍 Got it."); return; }
 
-  const { data: task } = await supabase.from("tasks").select("id, title, status").eq("id", taskId).single();
+  const { data: task } = await supabase.from("tasks").select("id, title, status, created_by_user_id").eq("id", taskId).single();
   if (!task) { await sendText(fromPhone, "That task couldn't be found — it may have been removed."); return; }
+
+  // Closing is gated: only after the task is Completed, and only by its creator
+  // or an admin (defence-in-depth on top of the picker only offering it to them).
+  if (status === "Closed" && !(await canCloseTask(task, userId))) {
+    await sendText(fromPhone, task.status !== "Completed"
+      ? `A task must be marked *Completed* before it can be Closed.`
+      : `Only the person who created this task (or an admin) can close it.`);
+    return;
+  }
+
   if (task.status === status) { await sendText(fromPhone, `👍 *${task.title}* is already *${status}*.`); return; }
 
   await supabase.from("tasks").update({ status }).eq("id", taskId);
