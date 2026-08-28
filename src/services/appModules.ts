@@ -67,20 +67,3 @@ export function getAppModules(ctx: ModuleGateContext): AppModule[] {
   return mods;
 }
 
-/**
- * The 3 most operationally-relevant modules for the mobile bottom bar (plus a
- * Home button added by the nav component itself). Prefers Tasks / Notices /
- * Checklists, falling back to whatever else the plan grants so the bar is never
- * sparse.
- */
-export function getBottomNavModules(all: AppModule[]): AppModule[] {
-  const preferred = ['tasks', 'notices', 'checklists', 'training'];
-  const byId = new Map(all.map(m => [m.id, m]));
-  const picked: AppModule[] = [];
-  for (const id of preferred) {
-    const m = byId.get(id);
-    if (m) picked.push(m);
-    if (picked.length >= 3) break;
-  }
-  return picked;
-}

@@ -238,7 +238,7 @@ export default function Dashboard({
   ].filter(Boolean) as { key: string; label: string; Icon: any; color: string; count: number; target: string }[];
 
   return (
-    <div className="space-y-6 pb-28" id="dashboard-wrapper">
+    <div className="space-y-6 pb-8" id="dashboard-wrapper">
       <PWAInstallPrompt activeTab="dashboard" />
 
       {/* ── Trial banner (warm caramel) ───────────────────────────────── */}

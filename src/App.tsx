@@ -34,8 +34,7 @@ import Sidebar from "./components/Sidebar";
 import Dashboard from "./components/Dashboard";
 import Login from "./components/Login";
 import NotificationPermissionBanner from "./components/NotificationPermissionBanner";
-import MobileBottomNav from "./components/MobileBottomNav";
-import { getAppModules, getBottomNavModules } from "./services/appModules";
+import { getAppModules } from "./services/appModules";
 import * as trainingSvc from "./services/trainingService";
 import { checkKotAccess } from "./kot/access"; // [KOT] launcher-icon gate
 
@@ -312,7 +311,7 @@ function AppInner() {
   }, [activeClient?.id, activeTenant?.clientId, activeUser?.id]);
 
   // Modules the current user can open — shared source of truth for the launcher
-  // home grid and the mobile bottom nav (same plan/role gating as the sidebar).
+  // home grid (same plan/role gating as the sidebar).
   const launcherModules = getAppModules({
     features: clientFeatures,
     role: activeUser?.role ?? '',
@@ -320,8 +319,7 @@ function AppInner() {
     kotAccess, // [KOT]
     dashboardMeaningful,
   });
-  const bottomNavModules = getBottomNavModules(launcherModules);
-  
+
   // Loading state
   const [loading, setLoading] = useState<boolean>(true);
   
@@ -1455,16 +1453,6 @@ function AppInner() {
             </motion.div>
           </AnimatePresence>
         </main>
-
-        {/* Mobile bottom nav — hidden for the super-admin console. Sits in the
-            flex column so it never overlaps scrolling content. */}
-        {activeUser.role !== Role.SUPER_ADMIN && (
-          <MobileBottomNav
-            items={bottomNavModules}
-            activeTab={effectiveTab}
-            onNavigate={handleSetActiveTab}
-          />
-        )}
 
       </div>
 
