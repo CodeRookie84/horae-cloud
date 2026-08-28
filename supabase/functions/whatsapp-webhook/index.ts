@@ -277,6 +277,24 @@ async function buildBriefingBody(userId: string, tenantId: string | null): Promi
   } catch (_) { /* skip tasks line */ }
 
   try {
+    if (tenantId) {
+      // Real compliance checklists only — SOP/quiz rows share the table as JSON
+      // in `description` and are filtered out (mirrors daily-digest).
+      const { data: rows } = await supabase.from("checklists").select("description").eq("tenant_id", tenantId);
+      const count = (rows || []).filter((c: any) => {
+        try {
+          if (typeof c.description === "string" && c.description.startsWith("{")) {
+            const o = JSON.parse(c.description);
+            if (o.type === "sop" || o.type === "quiz") return false;
+          }
+        } catch (_) { /* plain-text description = real checklist */ }
+        return true;
+      }).length;
+      if (count) lines.push(`✅ ${count} checklist${count === 1 ? "" : "s"} to complete`);
+    }
+  } catch (_) { /* skip checklist line */ }
+
+  try {
     const since = new Date(Date.now() - 86400000).toISOString();
     let q = supabase.from("notices").select("id", { count: "exact", head: true }).gte("created_at", since);
     if (tenantId) q = q.eq("tenant_id", tenantId);
