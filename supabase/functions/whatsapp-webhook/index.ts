@@ -151,7 +151,6 @@ async function handleInboundMessage(m: any, contact: any) {
       // list → apply it. Everything else is a main-menu selection.
       if (listId.startsWith("tpick~")) { await sendTaskStatusList(fromPhone, listId.slice(6), userId); return; }
       if (listId.startsWith("cpick~")) { await startCommentForTask(fromPhone, userId, tenantId, listId.slice(6)); return; }
-      if (listId.startsWith("ppick~")) { await startPhotoForTask(fromPhone, userId, tenantId, listId.slice(6)); return; }
       if (listId.startsWith("tview~")) { await sendTaskDetail(fromPhone, userId, tenantId, listId.slice(6)); return; }
       if (listId.startsWith("ts~")) { await handleTaskStatusUpdate(listId, fromPhone, userId); return; }
       await handleMenuSelection(listId, fromPhone, userId, tenantId); return;
@@ -161,6 +160,7 @@ async function handleInboundMessage(m: any, contact: any) {
       // Action buttons shown under a task's detail view.
       if (bid.startsWith("tstatus~")) { await sendTaskStatusList(fromPhone, bid.slice(8), userId); return; }
       if (bid.startsWith("tcomment~")) { await startCommentForTask(fromPhone, userId, tenantId, bid.slice(9)); return; }
+      if (bid.startsWith("tphoto~")) { await startPhotoForTask(fromPhone, userId, tenantId, bid.slice(7)); return; }
       await handleButtonReply(m, fromPhone, userId, tenantId); return;
     }
     return;
@@ -275,7 +275,6 @@ async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: strin
     [
       { id: "menu_create_task",   title: "📋 Create a task" },
       { id: "menu_quick_task",    title: "⚡ Quick task (for me)" },
-      { id: "menu_add_photo",     title: "📷 Add a photo" },
       { id: "menu_add_comment",   title: "💬 Comment on a task" },
       { id: "menu_update_status", title: "🔄 Update task status" },
       { id: "menu_view_tasks",    title: "📋 View my tasks" },
@@ -369,7 +368,6 @@ async function handleMenuSelection(id: string, fromPhone: string, userId: string
   switch (id) {
     case "menu_create_task":   await startAwaitingInput(fromPhone, userId, tenantId, "create_task"); break;
     case "menu_quick_task":    await startAwaitingInput(fromPhone, userId, tenantId, "quick_task"); break;
-    case "menu_add_photo":     await sendTaskPickerForPhoto(fromPhone, userId, tenantId); break;
     case "menu_add_comment":   await sendTaskPickerForComment(fromPhone, userId, tenantId); break;
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
     case "menu_update_status": await sendTaskPickerForStatus(fromPhone, userId, tenantId); break;
@@ -534,10 +532,11 @@ async function sendTaskDetail(fromPhone: string, userId: string, _tenantId: stri
     if (mediaId) await waSend({ type: "image", to: fromPhone.replace(/\D/g, ""), image: { id: mediaId } });
   }
 
-  // Act-on-this-task buttons.
+  // Act-on-this-task buttons (WhatsApp allows up to 3 quick replies).
   await sendButtons(fromPhone, "What would you like to do with this task?", [
     { id: `tstatus~${taskId}`, title: "🔄 Update status" },
     { id: `tcomment~${taskId}`, title: "💬 Add comment" },
+    { id: `tphoto~${taskId}`, title: "📷 Add photo" },
   ]);
 }
 
@@ -598,29 +597,8 @@ async function addTaskComment(fromPhone: string, userId: string, taskId: string 
   await sendText(fromPhone, `💬 Comment added to *${task.title}*.\nEveryone on the task will see it in Horae and their next digest.`);
 }
 
-/** Menu → "Add a photo": list the user's active tasks (rows `ppick~<taskId>`). */
-async function sendTaskPickerForPhoto(fromPhone: string, userId: string, tenantId: string | null) {
-  let q = supabase.from("tasks")
-    .select("id, title, status")
-    .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
-    .not("status", "in", '("Completed","Closed")')
-    .order("created_at", { ascending: false }).limit(10);
-  if (tenantId) q = q.eq("tenant_id", tenantId);
-  const { data: tasks } = await q;
-
-  if (!tasks || tasks.length === 0) {
-    await sendText(fromPhone, "📷 You have no active tasks to add a photo to.");
-    return;
-  }
-  await sendList(
-    fromPhone,
-    "📷 *Add a photo* — pick the task:",
-    "Pick task",
-    tasks.map((t: any) => ({ id: `ppick~${t.id}`, title: t.title, description: t.status })),
-  );
-}
-
-/** A task was picked for a photo → remember it and ask for the image. */
+/** A task was chosen (via the "📷 Add photo" button in its detail) → remember it
+ *  and ask for the image. */
 async function startPhotoForTask(fromPhone: string, userId: string, tenantId: string | null, taskId: string) {
   const { data: task } = await supabase.from("tasks").select("id, title").eq("id", taskId).single();
   if (!task) { await sendText(fromPhone, "That task couldn't be found — it may have been removed."); return; }
