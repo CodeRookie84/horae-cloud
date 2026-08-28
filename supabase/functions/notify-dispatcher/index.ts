@@ -46,9 +46,15 @@ const MAX_MESSAGES_PER_USER_DAY  = 20;   // Daily WhatsApp cap per user
 // client-side fallback call).
 const SINGLE_FIRE_EVENTS = new Set(["task_assigned"]);
 
-// "horae_task_alert" is used specifically for new task assignments.
-// "horae_alert" is the generic template for every other WhatsApp push
-// (status updates, task chat, notices, digests, urgent pushes) — now approved by Meta.
+// Template routing. Meta re-categorized the generic "horae_alert" as MARKETING
+// (~7× Utility), so we deliberately move every WhatsApp-sending event onto a
+// purpose-specific UTILITY template instead:
+//   • horae_task_alert   — task assignments, reassignments, urgent task pings
+//   • horae_notice_alert — notices (and urgent notice pings)
+// "horae_alert" (GENERIC) is now only referenced by push-only ('normal'-tier)
+// events, so it never actually sends a paid WhatsApp — and can be retired in Meta.
+const TASK_TEMPLATE_NAME   = "horae_task_alert";
+const NOTICE_TEMPLATE_NAME = "horae_notice_alert";
 const GENERIC_TEMPLATE_NAME = "horae_alert";
 
 // ─── Plan B: push-first, WhatsApp only as last-mile fallback ───────────────────
@@ -160,7 +166,7 @@ async function handleTaskAssigned(task: any) {
     await sendNotifications(user, {
       waMessage: buildTaskAssignedMessage(user.name, task.title, task.priority, task.due_date, deepLink),
       waTemplate: {
-        name: "horae_task_alert",
+        name: TASK_TEMPLATE_NAME,
         params: [task.title, details]
       },
       pushTitle: `🔔 New Task: ${task.title}`,
@@ -203,7 +209,7 @@ async function handleTaskReassigned(task: any, newPrimaryId: string, actorName: 
   const who = actorName || "A colleague";
   await sendNotifications(user, {
     waMessage: `🔀 *Task reassigned to you — Horae*\n\nHi ${user.name.split(" ")[0]},\n${who} handed you:\n*${task.title}*\nPriority: ${task.priority} | Due: ${task.due_date}\n\n👉 ${deepLink}`,
-    waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [task.title, `Reassigned to you by ${who}. ${deepLink}`] },
+    waTemplate: { name: TASK_TEMPLATE_NAME, params: [task.title, `Reassigned to you by ${who}. ${deepLink}`] },
     pushTitle: `🔀 Task reassigned to you: ${task.title}`,
     pushBody: `From ${who} · Priority: ${task.priority}`,
     url: deepLink,
@@ -274,7 +280,7 @@ async function handleNoticePosted(notice: any) {
     // for the initial post; keep it only for re-pinging an existing notice.
     await sendNotifications(user, {
       waMessage: buildNoticeMessage(user.name, notice.title, notice.content?.slice(0, 100) || "", deepLink),
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [notice.title, `${(notice.content || "").slice(0, 80)} ${deepLink}`] },
+      waTemplate: { name: NOTICE_TEMPLATE_NAME, params: [notice.title, `${(notice.content || "").slice(0, 80)} ${deepLink}`] },
       pushTitle: `📢 ${notice.title}`,
       pushBody: notice.content?.slice(0, 80) || "",
       url: deepLink,
@@ -412,7 +418,8 @@ async function handleUrgentPush(kind: "task" | "notice" | "training", record: an
 
     await sendNotifications(user, {
       waMessage,
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [record.title, kind === "training" ? `Training to complete. ${deepLink}` : `Urgent — Immediate action needed. ${deepLink}`] },
+      // Route onto the matching Utility template (notice → notice, task/training → task).
+      waTemplate: { name: kind === "notice" ? NOTICE_TEMPLATE_NAME : TASK_TEMPLATE_NAME, params: [record.title, kind === "training" ? `Training to complete. ${deepLink}` : `Urgent — Immediate action needed. ${deepLink}`] },
       pushTitle: kind === "task" ? `🔴 Urgent task: ${record.title}`
         : kind === "training" ? `📚 Training: ${record.title}`
         : `🔴 Urgent notice: ${record.title}`,
