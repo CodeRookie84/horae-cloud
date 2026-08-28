@@ -16,6 +16,7 @@ import {
   CheckSquare,
   ChevronUp,
   ChevronDown,
+  ChevronRight,
   MessageSquare,
   Plus,
   GraduationCap,
@@ -180,6 +181,46 @@ export default function Dashboard({
     month: "long",
   });
 
+  // ── "Today's Briefing" — the in-app digest the /digest deep link lands on.
+  // Mirrors the WhatsApp/push digest, but free and always available in the app.
+  const firstName = activeUser.name.split(" ")[0];
+  const hour = now.getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const todayStr = now.toLocaleDateString("en-CA"); // yyyy-mm-dd, matches due_date
+  const myTasks = rawTasks.filter(
+    (t) =>
+      t.assignedUserId === activeUser.id ||
+      t.assignedUserIds?.includes(activeUser.id) ||
+      t.ccUserIds?.includes(activeUser.id),
+  );
+  const myPendingTasks = myTasks.filter((t) => t.status !== "Completed" && t.status !== "Closed");
+  const overdueCount = myPendingTasks.filter((t) => (t.dueDate || "").slice(0, 10) < todayStr).length;
+
+  const briefing = [
+    has("tasks") && myPendingTasks.length > 0 && {
+      key: "tasks", Icon: CheckSquare, tint: "var(--color-accent-tint)", color: "var(--color-accent)",
+      title: `${myPendingTasks.length} task${myPendingTasks.length === 1 ? "" : "s"} open`,
+      sub: overdueCount > 0 ? `${overdueCount} overdue — needs attention` : (newlyAssignedToMeCount > 0 ? `${newlyAssignedToMeCount} newly assigned` : "You're on track"),
+      alert: overdueCount > 0, target: "tasks",
+    },
+    has("tasks") && totalUnreadChats > 0 && {
+      key: "chats", Icon: MessageSquare, tint: "color-mix(in srgb, var(--color-rose) 16%, white)", color: "color-mix(in srgb, var(--color-rose) 60%, var(--color-ink))",
+      title: `${totalUnreadChats} new comment${totalUnreadChats === 1 ? "" : "s"}`, sub: "On your tasks", alert: false, target: "tasks",
+    },
+    has("checklists") && unsubmittedChecklistsCount > 0 && {
+      key: "checklists", Icon: ClipboardCheck, tint: "color-mix(in srgb, #5C8567 16%, white)", color: "#5C8567",
+      title: `${unsubmittedChecklistsCount} checklist${unsubmittedChecklistsCount === 1 ? "" : "s"} pending`, sub: "Complete before end of day", alert: false, target: "checklists",
+    },
+    has("training") && pendingTrainingCount > 0 && {
+      key: "training", Icon: Award, tint: "var(--color-brand-tint)", color: "var(--color-brand)",
+      title: `${pendingTrainingCount} training pending`, sub: "Assigned to you", alert: false, target: "training",
+    },
+    has("notices") && unreadNoticesCount > 0 && {
+      key: "notices", Icon: Megaphone, tint: "var(--color-accent-tint)", color: "var(--color-accent)",
+      title: `${unreadNoticesCount} unread notice${unreadNoticesCount === 1 ? "" : "s"}`, sub: "Tap to read", alert: false, target: "notices",
+    },
+  ].filter(Boolean) as { key: string; Icon: any; tint: string; color: string; title: string; sub: string; alert: boolean; target: string }[];
+
   // Workspace-tools strip — only the tools the client's plan grants.
   const tools = [
     has("notices")    && { key: "notices",    label: "Notices",             Icon: Megaphone,      color: "var(--color-accent)",     count: unreadNoticesCount,        target: "notices" },
@@ -291,6 +332,39 @@ export default function Dashboard({
           </div>
           )}
         </div>
+      </section>
+
+      {/* ── Today's Briefing (in-app digest — /digest lands here) ──────── */}
+      <section id="dashboard-briefing" className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-hidden">
+        <header className="px-6 py-4 border-b border-[var(--color-line)] flex items-center gap-2.5">
+          <Sparkles className="w-4.5 h-4.5 text-[var(--color-brand)] shrink-0" />
+          <div>
+            <h3 className="font-display text-lg font-semibold text-[var(--color-ink)]">{greeting}, {firstName}</h3>
+            <p className="text-xs text-[var(--color-ink-soft)] mt-0.5">
+              {briefing.length > 0 ? "Here's your briefing — what needs your attention today." : "You're all caught up — nothing pending right now. 🎉"}
+            </p>
+          </div>
+        </header>
+        {briefing.length > 0 && (
+          <div className="divide-y divide-[var(--color-line)]">
+            {briefing.map(({ key, Icon, tint, color, title, sub, alert, target }) => (
+              <button
+                key={key}
+                onClick={() => onNavigate(target)}
+                className="w-full flex items-center gap-3 px-6 py-3.5 hover:bg-[var(--color-cream)] transition-colors text-left cursor-pointer"
+              >
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: tint }}>
+                  <Icon className="w-4.5 h-4.5" style={{ color }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-[var(--color-ink)]">{title}</div>
+                  <div className={`text-xs mt-0.5 ${alert ? "text-rose-600 font-semibold" : "text-[var(--color-ink-soft)]"}`}>{sub}</div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-[var(--color-ink-soft)] shrink-0" />
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* ── Action card: Tasks summary ───────── */}
