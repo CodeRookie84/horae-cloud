@@ -68,7 +68,7 @@ const EVENT_TIERS: Record<string, "urgent" | "normal"> = {
   notice:             "urgent", // user choice: new notices always ping WhatsApp too
   training_published: "normal",
   checklist_posted:   "normal",
-  daily_digest:       "urgent", // user priority: digest always pings WhatsApp (not just push-dead fallback)
+  daily_digest:       "normal", // push + in-app ONLY — never WhatsApp (digest content = Marketing category, too costly)
 };
 
 // Days since the last service-worker push ack before we treat a user's push as

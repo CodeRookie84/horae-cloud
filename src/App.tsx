@@ -37,6 +37,7 @@ import NotificationPermissionBanner from "./components/NotificationPermissionBan
 import MobileBottomNav from "./components/MobileBottomNav";
 import { getAppModules, getBottomNavModules } from "./services/appModules";
 import * as trainingSvc from "./services/trainingService";
+import { checkKotAccess } from "./kot/access"; // [KOT] launcher-icon gate
 
 // Lazy-loaded: everything below is one large admin/workflow module that's only
 // ever needed once a signed-in user actually opens that specific tab. Statically
@@ -53,6 +54,10 @@ const MaintenanceHub = lazy(() => import("./components/maintenance/MaintenanceHu
 const Training = lazy(() => import("./components/Training"));
 const TrainingAdmin = lazy(() => import("./components/TrainingAdmin"));
 const AppLauncher = lazy(() => import("./components/AppLauncher"));
+// [KOT] Isolated cake-order tracking module. Kiosk = shared-tablet QR entry;
+// KotApp = the manager-facing tab. Lazy so neither costs anything until opened.
+const KotKiosk = lazy(() => import("./kot/KotKiosk"));
+const KotApp = lazy(() => import("./kot/KotApp"));
 
 
 /** Single row in the notifications dropdown — swipe left/right to dismiss, tap to open + mark read. */
@@ -126,6 +131,15 @@ function upsertById<T extends { id: string; createdAt?: string }>(prev: T[], del
 }
 
 export default function App() {
+  // [KOT] Shared-tablet kiosk entry. The printed-QR route bypasses Horae's auth
+  // and shell entirely. Delete this block to remove KOT's kiosk.
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/kot')) {
+    return (
+      <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-slate-50" />}>
+        <KotKiosk />
+      </Suspense>
+    );
+  }
   return (
     <BrowserRouter>
       <AppInner />
@@ -284,12 +298,26 @@ function AppInner() {
   // `onBack={backToDashboard}` call sites below.
   const backToDashboard = handleBack;
 
+  // [KOT] Whether to show the Cake KOT launcher icon for this user. Async gate
+  // (client provisioned + admin/linked participant); defaults hidden until known.
+  const [kotAccess, setKotAccess] = useState<boolean>(false);
+  useEffect(() => {
+    const cid = activeClient?.id || activeTenant?.clientId;
+    if (!cid || !activeUser) { setKotAccess(false); return; }
+    let cancelled = false;
+    checkKotAccess(cid, activeUser.id, (activeUser as any).phoneNumber, [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role))
+      .then(v => { if (!cancelled) setKotAccess(v); })
+      .catch(() => { if (!cancelled) setKotAccess(false); });
+    return () => { cancelled = true; };
+  }, [activeClient?.id, activeTenant?.clientId, activeUser?.id]);
+
   // Modules the current user can open — shared source of truth for the launcher
   // home grid and the mobile bottom nav (same plan/role gating as the sidebar).
   const launcherModules = getAppModules({
     features: clientFeatures,
     role: activeUser?.role ?? '',
     clitAccess: !!activeUser?.clitAccess,
+    kotAccess, // [KOT]
     dashboardMeaningful,
   });
   const bottomNavModules = getBottomNavModules(launcherModules);
@@ -1368,6 +1396,20 @@ function AppInner() {
                       clientUsers={allUsers.filter(u => tenants.some(t => t.id === u.tenantId))}
                       onSetClitAccess={handleSetClitAccess}
                       languages={activeClient?.languages || []}
+                    />
+                  )}
+
+                  {/* [KOT] Manager-facing cake-order tracking tab. */}
+                  {activeTab === "kot" && kotAccess && (
+                    <KotApp
+                      viewer={{
+                        clientId: activeClient?.id || activeTenant.clientId,
+                        mode: "manager",
+                        tenantId: activeUser.tenantId,
+                        tenantLabel: activeTenant?.name || "Cake KOT",
+                        canManage: [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role),
+                        actor: { userId: activeUser.id, name: activeUser.name },
+                      }}
                     />
                   )}
 

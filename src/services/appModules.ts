@@ -11,6 +11,7 @@ import type { ComponentType } from 'react';
 import {
   Layers, Megaphone, ClipboardCheck, MessageSquare,
   GraduationCap, BookOpen, FileText, Wrench, ShieldCheck,
+  Cake, // [KOT] launcher icon
 } from 'lucide-react';
 
 export interface AppModule {
@@ -28,6 +29,8 @@ export interface ModuleGateContext {
   features: string[];
   role: string;
   clitAccess: boolean;
+  /** [KOT] Whether to surface the Cake KOT icon (managers/linked participants). */
+  kotAccess?: boolean;
   /** Whether the Dashboard tab surfaces anything for this plan */
   dashboardMeaningful: boolean;
   /** Per-module badge counts keyed by module id (e.g. { 'tasks': 3 }) */
@@ -41,7 +44,7 @@ const isAdmin = (role: string) => role === 'Admin' || role === 'Super Admin';
  * gated by plan features and role. Order matches the sidebar's grouping.
  */
 export function getAppModules(ctx: ModuleGateContext): AppModule[] {
-  const { features, role, clitAccess, dashboardMeaningful, badges = {} } = ctx;
+  const { features, role, clitAccess, kotAccess, dashboardMeaningful, badges = {} } = ctx;
   const has = (k: string) => features.includes(k);
   const mods: AppModule[] = [];
 
@@ -54,6 +57,10 @@ export function getAppModules(ctx: ModuleGateContext): AppModule[] {
   if (has('maintenance') && (clitAccess || isAdmin(role))) push({ id: 'maintenance', label: 'Maintenance', icon: Wrench, accent: 'bg-slate-200 text-slate-700' });
   if (has('training')) push({ id: 'training', label: 'Training', icon: GraduationCap, accent: 'bg-violet-100 text-violet-600' });
   if (has('sops')) push({ id: 'sops', label: 'SOPs', icon: FileText, accent: 'bg-teal-100 text-teal-600' });
+
+  // [KOT] Cake-order tracking — self-contained module, gated by kotAccess only
+  // (independent of plan features). Remove this line to drop the KOT icon.
+  if (kotAccess) push({ id: 'kot', label: 'Cake KOT', icon: Cake, accent: 'bg-rose-100 text-rose-600' });
 
   if (role === 'Admin') push({ id: 'admin-panel', label: 'Admin Panel', icon: ShieldCheck, accent: 'bg-[#C5A880]/20 text-[#9c7d4e]' });
 
