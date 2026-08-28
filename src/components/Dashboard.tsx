@@ -265,98 +265,29 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* ── Hero greeting with piped-dots watermark ───────────────────── */}
-      <section
-        id="dashboard-hero"
-        className="relative overflow-hidden rounded-3xl border border-[var(--color-line)] bg-white shadow-warm"
-      >
-        {/* Soft mulberry wash */}
-        <div
-          className="absolute inset-0 opacity-90"
-          style={{
-            background:
-              "linear-gradient(135deg, var(--color-brand-tint) 0%, #FFFFFF 55%, var(--color-accent-tint) 100%)",
-          }}
-          aria-hidden
-        />
-        {/* Piped-dots watermark in the corner — the one decorative moment */}
-        <div className="absolute top-0 right-0 w-64 h-40 bg-piped-dots opacity-50 pointer-events-none" aria-hidden />
-
-        <div className="relative px-6 sm:px-8 py-7 sm:py-8">
-          <div className="text-xs font-medium tracking-[0.18em] uppercase text-[var(--color-brand)]">
-            {todayLabel}
-          </div>
-
-          {tools.length > 0 && (
-          <div className="mt-5 bg-white/70 backdrop-blur-sm border border-[var(--color-line)] rounded-2xl overflow-hidden">
-            <button
-              onClick={() => setIsToolsExpanded(!isToolsExpanded)}
-              className="flex items-center justify-between px-4 py-3 bg-[var(--color-cream)] hover:bg-[var(--color-cream-deep)] transition-colors w-full cursor-pointer"
-            >
-              <span className="text-xs font-bold text-[var(--color-ink)] tracking-wider uppercase">
-                Workspace tools
-              </span>
-              {isToolsExpanded ? (
-                <ChevronDown className="w-4 h-4 text-[var(--color-ink-soft)]" />
-              ) : (
-                <ChevronUp className="w-4 h-4 text-[var(--color-ink-soft)]" />
-              )}
-            </button>
-
-            <AnimatePresence>
-              {isToolsExpanded && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="grid gap-0 border-t border-[var(--color-line)] divide-x divide-[var(--color-line)]"
-                  style={{ gridTemplateColumns: `repeat(${tools.length}, minmax(0, 1fr))` }}
-                >
-                  {tools.map(({ key, label, Icon, color, count, target }) => (
-                    <button
-                      key={key}
-                      onClick={() => onNavigate(target)}
-                      className="flex flex-col items-center justify-center gap-1.5 py-3 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
-                      title={label}
-                    >
-                      <div className="relative">
-                        <div
-                          className="w-10 h-10 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-sm"
-                          style={{ backgroundImage: `linear-gradient(135deg, color-mix(in srgb, ${color} 22%, white) 0%, color-mix(in srgb, ${color} 8%, white) 100%)` }}
-                        >
-                          <Icon className="w-5 h-5" style={{ color }} />
-                        </div>
-                        {count > 0 && (
-                          <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
-                            {count}
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none text-center px-1">{label}</span>
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          )}
-        </div>
-      </section>
-
-      {/* ── Today's Briefing — your focus list (in-app digest; /digest lands here).
-             Consolidates the old Tasks summary card, so nothing is duplicated. ── */}
+      {/* ── Today's Briefing — date + greeting + digest + Assign, right up top.
+             (Was below a hero card; the hero's date now sits in this header.) ── */}
       <section id="dashboard-briefing" className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-hidden">
-        <header className="px-5 sm:px-6 py-4 border-b border-[var(--color-line)] flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <Sparkles className="w-4.5 h-4.5 text-[var(--color-brand)] shrink-0" />
-            <div className="min-w-0">
-              <h3 className="font-display text-lg font-semibold text-[var(--color-ink)] leading-tight truncate">{greeting}, {firstName}</h3>
-              <p className="text-xs text-[var(--color-ink-soft)] mt-0.5">
-                {briefing.length > 0 ? "Here's what needs you today." : "Nothing pending — you're all caught up."}
-              </p>
+        <header
+          className="px-5 sm:px-6 py-4 border-b border-[var(--color-line)] relative overflow-hidden"
+          style={{ background: "linear-gradient(135deg, var(--color-brand-tint) 0%, #FFFFFF 62%, var(--color-accent-tint) 100%)" }}
+        >
+          <div className="absolute top-0 right-0 w-48 h-28 bg-piped-dots opacity-40 pointer-events-none" aria-hidden />
+          <div className="relative">
+            <div className="text-[11px] font-semibold tracking-[0.18em] uppercase text-[var(--color-brand)] mb-2">{todayLabel}</div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Sparkles className="w-4.5 h-4.5 text-[var(--color-brand)] shrink-0" />
+                <div className="min-w-0">
+                  <h3 className="font-display text-lg font-semibold text-[var(--color-ink)] leading-tight truncate">{greeting}, {firstName}</h3>
+                  <p className="text-xs text-[var(--color-ink-soft)] mt-0.5">
+                    {briefing.length > 0 ? "Here's what needs you today." : "Nothing pending — you're all caught up."}
+                  </p>
+                </div>
+              </div>
+              {briefing.length === 0 && <span className="text-xl shrink-0" aria-hidden>🎉</span>}
             </div>
           </div>
-          {briefing.length === 0 && <span className="text-xl shrink-0" aria-hidden>🎉</span>}
         </header>
 
         {briefing.length > 0 && (
@@ -408,6 +339,58 @@ export default function Dashboard({
           </div>
         )}
       </section>
+
+      {/* ── Workspace tools — now BELOW the briefing (the top strip is removed). ── */}
+      {tools.length > 0 && (
+        <section id="dashboard-tools" className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-hidden">
+          <button
+            onClick={() => setIsToolsExpanded(!isToolsExpanded)}
+            className="flex items-center justify-between px-5 sm:px-6 py-3.5 bg-[var(--color-cream)] hover:bg-[var(--color-cream-deep)] transition-colors w-full cursor-pointer"
+          >
+            <span className="text-xs font-bold text-[var(--color-ink)] tracking-wider uppercase">Workspace tools</span>
+            {isToolsExpanded ? (
+              <ChevronDown className="w-4 h-4 text-[var(--color-ink-soft)]" />
+            ) : (
+              <ChevronUp className="w-4 h-4 text-[var(--color-ink-soft)]" />
+            )}
+          </button>
+          <AnimatePresence>
+            {isToolsExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="grid gap-0 border-t border-[var(--color-line)] divide-x divide-[var(--color-line)]"
+                style={{ gridTemplateColumns: `repeat(${tools.length}, minmax(0, 1fr))` }}
+              >
+                {tools.map(({ key, label, Icon, color, count, target }) => (
+                  <button
+                    key={key}
+                    onClick={() => onNavigate(target)}
+                    className="flex flex-col items-center justify-center gap-1.5 py-4 hover:bg-[var(--color-cream)] transition-all relative cursor-pointer group"
+                    title={label}
+                  >
+                    <div className="relative">
+                      <div
+                        className="w-10 h-10 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-sm"
+                        style={{ backgroundImage: `linear-gradient(135deg, color-mix(in srgb, ${color} 22%, white) 0%, color-mix(in srgb, ${color} 8%, white) 100%)` }}
+                      >
+                        <Icon className="w-5 h-5" style={{ color }} />
+                      </div>
+                      {count > 0 && (
+                        <span className="absolute -top-2 -right-2 bg-[var(--color-brand)] text-white font-bold text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow animate-bounce">
+                          {count}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-semibold text-[var(--color-ink)] leading-none text-center px-1">{label}</span>
+                  </button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </section>
+      )}
 
     </div>
   );
