@@ -46,16 +46,15 @@ const MAX_MESSAGES_PER_USER_DAY  = 20;   // Daily WhatsApp cap per user
 // client-side fallback call).
 const SINGLE_FIRE_EVENTS = new Set(["task_assigned"]);
 
-// Template routing. Meta re-categorized the generic "horae_alert" as MARKETING
-// (~7× Utility), so we deliberately move every WhatsApp-sending event onto a
-// purpose-specific UTILITY template instead:
+// Template routing — every WhatsApp-SENDING event uses a purpose-specific
+// UTILITY template (the old generic catch-all template was re-categorized
+// Marketing by Meta and has been retired):
 //   • horae_task_alert   — task assignments, reassignments, urgent task pings
 //   • horae_notice_alert — notices (and urgent notice pings)
-// "horae_alert" (GENERIC) is now only referenced by push-only ('normal'-tier)
-// events, so it never actually sends a paid WhatsApp — and can be retired in Meta.
+// Push-only ('normal'-tier) events — task CC/status/chat, training, checklist,
+// digest — carry NO waTemplate: they never send a paid WhatsApp, only web push.
 const TASK_TEMPLATE_NAME   = "horae_task_alert";
 const NOTICE_TEMPLATE_NAME = "horae_notice_alert";
-const GENERIC_TEMPLATE_NAME = "horae_alert";
 
 // ─── Plan B: push-first, WhatsApp only as last-mile fallback ───────────────────
 // WhatsApp is paid; web push is free. So paid WhatsApp is sent ONLY for:
@@ -185,7 +184,6 @@ async function handleTaskAssigned(task: any) {
     if (!await checkAntiSpam(userId, task.tenant_id, "task_cc", task.id)) continue;
     await sendNotifications(user, {
       waMessage: buildTaskAssignedMessage(user.name, task.title, task.priority, task.due_date, deepLink),
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [task.title, `You're CC'd. ${deepLink}`] },
       pushTitle: `👀 CC — New Task: ${task.title}`,
       pushBody: `Priority: ${task.priority}`,
       url: deepLink,
@@ -236,7 +234,6 @@ async function handleTaskUpdated(task: any, oldTask: any, actorId?: string) {
     if (!await checkAntiSpam(user.id, task.tenant_id, "task_status", statusRef)) continue;
     await sendNotifications(user, {
       waMessage: buildStatusMessage(user.name, task.title, task.status, deepLink),
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [task.title, `Now ${task.status}. ${deepLink}`] },
       pushTitle: `🔄 Task ${task.status}: ${task.title}`,
       pushBody: `Status updated`,
       url: deepLink,
@@ -259,7 +256,6 @@ async function handleTaskComment(body: any) {
     if (!await checkAntiSpam(userId, tenantId, "task_chat", taskId)) continue;
     await sendNotifications(user, {
       waMessage: buildChatMessage(senderName || "Someone", taskTitle, preview, deepLink),
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [taskTitle, `${senderName || "Someone"}: ${preview} ${deepLink}`] },
       pushTitle: `💬 ${senderName}: ${taskTitle}`,
       pushBody: preview,
       url: deepLink,
@@ -299,7 +295,6 @@ async function handleTrainingPublished(training: any) {
     if (!await checkAntiSpam(user.id, user.tenant_id, "training_published", training.id)) continue;
     await sendNotifications(user, {
       waMessage: buildTrainingMessage(user.name, training.title, deepLink),
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [training.title, `New training assigned — complete it. ${deepLink}`] },
       pushTitle: `📚 New Training: ${training.title}`,
       pushBody: "Tap to start your training",
       url: deepLink,
@@ -326,7 +321,6 @@ async function handleChecklistPosted(checklist: any) {
     if (!await checkAntiSpam(user.id, checklist.tenant_id, "checklist_posted", checklist.id)) continue;
     await sendNotifications(user, {
       waMessage: buildChecklistMessage(user.name, title, deepLink),
-      waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [title, `New checklist to complete. ${deepLink}`] },
       pushTitle: `✅ New Checklist: ${title}`,
       pushBody: "Tap to complete your checklist",
       url: deepLink,
@@ -377,18 +371,13 @@ async function handleDigest(userId: string, tenantId: string, items: any, runMod
   if (sections.length === 0) return;
 
   const deepLink = `${APP_BASE_URL}/digest`;
-  const digestHeading = runMode === "evening" ? "Evening wrap-up" : "Morning briefing";
 
-  // Free-form message (only sendable inside the 24h window) → true line breaks.
+  // Digest is push + in-app ONLY (no WhatsApp — see EVENT_TIERS.daily_digest), so
+  // no template; waMessage is kept for the push body / any future in-window use.
   const waMessage = `${parts[0]}\n${sections.join("\n")}\n\n👉 Open Horae: ${deepLink}`;
-  // Template parameters can't contain newlines/tabs/4+ spaces, so the digest that
-  // actually ships (business-initiated, outside the window) separates features
-  // with a visible ➖ divider — the closest to distinct lines the template allows.
-  const templateBody = `${sections.join("  ➖  ")}  ➖  ${deepLink}`;
 
   await sendNotifications(user, {
     waMessage,
-    waTemplate: { name: GENERIC_TEMPLATE_NAME, params: [digestHeading, templateBody] },
     pushTitle: runMode === "evening" ? "🌙 Your Horae Evening Wrap-up" : "📋 Your Horae Morning Briefing",
     pushBody: `${items.tasks?.length || 0} tasks · ${items.chats?.length || 0} chats · ${items.checklists?.length || 0} checklists · ${items.training?.length || 0} training · ${items.notices?.length || 0} notices`,
     url: deepLink,

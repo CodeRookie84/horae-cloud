@@ -198,28 +198,37 @@ export default function Dashboard({
 
   const briefing = [
     has("tasks") && myPendingTasks.length > 0 && {
-      key: "tasks", Icon: CheckSquare, tint: "var(--color-accent-tint)", color: "var(--color-accent)",
+      key: "tasks", Icon: CheckSquare, count: myPendingTasks.length,
+      tint: "var(--color-accent-tint)", color: "color-mix(in srgb, var(--color-accent) 78%, var(--color-ink))",
       title: `${myPendingTasks.length} task${myPendingTasks.length === 1 ? "" : "s"} open`,
-      sub: overdueCount > 0 ? `${overdueCount} overdue — needs attention` : (newlyAssignedToMeCount > 0 ? `${newlyAssignedToMeCount} newly assigned` : "You're on track"),
+      sub: overdueCount > 0 ? `${overdueCount} overdue — do this first` : (newlyAssignedToMeCount > 0 ? `${newlyAssignedToMeCount} newly assigned` : "You're on track"),
       alert: overdueCount > 0, target: "tasks",
     },
     has("tasks") && totalUnreadChats > 0 && {
-      key: "chats", Icon: MessageSquare, tint: "color-mix(in srgb, var(--color-rose) 16%, white)", color: "color-mix(in srgb, var(--color-rose) 60%, var(--color-ink))",
+      key: "chats", Icon: MessageSquare, count: totalUnreadChats,
+      tint: "color-mix(in srgb, var(--color-rose) 16%, white)", color: "color-mix(in srgb, var(--color-rose) 62%, var(--color-ink))",
       title: `${totalUnreadChats} new comment${totalUnreadChats === 1 ? "" : "s"}`, sub: "On your tasks", alert: false, target: "tasks",
     },
     has("checklists") && unsubmittedChecklistsCount > 0 && {
-      key: "checklists", Icon: ClipboardCheck, tint: "color-mix(in srgb, #5C8567 16%, white)", color: "#5C8567",
+      key: "checklists", Icon: ClipboardCheck, count: unsubmittedChecklistsCount,
+      tint: "color-mix(in srgb, #5C8567 16%, white)", color: "#5C8567",
       title: `${unsubmittedChecklistsCount} checklist${unsubmittedChecklistsCount === 1 ? "" : "s"} pending`, sub: "Complete before end of day", alert: false, target: "checklists",
     },
     has("training") && pendingTrainingCount > 0 && {
-      key: "training", Icon: Award, tint: "var(--color-brand-tint)", color: "var(--color-brand)",
+      key: "training", Icon: Award, count: pendingTrainingCount,
+      tint: "var(--color-brand-tint)", color: "var(--color-brand)",
       title: `${pendingTrainingCount} training pending`, sub: "Assigned to you", alert: false, target: "training",
     },
     has("notices") && unreadNoticesCount > 0 && {
-      key: "notices", Icon: Megaphone, tint: "var(--color-accent-tint)", color: "var(--color-accent)",
+      key: "notices", Icon: Megaphone, count: unreadNoticesCount,
+      tint: "var(--color-accent-tint)", color: "color-mix(in srgb, var(--color-accent) 78%, var(--color-ink))",
       title: `${unreadNoticesCount} unread notice${unreadNoticesCount === 1 ? "" : "s"}`, sub: "Tap to read", alert: false, target: "notices",
     },
-  ].filter(Boolean) as { key: string; Icon: any; tint: string; color: string; title: string; sub: string; alert: boolean; target: string }[];
+  ].filter(Boolean) as { key: string; Icon: any; count: number; tint: string; color: string; title: string; sub: string; alert: boolean; target: string }[];
+
+  const canAssign =
+    activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN ||
+    activeUser.role === Role.MANAGER || activeUser.role === Role.SUPERVISOR;
 
   // Workspace-tools strip — only the tools the client's plan grants.
   const tools = [
@@ -334,109 +343,71 @@ export default function Dashboard({
         </div>
       </section>
 
-      {/* ── Today's Briefing (in-app digest — /digest lands here) ──────── */}
+      {/* ── Today's Briefing — your focus list (in-app digest; /digest lands here).
+             Consolidates the old Tasks summary card, so nothing is duplicated. ── */}
       <section id="dashboard-briefing" className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-hidden">
-        <header className="px-6 py-4 border-b border-[var(--color-line)] flex items-center gap-2.5">
-          <Sparkles className="w-4.5 h-4.5 text-[var(--color-brand)] shrink-0" />
-          <div>
-            <h3 className="font-display text-lg font-semibold text-[var(--color-ink)]">{greeting}, {firstName}</h3>
-            <p className="text-xs text-[var(--color-ink-soft)] mt-0.5">
-              {briefing.length > 0 ? "Here's your briefing — what needs your attention today." : "You're all caught up — nothing pending right now. 🎉"}
-            </p>
+        <header className="px-5 sm:px-6 py-4 border-b border-[var(--color-line)] flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Sparkles className="w-4.5 h-4.5 text-[var(--color-brand)] shrink-0" />
+            <div className="min-w-0">
+              <h3 className="font-display text-lg font-semibold text-[var(--color-ink)] leading-tight truncate">{greeting}, {firstName}</h3>
+              <p className="text-xs text-[var(--color-ink-soft)] mt-0.5">
+                {briefing.length > 0 ? "Here's what needs you today." : "Nothing pending — you're all caught up."}
+              </p>
+            </div>
           </div>
+          {briefing.length === 0 && <span className="text-xl shrink-0" aria-hidden>🎉</span>}
         </header>
+
         {briefing.length > 0 && (
           <div className="divide-y divide-[var(--color-line)]">
-            {briefing.map(({ key, Icon, tint, color, title, sub, alert, target }) => (
+            {briefing.map(({ key, Icon, count, tint, color, title, sub, alert, target }) => (
               <button
                 key={key}
                 onClick={() => onNavigate(target)}
-                className="w-full flex items-center gap-3 px-6 py-3.5 hover:bg-[var(--color-cream)] transition-colors text-left cursor-pointer"
+                className="w-full flex items-center gap-3.5 px-5 sm:px-6 py-3.5 text-left transition-colors cursor-pointer hover:bg-[var(--color-cream)]"
+                style={alert ? {
+                  background: "linear-gradient(90deg, color-mix(in srgb, var(--color-rose) 16%, white) 0%, color-mix(in srgb, var(--color-rose) 5%, white) 70%)",
+                  borderLeft: "3px solid color-mix(in srgb, var(--color-rose) 65%, var(--color-ink))",
+                } : undefined}
               >
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: tint }}>
-                  <Icon className="w-4.5 h-4.5" style={{ color }} />
+                <div
+                  className="w-10 h-10 rounded-[13px] flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: alert ? "#fff" : tint, color, boxShadow: alert ? "0 6px 14px -8px color-mix(in srgb, var(--color-rose) 55%, transparent)" : undefined }}
+                >
+                  <Icon className="w-5 h-5" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-[var(--color-ink)]">{title}</div>
-                  <div className={`text-xs mt-0.5 ${alert ? "text-rose-600 font-semibold" : "text-[var(--color-ink-soft)]"}`}>{sub}</div>
+                  <div className="text-sm font-semibold text-[var(--color-ink)] truncate">{title}</div>
+                  <div
+                    className={`text-xs mt-0.5 truncate ${alert ? "font-semibold" : "text-[var(--color-ink-soft)]"}`}
+                    style={alert ? { color: "color-mix(in srgb, var(--color-rose) 62%, var(--color-ink))" } : undefined}
+                  >{sub}</div>
                 </div>
-                <ChevronRight className="w-4 h-4 text-[var(--color-ink-soft)] shrink-0" />
+                {alert ? (
+                  <span
+                    className="shrink-0 min-w-[26px] h-[26px] px-2 rounded-[9px] flex items-center justify-center text-sm font-bold text-white"
+                    style={{ backgroundColor: "color-mix(in srgb, var(--color-rose) 66%, var(--color-ink))" }}
+                  >{count}</span>
+                ) : (
+                  <ChevronRight className="w-4 h-4 text-[var(--color-ink-soft)] shrink-0" />
+                )}
               </button>
             ))}
           </div>
         )}
-      </section>
 
-      {/* ── Action card: Tasks summary ───────── */}
-      {has("tasks") && (
-      <section id="dashboard-action-cards" className="grid grid-cols-1 gap-6">
-        {/* Tasks */}
-        {has("tasks") && (
-        <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-hidden">
-          <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-line)]">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-[var(--color-accent-tint)] text-[var(--color-accent)] flex items-center justify-center">
-                <CheckSquare className="w-4.5 h-4.5" />
-              </div>
-              <div>
-                <h3 className="font-display text-lg font-semibold text-[var(--color-ink)]">Tasks</h3>
-                <p className="text-xs text-[var(--color-ink-soft)]">Assigned, in progress, due</p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              {(activeUser.role === Role.ADMIN ||
-                activeUser.role === Role.SUPER_ADMIN ||
-                activeUser.role === Role.MANAGER ||
-                activeUser.role === Role.SUPERVISOR) && (
-                <button
-                  onClick={() => {
-                    sessionStorage.setItem('horae_open_assign', '1');
-                    onNavigate("tasks");
-                  }}
-                  className="text-white text-sm font-medium bg-[var(--color-brand)] hover:bg-[color-mix(in_srgb,var(--color-brand)_88%,var(--color-ink))] px-3.5 py-2 rounded-xl shadow-warm cursor-pointer flex items-center gap-1.5 transition-all"
-                >
-                  <Plus className="w-4 h-4" />
-                  Assign
-                </button>
-              )}
-              <button
-                onClick={() => onNavigate("tasks")}
-                className="text-[var(--color-ink)] bg-white border border-[var(--color-line)] hover:bg-[var(--color-cream)] text-sm font-medium px-3.5 py-2 rounded-xl shadow-warm cursor-pointer transition-all"
-              >
-                Open &rarr;
-              </button>
-            </div>
-          </header>
-          <div className="px-6 py-5 grid grid-cols-3 gap-3">
-            <div className="rounded-2xl p-3 border border-[var(--color-line)]"
-                 style={{ backgroundImage: "linear-gradient(135deg, var(--color-brand-tint) 0%, color-mix(in srgb, var(--color-sky) 18%, white) 100%)" }}>
-              <div className="font-display text-2xl font-semibold text-[var(--color-brand)]">
-                {pendingAssignedToMe.length}
-              </div>
-              <div className="text-xs text-[var(--color-ink-soft)] mt-1">For you</div>
-            </div>
-            <div className="rounded-2xl p-3 border border-[var(--color-line)]"
-                 style={{ backgroundImage: "linear-gradient(135deg, var(--color-accent-tint) 0%, color-mix(in srgb, var(--color-sage) 20%, white) 100%)" }}>
-              <div className="font-display text-2xl font-semibold" style={{ color: "color-mix(in srgb, var(--color-accent) 70%, var(--color-ink))" }}>
-                {newlyAssignedToMeCount}
-              </div>
-              <div className="text-xs text-[var(--color-ink-soft)] mt-1">New</div>
-            </div>
-            <div className="rounded-2xl p-3 border border-[var(--color-line)]"
-                 style={{ backgroundImage: "linear-gradient(135deg, color-mix(in srgb, var(--color-rose) 22%, white) 0%, color-mix(in srgb, var(--color-rose) 8%, white) 100%)" }}>
-              <div className="font-display text-2xl font-semibold" style={{ color: "color-mix(in srgb, var(--color-rose) 60%, var(--color-ink))" }}>
-                {totalUnreadChats}
-              </div>
-              <div className="text-xs text-[var(--color-ink-soft)] mt-1 flex items-center gap-1">
-                <MessageSquare className="w-3 h-3" />
-                Comments
-              </div>
-            </div>
+        {canAssign && has("tasks") && (
+          <div className="p-4 border-t border-[var(--color-line)]">
+            <button
+              onClick={() => { sessionStorage.setItem('horae_open_assign', '1'); onNavigate("tasks"); }}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white text-sm font-bold bg-[var(--color-brand)] hover:bg-[color-mix(in_srgb,var(--color-brand)_88%,var(--color-ink))] shadow-warm cursor-pointer transition-all active:scale-[.99]"
+            >
+              <Plus className="w-4.5 h-4.5" /> Assign a task
+            </button>
           </div>
-        </div>
         )}
       </section>
-      )}
 
     </div>
   );
