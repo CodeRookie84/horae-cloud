@@ -55,6 +55,7 @@ interface TaskManagerWorkflowsProps {
   onUpdateTaskStatus: (taskId: string, status: "Assigned" | "In Progress" | "Pending" | "On Hold" | "Completed" | "Closed") => void;
   onUpdateTaskPriority: (taskId: string, priority: string) => void;
   onAddMessage: (taskId: string, message: string) => void;
+  onAddPhoto?: (taskId: string, dataUri: string) => void | Promise<void>;
   onDeleteTask: (id: string) => void;
   onUrgentNotify: (id: string) => void;
   onBack?: () => void;
@@ -75,6 +76,7 @@ export default function TaskManagerWorkflows({
   onUpdateTaskStatus,
   onUpdateTaskPriority,
   onAddMessage,
+  onAddPhoto,
   onDeleteTask,
   onUrgentNotify,
   onBack,
@@ -154,6 +156,17 @@ export default function TaskManagerWorkflows({
 
   const removePhoto = (index: number) => {
     setTaskPhotos(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Add a photo to an EXISTING task (detail view). Reads the picked file as a
+  // base64 data URI and hands it to the parent, which persists it on the task.
+  const readAndAddPhoto = (taskId: string, file: File | undefined | null) => {
+    if (!file || !onAddPhoto) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === "string") onAddPhoto(taskId, reader.result);
+    };
+    reader.readAsDataURL(file);
   };
 
   // Layout switcher and voice translation states
@@ -1662,20 +1675,32 @@ export default function TaskManagerWorkflows({
                   {activeTask.translations?.[selectedDisplayLang] || translationsCache[activeTask.id]?.[selectedDisplayLang] || activeTask.description}
                 </p>
 
-                {activeTask.photos && activeTask.photos.length > 0 && (
-                  <div className="space-y-1 mt-2 bg-slate-50 p-3.5 rounded-2xl border border-slate-150">
-                    <span className="text-[11px] text-slate-400 font-medium tracking-wide block">Attached Photos ({activeTask.photos.length})</span>
-                    <div className="flex gap-2 overflow-x-auto pb-1">
-                      {activeTask.photos.map((photo, pIdx) => (
-                        <div 
-                          key={pIdx} 
-                          className="relative w-16 h-16 border border-slate-200 rounded-xl overflow-hidden shadow-xs cursor-pointer hover:opacity-85 transition-opacity flex-shrink-0"
-                          onClick={() => setLightboxImage(photo)}
-                        >
-                          <img src={photo} alt={`Task Photo ${pIdx + 1}`} className="w-full h-full object-cover" />
-                        </div>
-                      ))}
+                {(onAddPhoto || (activeTask.photos && activeTask.photos.length > 0)) && (
+                  <div className="space-y-1.5 mt-2 bg-slate-50 p-3.5 rounded-2xl border border-slate-150">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400 font-medium tracking-wide block">Attached Photos ({activeTask.photos?.length || 0}/3)</span>
+                      {onAddPhoto && (activeTask.photos?.length || 0) < 3 && (
+                        <label className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1 shrink-0">
+                          + Add photo
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => { readAndAddPhoto(activeTask.id, e.target.files?.[0]); e.target.value = ""; }} />
+                        </label>
+                      )}
                     </div>
+                    {activeTask.photos && activeTask.photos.length > 0 ? (
+                      <div className="flex gap-2 overflow-x-auto pb-1">
+                        {activeTask.photos.map((photo, pIdx) => (
+                          <div
+                            key={pIdx}
+                            className="relative w-16 h-16 border border-slate-200 rounded-xl overflow-hidden shadow-xs cursor-pointer hover:opacity-85 transition-opacity flex-shrink-0"
+                            onClick={() => setLightboxImage(photo)}
+                          >
+                            <img src={photo} alt={`Task Photo ${pIdx + 1}`} className="w-full h-full object-cover" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-slate-400">No photos yet — add one to show progress or flag an issue.</p>
+                    )}
                   </div>
                 )}
 
@@ -2124,20 +2149,32 @@ export default function TaskManagerWorkflows({
                   {activeTask.translations?.[selectedDisplayLang] || translationsCache[activeTask.id]?.[selectedDisplayLang] || activeTask.description}
                 </p>
 
-                {activeTask.photos && activeTask.photos.length > 0 && (
-                  <div className="space-y-1 bg-slate-50 p-4 rounded-xl border border-slate-150">
-                    <span className="text-[11px] text-slate-400 font-medium tracking-wide block font-sans">Attached Photos ({activeTask.photos.length})</span>
-                    <div className="flex gap-2 overflow-x-auto pb-1">
-                      {activeTask.photos.map((photo, pIdx) => (
-                        <div 
-                          key={pIdx} 
-                          className="relative w-14 h-14 border border-slate-200 rounded-xl overflow-hidden shadow-xs cursor-pointer hover:opacity-85 transition-opacity flex-shrink-0"
-                          onClick={() => setLightboxImage(photo)}
-                        >
-                          <img src={photo} alt={`Task Photo ${pIdx + 1}`} className="w-full h-full object-cover" />
-                        </div>
-                      ))}
+                {(onAddPhoto || (activeTask.photos && activeTask.photos.length > 0)) && (
+                  <div className="space-y-1.5 bg-slate-50 p-4 rounded-xl border border-slate-150">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400 font-medium tracking-wide block font-sans">Attached Photos ({activeTask.photos?.length || 0}/3)</span>
+                      {onAddPhoto && (activeTask.photos?.length || 0) < 3 && (
+                        <label className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1 shrink-0">
+                          + Add photo
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => { readAndAddPhoto(activeTask.id, e.target.files?.[0]); e.target.value = ""; }} />
+                        </label>
+                      )}
                     </div>
+                    {activeTask.photos && activeTask.photos.length > 0 ? (
+                      <div className="flex gap-2 overflow-x-auto pb-1">
+                        {activeTask.photos.map((photo, pIdx) => (
+                          <div
+                            key={pIdx}
+                            className="relative w-14 h-14 border border-slate-200 rounded-xl overflow-hidden shadow-xs cursor-pointer hover:opacity-85 transition-opacity flex-shrink-0"
+                            onClick={() => setLightboxImage(photo)}
+                          >
+                            <img src={photo} alt={`Task Photo ${pIdx + 1}`} className="w-full h-full object-cover" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-slate-400">No photos yet — add one to show progress or flag an issue.</p>
+                    )}
                   </div>
                 )}
 

@@ -865,6 +865,16 @@ function AppInner() {
     await refreshLocalState();
   };
 
+  const handleAddTaskPhoto = async (taskId: string, dataUri: string) => {
+    try {
+      await store.addTaskPhoto(taskId, dataUri);
+      await refreshLocalState();
+      triggerToast("Photo added to task.");
+    } catch (err: any) {
+      triggerToast(err?.message || "Couldn't add the photo.");
+    }
+  };
+
   const handleDeleteTask = async (taskId: string) => {
     await store.deleteTask(taskId);
     await refreshLocalState();
@@ -1343,6 +1353,7 @@ function AppInner() {
                       onUpdateTaskStatus={handleUpdateTaskStatus}
                       onUpdateTaskPriority={handleUpdateTaskPriority}
                       onAddMessage={handleAddMessage}
+                      onAddPhoto={handleAddTaskPhoto}
                       onDeleteTask={handleDeleteTask}
                       onUrgentNotify={handleUrgentTaskNotify}
                       onBack={backToDashboard}

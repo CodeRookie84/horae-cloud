@@ -151,6 +151,7 @@ async function handleInboundMessage(m: any, contact: any) {
       // list → apply it. Everything else is a main-menu selection.
       if (listId.startsWith("tpick~")) { await sendTaskStatusList(fromPhone, listId.slice(6), userId); return; }
       if (listId.startsWith("cpick~")) { await startCommentForTask(fromPhone, userId, tenantId, listId.slice(6)); return; }
+      if (listId.startsWith("ppick~")) { await startPhotoForTask(fromPhone, userId, tenantId, listId.slice(6)); return; }
       if (listId.startsWith("tview~")) { await sendTaskDetail(fromPhone, userId, tenantId, listId.slice(6)); return; }
       if (listId.startsWith("ts~")) { await handleTaskStatusUpdate(listId, fromPhone, userId); return; }
       await handleMenuSelection(listId, fromPhone, userId, tenantId); return;
@@ -189,6 +190,11 @@ async function handleInboundMessage(m: any, contact: any) {
       // "comment" → the content is a chat message on a task the user just picked.
       if (pending.intent === "comment") {
         await addTaskComment(fromPhone, userId, pending.payload?.taskId, content);
+        return;
+      }
+      // "quick_task" → create a self-assigned task directly, no app link.
+      if (pending.intent === "quick_task") {
+        await createQuickTask(fromPhone, userId, tenantId, content);
         return;
       }
       const isComplaint = pending.intent === "complaint";
@@ -232,9 +238,23 @@ async function handleInboundMessage(m: any, contact: any) {
     return;
   }
 
-  // Media (image/document/video) — can't be actioned yet; nudge to text.
+  // Media (image/document/video).
   if (["image", "document", "video"].includes(m.type)) {
-    await sendText(fromPhone, "📎 I can't turn attachments into tasks yet. Send the details as *text*, or *\"new task …\"*, or forward a text message.");
+    // If we're waiting for a photo for a specific task ("Add a photo" flow),
+    // attach this image to it.
+    if (m.type === "image" && m.image?.id) {
+      const { data } = await supabase.from("whatsapp_conversations")
+        .select("id, payload").eq("user_id", userId).eq("state", "awaiting_input").eq("intent", "photo")
+        .gt("expires_at", new Date().toISOString())
+        .order("created_at", { ascending: false }).limit(1);
+      const conv = data?.[0];
+      if (conv) {
+        await supabase.from("whatsapp_conversations").update({ state: "done", updated_at: new Date().toISOString() }).eq("id", conv.id);
+        await attachPhotoToTask(fromPhone, userId, (conv.payload as any)?.taskId, m.image.id);
+        return;
+      }
+    }
+    await sendText(fromPhone, "📎 I can't turn attachments into tasks yet. Send the details as *text*, or *\"new task …\"*.\n\n(To add a photo to a task: reply *menu* → *📷 Add a photo*.)");
     return;
   }
   // Everything else (reactions, location, contacts, …) is logged, no reply.
@@ -254,6 +274,8 @@ async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: strin
     "Choose",
     [
       { id: "menu_create_task",   title: "📋 Create a task" },
+      { id: "menu_quick_task",    title: "⚡ Quick task (for me)" },
+      { id: "menu_add_photo",     title: "📷 Add a photo" },
       { id: "menu_add_comment",   title: "💬 Comment on a task" },
       { id: "menu_update_status", title: "🔄 Update task status" },
       { id: "menu_view_tasks",    title: "📋 View my tasks" },
@@ -346,6 +368,8 @@ async function pendingTrainingCount(userId: string, tenantId: string | null, use
 async function handleMenuSelection(id: string, fromPhone: string, userId: string, tenantId: string | null) {
   switch (id) {
     case "menu_create_task":   await startAwaitingInput(fromPhone, userId, tenantId, "create_task"); break;
+    case "menu_quick_task":    await startAwaitingInput(fromPhone, userId, tenantId, "quick_task"); break;
+    case "menu_add_photo":     await sendTaskPickerForPhoto(fromPhone, userId, tenantId); break;
     case "menu_add_comment":   await sendTaskPickerForComment(fromPhone, userId, tenantId); break;
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
     case "menu_update_status": await sendTaskPickerForStatus(fromPhone, userId, tenantId); break;
@@ -363,12 +387,13 @@ async function startAwaitingInput(fromPhone: string, userId: string, tenantId: s
     user_id: userId, tenant_id: tenantId, from_phone: fromPhone,
     state: "awaiting_input", intent,
   }]);
-  await sendText(
-    fromPhone,
+  const prompt =
     intent === "complaint"
       ? "⚠️ Please describe the complaint or issue. You can type it or send a voice note.\n\n(Reply *cancel* to go back.)"
-      : "📋 Please send the task details. You can type them or send a voice note.\n\n(Reply *cancel* to go back.)",
-  );
+      : intent === "quick_task"
+      ? "⚡ *Quick task for you* — send the task in one message (type or voice). I'll create it, assign it to you, and set it due tomorrow.\n\n(Reply *cancel* to go back.)"
+      : "📋 Please send the task details. You can type them or send a voice note.\n\n(Reply *cancel* to go back.)";
+  await sendText(fromPhone, prompt);
 }
 
 /** Atomically claim the user's latest pending "awaiting_input" state (or null). */
@@ -376,6 +401,8 @@ async function takePendingInput(userId: string): Promise<{ id: string; intent: s
   const { data } = await supabase.from("whatsapp_conversations")
     .select("id, intent, payload")
     .eq("user_id", userId).eq("state", "awaiting_input")
+    // A photo session is driven by the image handler, not by text/voice input.
+    .neq("intent", "photo")
     .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false }).limit(1);
   const row = data?.[0];
@@ -569,6 +596,110 @@ async function addTaskComment(fromPhone: string, userId: string, taskId: string 
     message: text, timestamp: new Date().toISOString(),
   }]);
   await sendText(fromPhone, `💬 Comment added to *${task.title}*.\nEveryone on the task will see it in Horae and their next digest.`);
+}
+
+/** Menu → "Add a photo": list the user's active tasks (rows `ppick~<taskId>`). */
+async function sendTaskPickerForPhoto(fromPhone: string, userId: string, tenantId: string | null) {
+  let q = supabase.from("tasks")
+    .select("id, title, status")
+    .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
+    .not("status", "in", '("Completed","Closed")')
+    .order("created_at", { ascending: false }).limit(10);
+  if (tenantId) q = q.eq("tenant_id", tenantId);
+  const { data: tasks } = await q;
+
+  if (!tasks || tasks.length === 0) {
+    await sendText(fromPhone, "📷 You have no active tasks to add a photo to.");
+    return;
+  }
+  await sendList(
+    fromPhone,
+    "📷 *Add a photo* — pick the task:",
+    "Pick task",
+    tasks.map((t: any) => ({ id: `ppick~${t.id}`, title: t.title, description: t.status })),
+  );
+}
+
+/** A task was picked for a photo → remember it and ask for the image. */
+async function startPhotoForTask(fromPhone: string, userId: string, tenantId: string | null, taskId: string) {
+  const { data: task } = await supabase.from("tasks").select("id, title").eq("id", taskId).single();
+  if (!task) { await sendText(fromPhone, "That task couldn't be found — it may have been removed."); return; }
+  await supabase.from("whatsapp_conversations").insert([{
+    user_id: userId, tenant_id: tenantId, from_phone: fromPhone,
+    state: "awaiting_input", intent: "photo", payload: { taskId },
+  }]);
+  await sendText(fromPhone, `📷 Send the photo now for *${task.title}*.\n(Send one image; reply *menu* → *Add a photo* to add more, up to 3.)`);
+}
+
+/** Download the WhatsApp image and append it to the task's photos (base64, max 3). */
+async function attachPhotoToTask(fromPhone: string, userId: string, taskId: string | undefined, mediaId: string) {
+  if (!taskId) { await sendText(fromPhone, "Hmm, I lost track of which task that was for. Reply *menu* → *Add a photo* to try again."); return; }
+  const { data: task } = await supabase.from("tasks").select("id, title, description").eq("id", taskId).single();
+  if (!task) { await sendText(fromPhone, "That task couldn't be found — it may have been removed."); return; }
+
+  // Unpack the metadata blob so we can append to its photos array.
+  let clean = task.description || "";
+  let meta: any = {};
+  const parts = clean.split("\n\n---HORAE-METADATA---\n");
+  if (parts.length > 1) { try { meta = JSON.parse(parts[1]); } catch (_) { /* ignore */ } clean = parts[0]; }
+  const photos: string[] = Array.isArray(meta.photos) ? meta.photos : [];
+  if (photos.length >= 3) { await sendText(fromPhone, `📷 *${task.title}* already has the maximum of 3 photos.`); return; }
+
+  const dataUri = await downloadMediaAsDataUri(mediaId);
+  if (!dataUri) { await sendText(fromPhone, "Sorry, I couldn't save that photo. Please try sending it again."); return; }
+
+  photos.push(dataUri);
+  meta.photos = photos;
+  await supabase.from("tasks").update({ description: `${clean}\n\n---HORAE-METADATA---\n${JSON.stringify(meta)}` }).eq("id", taskId);
+
+  const { data: u } = await supabase.from("users").select("name, role").eq("id", userId).limit(1);
+  await supabase.from("task_messages").insert([{
+    id: "msg-" + Date.now(), task_id: taskId, user_id: userId,
+    sender_name: u?.[0]?.name || "Staff", sender_role: u?.[0]?.role || "",
+    message: "📷 Added a photo via WhatsApp", timestamp: new Date().toISOString(),
+  }]);
+  await sendText(fromPhone, `📷 Photo added to *${task.title}* (${photos.length}/3).${photos.length < 3 ? "\nReply *menu* → *Add a photo* to add another." : ""}`);
+}
+
+/** Fetch a WhatsApp media id and return it as a base64 `data:` URI (two-step). */
+async function downloadMediaAsDataUri(mediaId: string): Promise<string | null> {
+  try {
+    const metaRes = await fetch(`https://graph.facebook.com/v19.0/${mediaId}`, { headers: { "Authorization": `Bearer ${META_WA_TOKEN}` } });
+    if (!metaRes.ok) return null;
+    const meta = await metaRes.json();
+    const mediaUrl: string = meta?.url;
+    const mime: string = meta?.mime_type || "image/jpeg";
+    if (!mediaUrl) return null;
+    const fileRes = await fetch(mediaUrl, { headers: { "Authorization": `Bearer ${META_WA_TOKEN}` } });
+    if (!fileRes.ok) return null;
+    const bytes = new Uint8Array(await fileRes.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return `data:${mime};base64,${btoa(binary)}`;
+  } catch (e) {
+    console.error("[whatsapp-webhook] downloadMediaAsDataUri error:", e);
+    return null;
+  }
+}
+
+/** Create a self-assigned task from one message (defaults: Medium, due tomorrow). */
+async function createQuickTask(fromPhone: string, userId: string, tenantId: string | null, content: string) {
+  const text = (content || "").trim();
+  if (!text) { await sendText(fromPhone, "That looked empty — reply *menu* → *Quick task* to try again."); return; }
+  const firstLine = text.split("\n").map(s => s.trim()).find(Boolean) || text;
+  const title = firstLine.length > 80 ? firstLine.slice(0, 77) + "…" : firstLine;
+  const due = new Date(Date.now() + 86400000).toISOString().slice(0, 10); // tomorrow
+  const taskId = "task-" + Date.now();
+  const meta = { assigneeIds: [userId], ccIds: [] };
+  const { error } = await supabase.from("tasks").insert([{
+    id: taskId, tenant_id: tenantId, title,
+    description: `${text}\n\n---HORAE-METADATA---\n${JSON.stringify(meta)}`,
+    status: "Assigned", priority: "Medium", due_date: due,
+    assigned_user_id: userId, assigned_user_ids: [userId], cc_user_ids: [],
+    created_by_user_id: userId, created_at: new Date().toISOString(),
+  }]);
+  if (error) { console.error("[whatsapp-webhook] createQuickTask insert failed:", error); await sendText(fromPhone, "Sorry, I couldn't create that task. Please try again."); return; }
+  await sendText(fromPhone, `✅ Task created & assigned to you:\n*${title}*\nPriority: Medium · Due: ${due}\n\nReply *menu* → *📷 Add a photo* to attach one, or *🔄 Update task status* when you start.`);
 }
 
 /** Menu → "My checklists": list this outlet's pending checklists with a deep link. */

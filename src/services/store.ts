@@ -2098,6 +2098,29 @@ export class StoreService {
     return tasks.find(t => t.id === taskId) || null;
   }
 
+  /**
+   * Append a photo (base64 data URI) to an EXISTING task, up to 3. Photos live in
+   * the description metadata blob (same place create-time photos are stored), so
+   * this unpacks it, pushes, and repacks.
+   */
+  public async addTaskPhoto(taskId: string, dataUri: string): Promise<Task | null> {
+    const { data: row } = await supabase.from('tasks').select('description').eq('id', taskId).single();
+    let clean = row?.description || "";
+    let meta: any = {};
+    const parts = clean.split('\n\n---HORAE-METADATA---\n');
+    if (parts.length > 1) { clean = parts[0]; try { meta = JSON.parse(parts[1]); } catch (e) {} }
+    const photos: string[] = Array.isArray(meta.photos) ? meta.photos : [];
+    if (photos.length >= 3) throw new Error("A task can have at most 3 photos.");
+    photos.push(dataUri);
+    meta.photos = photos;
+    await supabase.from('tasks')
+      .update({ description: `${clean}\n\n---HORAE-METADATA---\n${JSON.stringify(meta)}` })
+      .eq('id', taskId);
+
+    const tasks = await this.getTasks();
+    return tasks.find(t => t.id === taskId) || null;
+  }
+
   public async sendUrgentWhatsAppPush(kind: "task" | "notice", recordId: string): Promise<void> {
     const me = await this.getActiveUser();
     let record: any;
