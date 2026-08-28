@@ -291,6 +291,12 @@ export default function Dashboard({
         </header>
 
         {briefing.length > 0 && (
+          <div className="px-5 sm:px-6 pt-3.5 pb-1.5 bg-[var(--color-cream)]/60">
+            <span className="text-[10.5px] font-bold tracking-[0.14em] uppercase text-[var(--color-ink-soft)]">Needs your attention</span>
+          </div>
+        )}
+
+        {briefing.length > 0 && (
           <div className="divide-y divide-[var(--color-line)]">
             {briefing.map(({ key, Icon, count, tint, color, title, sub, alert, target }) => (
               <button
