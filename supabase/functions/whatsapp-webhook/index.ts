@@ -718,6 +718,13 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
 /** Save a reminder/note from "me …" / "I …". A trailing "- <time>" / "_ <time>"
  *  is parsed (India-aware, IST) into an optional remind_at; nothing is ever pushed. */
 async function createReminder(fromPhone: string, userId: string, tenantId: string | null, rest: string) {
+  // Dash-separated numeric dates (27-08-26 / 27-08) clash with the "- <time>"
+  // separator, so we'd mis-read them. Warn instead of saving something wrong.
+  if (/\b\d{1,2}-\d{1,2}-\d{2,4}\b/.test(rest) || /[-_]\s*\d{1,2}-\d{1,2}\s*$/.test(rest)) {
+    await sendText(fromPhone, "⚠️ I can't read dash dates like *27-08-26* — the dash clashes with the time separator, so it won't be saved correctly.\n\nUse *slashes* or a *month name* instead:\n• *me pay rent - 27/08/26*\n• *me pay rent - 27 Aug*");
+    return;
+  }
+
   let noteText = rest;
   let remindAt: string | null = null;
 
