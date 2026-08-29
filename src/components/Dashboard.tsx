@@ -197,34 +197,35 @@ export default function Dashboard({
   const overdueCount = myPendingTasks.filter((t) => (t.dueDate || "").slice(0, 10) < todayStr).length;
 
   const briefing = [
+    // Notices first, highlighted — management uses these for important updates.
+    has("notices") && unreadNoticesCount > 0 && {
+      key: "notices", Icon: Megaphone, count: unreadNoticesCount,
+      tint: "#fff", color: "#B45309",
+      title: `${unreadNoticesCount} unread notice${unreadNoticesCount === 1 ? "" : "s"}`, sub: "Important — tap to read", alert: false, highlight: true, target: "notices",
+    },
     has("tasks") && myPendingTasks.length > 0 && {
       key: "tasks", Icon: CheckSquare, count: myPendingTasks.length,
       tint: "var(--color-accent-tint)", color: "color-mix(in srgb, var(--color-accent) 78%, var(--color-ink))",
       title: `${myPendingTasks.length} task${myPendingTasks.length === 1 ? "" : "s"} open`,
       sub: overdueCount > 0 ? `${overdueCount} overdue — do this first` : (newlyAssignedToMeCount > 0 ? `${newlyAssignedToMeCount} newly assigned` : "You're on track"),
-      alert: overdueCount > 0, target: "tasks",
+      alert: overdueCount > 0, highlight: false, target: "tasks",
     },
     has("tasks") && totalUnreadChats > 0 && {
       key: "chats", Icon: MessageSquare, count: totalUnreadChats,
       tint: "color-mix(in srgb, var(--color-rose) 16%, white)", color: "color-mix(in srgb, var(--color-rose) 62%, var(--color-ink))",
-      title: `${totalUnreadChats} new comment${totalUnreadChats === 1 ? "" : "s"}`, sub: "On your tasks", alert: false, target: "tasks",
+      title: `${totalUnreadChats} new comment${totalUnreadChats === 1 ? "" : "s"}`, sub: "On your tasks", alert: false, highlight: false, target: "tasks",
     },
     has("checklists") && unsubmittedChecklistsCount > 0 && {
       key: "checklists", Icon: ClipboardCheck, count: unsubmittedChecklistsCount,
       tint: "color-mix(in srgb, #5C8567 16%, white)", color: "#5C8567",
-      title: `${unsubmittedChecklistsCount} checklist${unsubmittedChecklistsCount === 1 ? "" : "s"} pending`, sub: "Complete before end of day", alert: false, target: "checklists",
+      title: `${unsubmittedChecklistsCount} checklist${unsubmittedChecklistsCount === 1 ? "" : "s"} pending`, sub: "Complete before end of day", alert: false, highlight: false, target: "checklists",
     },
     has("training") && pendingTrainingCount > 0 && {
       key: "training", Icon: Award, count: pendingTrainingCount,
       tint: "var(--color-brand-tint)", color: "var(--color-brand)",
-      title: `${pendingTrainingCount} training pending`, sub: "Assigned to you", alert: false, target: "training",
+      title: `${pendingTrainingCount} training pending`, sub: "Assigned to you", alert: false, highlight: false, target: "training",
     },
-    has("notices") && unreadNoticesCount > 0 && {
-      key: "notices", Icon: Megaphone, count: unreadNoticesCount,
-      tint: "var(--color-accent-tint)", color: "color-mix(in srgb, var(--color-accent) 78%, var(--color-ink))",
-      title: `${unreadNoticesCount} unread notice${unreadNoticesCount === 1 ? "" : "s"}`, sub: "Tap to read", alert: false, target: "notices",
-    },
-  ].filter(Boolean) as { key: string; Icon: any; count: number; tint: string; color: string; title: string; sub: string; alert: boolean; target: string }[];
+  ].filter(Boolean) as { key: string; Icon: any; count: number; tint: string; color: string; title: string; sub: string; alert: boolean; highlight: boolean; target: string }[];
 
   const canAssign =
     activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN ||
@@ -298,7 +299,7 @@ export default function Dashboard({
 
         {briefing.length > 0 && (
           <div className="divide-y divide-[var(--color-line)]">
-            {briefing.map(({ key, Icon, count, tint, color, title, sub, alert, target }) => (
+            {briefing.map(({ key, Icon, count, tint, color, title, sub, alert, highlight, target }) => (
               <button
                 key={key}
                 onClick={() => onNavigate(target)}
@@ -306,26 +307,31 @@ export default function Dashboard({
                 style={alert ? {
                   background: "linear-gradient(90deg, color-mix(in srgb, var(--color-rose) 16%, white) 0%, color-mix(in srgb, var(--color-rose) 5%, white) 70%)",
                   borderLeft: "3px solid color-mix(in srgb, var(--color-rose) 65%, var(--color-ink))",
+                } : highlight ? {
+                  background: "linear-gradient(90deg, #FEF3C7 0%, #FFFBEB 72%)",
+                  borderLeft: "3px solid #D97706",
                 } : undefined}
               >
                 <div
                   className="w-10 h-10 rounded-[13px] flex items-center justify-center shrink-0"
-                  style={{ backgroundColor: alert ? "#fff" : tint, color, boxShadow: alert ? "0 6px 14px -8px color-mix(in srgb, var(--color-rose) 55%, transparent)" : undefined }}
+                  style={{ backgroundColor: alert || highlight ? "#fff" : tint, color, boxShadow: alert ? "0 6px 14px -8px color-mix(in srgb, var(--color-rose) 55%, transparent)" : highlight ? "0 6px 14px -8px rgba(217,119,6,.45)" : undefined }}
                 >
                   <Icon className="w-5 h-5" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-[var(--color-ink)] truncate">{title}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-sm font-semibold text-[var(--color-ink)] truncate">{title}</div>
+                    {highlight && <span className="shrink-0 text-[9px] font-bold tracking-wide uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">Important</span>}
+                  </div>
                   <div
-                    className={`text-xs mt-0.5 truncate ${alert ? "font-semibold" : "text-[var(--color-ink-soft)]"}`}
-                    style={alert ? { color: "color-mix(in srgb, var(--color-rose) 62%, var(--color-ink))" } : undefined}
+                    className={`text-xs mt-0.5 truncate ${alert || highlight ? "font-semibold" : "text-[var(--color-ink-soft)]"}`}
+                    style={alert ? { color: "color-mix(in srgb, var(--color-rose) 62%, var(--color-ink))" } : highlight ? { color: "#B45309" } : undefined}
                   >{sub}</div>
                 </div>
                 {alert ? (
-                  <span
-                    className="shrink-0 min-w-[26px] h-[26px] px-2 rounded-[9px] flex items-center justify-center text-sm font-bold text-white"
-                    style={{ backgroundColor: "color-mix(in srgb, var(--color-rose) 66%, var(--color-ink))" }}
-                  >{count}</span>
+                  <span className="shrink-0 min-w-[26px] h-[26px] px-2 rounded-[9px] flex items-center justify-center text-sm font-bold text-white" style={{ backgroundColor: "color-mix(in srgb, var(--color-rose) 66%, var(--color-ink))" }}>{count}</span>
+                ) : highlight ? (
+                  <span className="shrink-0 min-w-[26px] h-[26px] px-2 rounded-[9px] flex items-center justify-center text-sm font-bold text-white bg-amber-600">{count}</span>
                 ) : (
                   <ChevronRight className="w-4 h-4 text-[var(--color-ink-soft)] shrink-0" />
                 )}

@@ -46,15 +46,12 @@ const MAX_MESSAGES_PER_USER_DAY  = 20;   // Daily WhatsApp cap per user
 // client-side fallback call).
 const SINGLE_FIRE_EVENTS = new Set(["task_assigned"]);
 
-// Template routing — every WhatsApp-SENDING event uses a purpose-specific
-// UTILITY template (the old generic catch-all template was re-categorized
-// Marketing by Meta and has been retired):
-//   • horae_task_alert   — task assignments, reassignments, urgent task pings
-//   • horae_notice_alert — notices (and urgent notice pings)
-// Push-only ('normal'-tier) events — task CC/status/chat, training, checklist,
-// digest — carry NO waTemplate: they never send a paid WhatsApp, only web push.
+// Template routing — the only Utility template that ships WhatsApp is
+// horae_task_alert (task assignments, reassignments, urgent task pings).
+// Everything else — notices, task CC/status/chat, training, checklist, digest —
+// is push + in-app ONLY (no waTemplate), because Meta flagged the generic and
+// notice templates Marketing, and we won't pay Marketing rates.
 const TASK_TEMPLATE_NAME   = "horae_task_alert";
-const NOTICE_TEMPLATE_NAME = "horae_notice_alert";
 
 // ─── Plan B: push-first, WhatsApp only as last-mile fallback ───────────────────
 // WhatsApp is paid; web push is free. So paid WhatsApp is sent ONLY for:
@@ -70,7 +67,7 @@ const EVENT_TIERS: Record<string, "urgent" | "normal"> = {
   task_cc:            "normal", // CC users: push + digest only, never WhatsApp
   task_status:        "normal",
   task_chat:          "normal",
-  notice:             "urgent", // user choice: new notices always ping WhatsApp too
+  notice:             "normal", // app push + in-app ONLY (notice template flagged Marketing by Meta)
   training_published: "normal",
   checklist_posted:   "normal",
   daily_digest:       "normal", // push + in-app ONLY — never WhatsApp (digest content = Marketing category, too costly)
@@ -271,17 +268,15 @@ async function handleNoticePosted(notice: any) {
   for (const user of (users || [])) {
     if (user.id === notice.created_by_user_id) continue;
     if (!await checkAntiSpam(user.id, notice.tenant_id, "notice", notice.id)) continue;
-    // New notices now auto-send WhatsApp (notice tier = "urgent") in addition to
-    // push/in-app. The manual "Notify on WhatsApp" button is therefore redundant
-    // for the initial post; keep it only for re-pinging an existing notice.
+    // Notices are APP PUSH + in-app ONLY (notice tier = "normal", so no WhatsApp).
+    // Meta flagged the notice template Marketing, so we don't send it over WhatsApp.
     await sendNotifications(user, {
       waMessage: buildNoticeMessage(user.name, notice.title, notice.content?.slice(0, 100) || "", deepLink),
-      waTemplate: { name: NOTICE_TEMPLATE_NAME, params: [notice.title, `${(notice.content || "").slice(0, 80)} ${deepLink}`] },
       pushTitle: `📢 ${notice.title}`,
       pushBody: notice.content?.slice(0, 80) || "",
       url: deepLink,
       pushTag: `notice-${notice.id}`,
-    }, notice.tenant_id, "notice", notice.id, false, false);
+    }, notice.tenant_id, "notice", notice.id, false, true);
   }
 }
 
@@ -407,15 +402,16 @@ async function handleUrgentPush(kind: "task" | "notice" | "training", record: an
 
     await sendNotifications(user, {
       waMessage,
-      // Route onto the matching Utility template (notice → notice, task/training → task).
-      waTemplate: { name: kind === "notice" ? NOTICE_TEMPLATE_NAME : TASK_TEMPLATE_NAME, params: [record.title, kind === "training" ? `Training to complete. ${deepLink}` : `Urgent — Immediate action needed. ${deepLink}`] },
+      // Task/training urgent pings go WhatsApp on the Utility task template.
+      // Notices are app-push-only, so pushOnly is set for them below (no template).
+      waTemplate: { name: TASK_TEMPLATE_NAME, params: [record.title, kind === "training" ? `Training to complete. ${deepLink}` : `Urgent — Immediate action needed. ${deepLink}`] },
       pushTitle: kind === "task" ? `🔴 Urgent task: ${record.title}`
         : kind === "training" ? `📚 Training: ${record.title}`
         : `🔴 Urgent notice: ${record.title}`,
       pushBody: kind === "training" ? "Tap to complete your training" : "Immediate action needed",
       url: deepLink,
       pushTag: `urgent-${kind}-${record.id}`,
-    }, tenantId, "urgent_push", refId, true);
+    }, tenantId, "urgent_push", refId, true, kind === "notice");
   }
 }
 

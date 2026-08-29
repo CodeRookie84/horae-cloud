@@ -335,12 +335,15 @@ async function buildBriefingBody(userId: string, tenantId: string | null): Promi
     }
   } catch (_) { /* skip checklist line */ }
 
+  // Notices are highlighted and shown FIRST — management uses them for important
+  // updates, so they get emphasis (bold + a divider) above the rest.
+  let noticeLine = "";
   try {
     const since = new Date(Date.now() - 86400000).toISOString();
     let q = supabase.from("notices").select("id", { count: "exact", head: true }).gte("created_at", since);
     if (tenantId) q = q.eq("tenant_id", tenantId);
     const { count } = await q;
-    if (count) lines.push(`📢 ${count} new notice${count === 1 ? "" : "s"} today`);
+    if (count) noticeLine = `📢 *${count} NEW NOTICE${count === 1 ? "" : "S"} — PLEASE READ*\n➖➖➖➖➖➖➖➖➖`;
   } catch (_) { /* skip notices line */ }
 
   try {
@@ -348,8 +351,9 @@ async function buildBriefingBody(userId: string, tenantId: string | null): Promi
     if (pending) lines.push(`📚 ${pending} training pending`);
   } catch (_) { /* skip training line */ }
 
-  if (lines.length === 0) return `👋 Hi ${firstName}! You're all caught up 🎉\n\nWhat would you like to do?`;
-  return `👋 Hi ${firstName}! Here's your briefing:\n\n${lines.join("\n")}\n\nWhat would you like to do?`;
+  if (lines.length === 0 && !noticeLine) return `👋 Hi ${firstName}! You're all caught up 🎉\n\nWhat would you like to do?`;
+  const head = noticeLine ? `${noticeLine}\n` : "";
+  return `👋 Hi ${firstName}! Here's your briefing:\n\n${head}${lines.join("\n")}\n\nWhat would you like to do?`;
 }
 
 /** Count published trainings targeted to this user that they haven't passed. */
@@ -718,13 +722,6 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
 /** Save a reminder/note from "me …" / "I …". A trailing "- <time>" / "_ <time>"
  *  is parsed (India-aware, IST) into an optional remind_at; nothing is ever pushed. */
 async function createReminder(fromPhone: string, userId: string, tenantId: string | null, rest: string) {
-  // Dash-separated numeric dates (27-08-26 / 27-08) clash with the "- <time>"
-  // separator, so we'd mis-read them. Warn instead of saving something wrong.
-  if (/\b\d{1,2}-\d{1,2}-\d{2,4}\b/.test(rest) || /[-_]\s*\d{1,2}-\d{1,2}\s*$/.test(rest)) {
-    await sendText(fromPhone, "⚠️ I can't read dash dates like *27-08-26* — the dash clashes with the time separator, so it won't be saved correctly.\n\nUse *slashes* or a *month name* instead:\n• *me pay rent - 27/08/26*\n• *me pay rent - 27 Aug*");
-    return;
-  }
-
   let noteText = rest;
   let remindAt: string | null = null;
 
