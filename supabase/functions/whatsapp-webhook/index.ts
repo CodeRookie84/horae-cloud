@@ -22,6 +22,7 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import * as chrono from "https://esm.sh/chrono-node@2.7.7";
 import { transcribeAudio } from "../_shared/ai.ts";
 
 const SUPABASE_URL      = Deno.env.get("SUPABASE_URL")!;
@@ -150,6 +151,7 @@ async function handleInboundMessage(m: any, contact: any) {
       // "ts~<taskId>~<status>" = a status chosen from a task's status list → apply.
       // Everything else is a main-menu selection.
       if (listId.startsWith("tview~")) { await sendTaskDetail(fromPhone, userId, tenantId, listId.slice(6)); return; }
+      if (listId.startsWith("rdone~")) { await handleReminderDone(listId.slice(6), fromPhone); return; }
       if (listId.startsWith("ts~")) { await handleTaskStatusUpdate(listId, fromPhone, userId); return; }
       await handleMenuSelection(listId, fromPhone, userId, tenantId); return;
     }
@@ -190,11 +192,6 @@ async function handleInboundMessage(m: any, contact: any) {
         await addTaskComment(fromPhone, userId, pending.payload?.taskId, content);
         return;
       }
-      // "quick_task" → create a self-assigned task directly, no app link.
-      if (pending.intent === "quick_task") {
-        await createQuickTask(fromPhone, userId, tenantId, content);
-        return;
-      }
       const isComplaint = pending.intent === "complaint";
       await createCaptureAndReply(fromPhone, userId, tenantId, isComplaint ? "whatsapp_complaint" : "whatsapp_newtask", content, isComplaint);
       return;
@@ -229,6 +226,19 @@ async function handleInboundMessage(m: any, contact: any) {
     // "help" / "?" → the plain-text guide.
     if (text.length <= 8 && /^\s*(help|\?)/i.test(text)) {
       await sendHelp(fromPhone, userId);
+      return;
+    }
+    // "me …" / "I …" → save a personal reminder/note (pull-only, no push, no cost).
+    // "me" / "I" alone, or "reminders"/"notes" → list them.
+    const rem = text.match(/^\s*(me|i)\b(.*)$/is);
+    if (rem) {
+      const rest = (rem[2] || "").trim();
+      if (!rest || /^(reminders?|notes?|list)$/i.test(rest)) { await sendRemindersList(fromPhone, userId); return; }
+      await createReminder(fromPhone, userId, tenantId, rest);
+      return;
+    }
+    if (text.length <= 12 && /^\s*(reminders?|notes?)\b/i.test(text)) {
+      await sendRemindersList(fromPhone, userId);
       return;
     }
     // Any other free text (e.g. a forwarded message) → offer the action menu.
@@ -271,13 +281,13 @@ async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: strin
     body,
     "Choose",
     [
-      { id: "menu_view_tasks",    title: "📋 View my tasks" },
+      { id: "menu_view_tasks",    title: "📋 View & Update Tasks" },
       { id: "menu_create_task",   title: "📝 Create a task" },
       { id: "menu_complaint",     title: "⚠️ Raise a complaint" },
       { id: "menu_checklists",    title: "✅ My checklists" },
       { id: "menu_training",      title: "📚 My training" },
       { id: "menu_go_app",        title: "🔗 Go to Horae app", description: `${APP_BASE_URL}/dashboard` },
-      { id: "menu_quick_task",    title: "⚡ Quick task (for me)" },
+      { id: "menu_reminders",     title: "⏰ My reminders" },
     ],
   );
 }
@@ -363,7 +373,7 @@ async function pendingTrainingCount(userId: string, tenantId: string | null, use
 async function handleMenuSelection(id: string, fromPhone: string, userId: string, tenantId: string | null) {
   switch (id) {
     case "menu_create_task":   await startAwaitingInput(fromPhone, userId, tenantId, "create_task"); break;
-    case "menu_quick_task":    await startAwaitingInput(fromPhone, userId, tenantId, "quick_task"); break;
+    case "menu_reminders":     await sendRemindersList(fromPhone, userId); break;
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
     case "menu_view_tasks":    await sendTaskPickerForView(fromPhone, userId, tenantId); break;
     case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
@@ -382,8 +392,6 @@ async function startAwaitingInput(fromPhone: string, userId: string, tenantId: s
   const prompt =
     intent === "complaint"
       ? "⚠️ Please describe the complaint or issue. You can type it or send a voice note.\n\n(Reply *cancel* to go back.)"
-      : intent === "quick_task"
-      ? "⚡ *Quick task for you* — send the task in one message (type or voice). I'll create it, assign it to you, and set it due tomorrow.\n\n(Reply *cancel* to go back.)"
       : "📋 Please send the task details. You can type them or send a voice note.\n\n(Reply *cancel* to go back.)";
   await sendText(fromPhone, prompt);
 }
@@ -623,24 +631,69 @@ async function downloadMediaAsDataUri(mediaId: string): Promise<string | null> {
   }
 }
 
-/** Create a self-assigned task from one message (defaults: Medium, due tomorrow). */
-async function createQuickTask(fromPhone: string, userId: string, tenantId: string | null, content: string) {
-  const text = (content || "").trim();
-  if (!text) { await sendText(fromPhone, "That looked empty — reply *menu* → *Quick task* to try again."); return; }
-  const firstLine = text.split("\n").map(s => s.trim()).find(Boolean) || text;
-  const title = firstLine.length > 80 ? firstLine.slice(0, 77) + "…" : firstLine;
-  const due = new Date(Date.now() + 86400000).toISOString().slice(0, 10); // tomorrow
-  const taskId = "task-" + Date.now();
-  const meta = { assigneeIds: [userId], ccIds: [] };
-  const { error } = await supabase.from("tasks").insert([{
-    id: taskId, tenant_id: tenantId, title,
-    description: `${text}\n\n---HORAE-METADATA---\n${JSON.stringify(meta)}`,
-    status: "Assigned", priority: "Medium", due_date: due,
-    assigned_user_id: userId, assigned_user_ids: [userId], cc_user_ids: [],
-    created_by_user_id: userId, created_at: new Date().toISOString(),
+// ─── Personal reminders / notes (pull-only, zero messaging cost) ────────────────
+
+/** Format a stored UTC timestamp as a short IST label. */
+function fmtWhen(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short",
+      hour: "2-digit", minute: "2-digit",
+    });
+  } catch (_) { return iso.slice(0, 16).replace("T", " "); }
+}
+
+/** Save a reminder/note from "me …" / "I …". A trailing "- <time>" / "_ <time>"
+ *  is parsed (chrono, IST) into an optional remind_at; nothing is ever pushed. */
+async function createReminder(fromPhone: string, userId: string, tenantId: string | null, rest: string) {
+  let noteText = rest;
+  let remindAt: string | null = null;
+
+  // Split on the LAST "-" or "_": text before, time phrase after.
+  const m = rest.match(/^(.*)[\-_]\s*([^\-_]+)$/s);
+  if (m && m[1].trim()) {
+    const phrase = m[2].trim();
+    const dt = chrono.parseDate(phrase, { instant: new Date(), timezone: 330 } as any, { forwardDate: true });
+    if (dt) { noteText = m[1].trim(); remindAt = dt.toISOString(); }
+  }
+  noteText = noteText.trim();
+  if (!noteText) { await sendText(fromPhone, "📝 What should I note? e.g. *me call the vendor - at 3pm*"); return; }
+
+  const id = "rem-" + Date.now();
+  const { error } = await supabase.from("reminders").insert([{
+    id, user_id: userId, tenant_id: tenantId, text: noteText.slice(0, 300),
+    remind_at: remindAt, status: "pending",
   }]);
-  if (error) { console.error("[whatsapp-webhook] createQuickTask insert failed:", error); await sendText(fromPhone, "Sorry, I couldn't create that task. Please try again."); return; }
-  await sendText(fromPhone, `✅ Task created & assigned to you:\n*${title}*\nPriority: Medium · Due: ${due}\n\nReply *menu* → *📷 Add a photo* to attach one, or *🔄 Update task status* when you start.`);
+  if (error) { console.error("[whatsapp-webhook] createReminder failed:", error); await sendText(fromPhone, "Sorry, I couldn't save that. Please try again."); return; }
+
+  const whenStr = remindAt ? ` for *${fmtWhen(remindAt)}*` : "";
+  await sendText(fromPhone, `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"\n\nSend *me* (or *menu → My reminders*) any time to see your list.`);
+}
+
+/** List the user's pending reminders as a tappable list (tap → mark done). */
+async function sendRemindersList(fromPhone: string, userId: string) {
+  const { data } = await supabase.from("reminders")
+    .select("id, text, remind_at").eq("user_id", userId).eq("status", "pending")
+    .order("remind_at", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: false }).limit(10);
+
+  if (!data || data.length === 0) {
+    await sendText(fromPhone, "📝 You have no reminders.\n\nAdd one by sending *me <note> - <time>*\ne.g. *me call the vendor - tomorrow 9am*");
+    return;
+  }
+  await sendList(
+    fromPhone,
+    "📝 *Your reminders* — tap one to mark it done:",
+    "Reminders",
+    data.map((r: any) => ({ id: `rdone~${r.id}`, title: r.text, description: r.remind_at ? fmtWhen(r.remind_at) : "no time set" })),
+  );
+}
+
+/** Mark a reminder done (tapped from the list). */
+async function handleReminderDone(id: string, fromPhone: string) {
+  const { data: r } = await supabase.from("reminders").select("id, text").eq("id", id).single();
+  await supabase.from("reminders").update({ status: "done", updated_at: new Date().toISOString() }).eq("id", id);
+  await sendText(fromPhone, `✅ Done: "${(r?.text || "reminder").slice(0, 120)}"`);
 }
 
 /** Menu → "My checklists": list this outlet's pending checklists with a deep link. */

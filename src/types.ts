@@ -177,6 +177,16 @@ export interface Task {
   photos?: string[];
 }
 
+export interface Reminder {
+  id: string;
+  userId: string;
+  tenantId?: string;
+  text: string;
+  remindAt?: string;   // optional ISO "when" (display/sort only — never pushed)
+  status: "pending" | "done";
+  createdAt: string;
+}
+
 export interface OperationalNotification {
   id: string;
   tenantId: string;

@@ -18,6 +18,7 @@ import {
   SOP,
   SOPReadStatus,
   WhatsAppEngagementRow,
+  Reminder,
   isTargetMatched
 } from "../types";
 import supabase from "./supabaseClient";
@@ -2119,6 +2120,33 @@ export class StoreService {
 
     const tasks = await this.getTasks();
     return tasks.find(t => t.id === taskId) || null;
+  }
+
+  // ── Personal reminders / notes (pull-only; created here or from WhatsApp) ──────
+  public async getReminders(): Promise<Reminder[]> {
+    const me = await this.getActiveUser();
+    const { data } = await supabase.from('reminders').select('*')
+      .eq('user_id', me.id).order('created_at', { ascending: false });
+    return (data || []).map((r: any) => ({
+      id: r.id, userId: r.user_id, tenantId: r.tenant_id, text: r.text,
+      remindAt: r.remind_at || undefined, status: r.status, createdAt: r.created_at,
+    }));
+  }
+
+  public async addReminder(text: string, remindAt?: string): Promise<void> {
+    const me = await this.getActiveUser();
+    await supabase.from('reminders').insert([{
+      id: 'rem-' + Date.now(), user_id: me.id, tenant_id: me.tenantId,
+      text: text.slice(0, 300), remind_at: remindAt || null, status: 'pending',
+    }]);
+  }
+
+  public async completeReminder(id: string): Promise<void> {
+    await supabase.from('reminders').update({ status: 'done', updated_at: new Date().toISOString() }).eq('id', id);
+  }
+
+  public async deleteReminder(id: string): Promise<void> {
+    await supabase.from('reminders').delete().eq('id', id);
   }
 
   public async sendUrgentWhatsAppPush(kind: "task" | "notice", recordId: string): Promise<void> {

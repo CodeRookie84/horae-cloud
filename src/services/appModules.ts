@@ -11,6 +11,7 @@ import type { ComponentType } from 'react';
 import {
   Layers, Megaphone, ClipboardCheck, MessageSquare,
   GraduationCap, BookOpen, FileText, Wrench, ShieldCheck,
+  Clock, // Reminders
   Cake, // [KOT] launcher icon
 } from 'lucide-react';
 
@@ -57,6 +58,8 @@ export function getAppModules(ctx: ModuleGateContext): AppModule[] {
   if (has('maintenance') && (clitAccess || isAdmin(role))) push({ id: 'maintenance', label: 'Maintenance', icon: Wrench, accent: 'bg-slate-200 text-slate-700' });
   if (has('training')) push({ id: 'training', label: 'Training', icon: GraduationCap, accent: 'bg-violet-100 text-violet-600' });
   if (has('sops')) push({ id: 'sops', label: 'SOPs', icon: FileText, accent: 'bg-teal-100 text-teal-600' });
+  // Personal reminders/notes — available to everyone, no plan gate.
+  push({ id: 'reminders', label: 'Reminders', icon: Clock, accent: 'bg-orange-100 text-orange-600' });
 
   // [KOT] Cake-order tracking — self-contained module, gated by kotAccess only
   // (independent of plan features). Remove this line to drop the KOT icon.
