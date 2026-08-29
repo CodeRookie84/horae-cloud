@@ -650,8 +650,73 @@ function fmtWhen(iso: string): string {
   } catch (_) { return iso.slice(0, 16).replace("T", " "); }
 }
 
+const REMINDER_MONTHS: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11,
+  january: 0, february: 1, march: 2, april: 3, june: 5, july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+};
+
+/** Parse a clock time like "10am", "10 am", "2:30 pm", "at 14:00" → {h,m} or null. */
+function parseClock(s: string): { h: number; m: number } | null {
+  const tm = (s || "").match(/(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if (!tm) return null;
+  let h = +tm[1]; const mi = tm[2] ? +tm[2] : 0; const ap = tm[3]?.toLowerCase();
+  if (!tm[3] && !tm[2] && (s || "").trim() !== tm[1]) return { h, m: mi };
+  if (ap === "pm" && h < 12) h += 12;
+  if (ap === "am" && h === 12) h = 0;
+  if (h > 23) return null;
+  return { h, m: mi };
+}
+
+/**
+ * India-aware "when" parser. Handles bare days (27 / 27th → current month),
+ * day+month (27 Aug / 27th August), and DD/MM[/YY] slash dates (5/8 = 5 Aug, NOT
+ * May 8 — chrono's US default gets this wrong). Falls back to chrono for natural
+ * language (tomorrow, next week, in an hour, 10am, today 3pm, next monday…).
+ * Returns a UTC Date or null; absolute dates are interpreted in IST. Dash-form
+ * numeric dates (27-08-26) are intentionally unsupported — they'd clash with the
+ * "- <time>" separator — so use slash or month-name form.
+ */
+function parseReminderWhen(phrase: string, now: Date): Date | null {
+  const p = (phrase || "").trim();
+  const lower = p.toLowerCase();
+  const ist = new Date(now.getTime() + 5.5 * 3600 * 1000);
+  const curY = ist.getUTCFullYear(), curM = ist.getUTCMonth();
+  const istToUtc = (y: number, mo: number, d: number, h = 9, mi = 0) =>
+    new Date(Date.UTC(y, mo, d, h, mi) - 5.5 * 3600 * 1000);
+  let m: RegExpMatchArray | null;
+
+  // DD/MM[/YY[YY]] slash date (day-first), optional trailing time.
+  m = lower.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(.*)$/);
+  if (m) {
+    const d = +m[1], mo = +m[2] - 1;
+    const y = m[3] ? (m[3].length <= 2 ? 2000 + +m[3] : +m[3]) : curY;
+    if (mo >= 0 && mo <= 11 && d >= 1 && d <= 31) {
+      const t = parseClock(m[4]) || { h: 9, m: 0 };
+      return istToUtc(y, mo, d, t.h, t.m);
+    }
+  }
+  // Day + month name (optional year, optional time).
+  m = lower.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\.?(?:\s+(\d{2,4}))?(.*)$/);
+  if (m && REMINDER_MONTHS[m[2]] !== undefined) {
+    const d = +m[1], mo = REMINDER_MONTHS[m[2]];
+    const y = m[3] ? (m[3].length <= 2 ? 2000 + +m[3] : +m[3]) : curY;
+    const t = parseClock(m[4]) || { h: 9, m: 0 };
+    return istToUtc(y, mo, d, t.h, t.m);
+  }
+  // Bare day: an ordinal (27th / 5th), or a plain 13–31 (unambiguously a day).
+  let bd = lower.match(/^(\d{1,2})(?:st|nd|rd|th)(?:\s+(.+))?$/);
+  if (!bd) { const n = lower.match(/^(\d{1,2})$/); if (n && +n[1] >= 13 && +n[1] <= 31) bd = [lower, n[1]] as unknown as RegExpMatchArray; }
+  if (bd) {
+    const d = +bd[1];
+    const t = parseClock(bd[2] || "") || { h: 9, m: 0 };
+    return istToUtc(curY, curM, d, t.h, t.m);
+  }
+  // Natural language.
+  return chrono.parseDate(p, { instant: now, timezone: 330 } as any, { forwardDate: true }) as Date | null;
+}
+
 /** Save a reminder/note from "me …" / "I …". A trailing "- <time>" / "_ <time>"
- *  is parsed (chrono, IST) into an optional remind_at; nothing is ever pushed. */
+ *  is parsed (India-aware, IST) into an optional remind_at; nothing is ever pushed. */
 async function createReminder(fromPhone: string, userId: string, tenantId: string | null, rest: string) {
   let noteText = rest;
   let remindAt: string | null = null;
@@ -660,8 +725,8 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
   const m = rest.match(/^(.*)[\-_]\s*([^\-_]+)$/s);
   if (m && m[1].trim()) {
     const phrase = m[2].trim();
-    const dt = chrono.parseDate(phrase, { instant: new Date(), timezone: 330 } as any, { forwardDate: true });
-    if (dt) { noteText = m[1].trim(); remindAt = dt.toISOString(); }
+    const dt = parseReminderWhen(phrase, new Date());
+    if (dt && !isNaN(dt.getTime())) { noteText = m[1].trim(); remindAt = dt.toISOString(); }
   }
   noteText = noteText.trim();
   if (!noteText) { await sendText(fromPhone, "📝 What should I note? e.g. *me call the vendor - at 3pm*"); return; }
