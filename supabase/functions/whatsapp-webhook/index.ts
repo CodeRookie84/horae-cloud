@@ -309,7 +309,7 @@ async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: strin
       { id: "menu_checklists",    title: "✅ My checklists" },
       { id: "menu_training",      title: "📚 My training" },
       { id: "menu_go_app",        title: "🔗 Go to Horae app", description: `${APP_BASE_URL}/dashboard` },
-      { id: "menu_reminders",     title: "⏰ My reminders" },
+      { id: "menu_reminders",     title: "⏰ Remind" },
     ],
   );
 }
@@ -803,9 +803,12 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   const { data } = await q;
 
   if (!data || data.length === 0) { await sendText(fromPhone, emptyMsg); return; }
+  const hint = filter === "all"
+    ? "\n\n➕ Add: send *me <note> - <time>*  (e.g. *me call vendor - tomorrow 9am*)\n🔎 See: send *me* · *today* · *tomorrow*"
+    : "";
   await sendList(
     fromPhone,
-    `📝 *${label}* — tap one to mark it done.${filter === "all" ? "\n(Reply *today* or *tomorrow* to filter.)" : ""}`,
+    `📝 *${label}* — tap one to mark it done.${hint}`,
     "Reminders",
     data.map((r: any) => ({ id: `rdone~${r.id}`, title: r.text, description: r.remind_at ? fmtWhen(r.remind_at) : "no time set" })),
   );
