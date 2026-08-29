@@ -229,17 +229,24 @@ async function handleInboundMessage(m: any, contact: any) {
       return;
     }
     // "me …" / "I …" → save a personal reminder/note (pull-only, no push, no cost).
-    // "me" / "I" alone, or "reminders"/"notes" → list them.
+    // "me"/"I" alone (or a keyword: reminders, today, tomorrow, week) → LIST them,
+    // filtered by the keyword. Anything else after me/I is the note to save.
     const rem = text.match(/^\s*(me|i)\b(.*)$/is);
     if (rem) {
       const rest = (rem[2] || "").trim();
-      if (!rest || /^(reminders?|notes?|list)$/i.test(rest)) { await sendRemindersList(fromPhone, userId); return; }
+      const filter = reminderFilterFromKeyword(rest);
+      if (filter) { await sendRemindersList(fromPhone, userId, filter); return; }
       await createReminder(fromPhone, userId, tenantId, rest);
       return;
     }
-    if (text.length <= 12 && /^\s*(reminders?|notes?)\b/i.test(text)) {
-      await sendRemindersList(fromPhone, userId);
-      return;
+    // Standalone fetch keywords (exact, short): reminders / notes / today / tomorrow / week.
+    if (text.length <= 12) {
+      const kw = reminderFilterFromKeyword(text.trim());
+      // Only the specific date/list words trigger here (not an empty string).
+      if (kw && /^(reminders?|notes?|today|tomorrow|tmrw|this ?week|week)$/i.test(text.trim())) {
+        await sendRemindersList(fromPhone, userId, kw);
+        return;
+      }
     }
     // Any other free text (e.g. a forwarded message) → offer the action menu.
     await offerCaptureMenu(fromPhone, userId, tenantId, text);
@@ -670,20 +677,51 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
   await sendText(fromPhone, `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"\n\nSend *me* (or *menu → My reminders*) any time to see your list.`);
 }
 
-/** List the user's pending reminders as a tappable list (tap → mark done). */
-async function sendRemindersList(fromPhone: string, userId: string) {
-  const { data } = await supabase.from("reminders")
-    .select("id, text, remind_at").eq("user_id", userId).eq("status", "pending")
-    .order("remind_at", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: false }).limit(10);
+type ReminderFilter = "all" | "today" | "tomorrow" | "week";
 
-  if (!data || data.length === 0) {
-    await sendText(fromPhone, "📝 You have no reminders.\n\nAdd one by sending *me <note> - <time>*\ne.g. *me call the vendor - tomorrow 9am*");
-    return;
+/** Map a keyword to a reminders filter, or null if it's not a fetch keyword. */
+function reminderFilterFromKeyword(s: string): ReminderFilter | null {
+  const t = (s || "").trim().toLowerCase();
+  if (t === "" || /^(reminders?|notes?|list|all)$/.test(t)) return "all";
+  if (t === "today") return "today";
+  if (t === "tomorrow" || t === "tmrw") return "tomorrow";
+  if (/^(this ?week|week)$/.test(t)) return "week";
+  return null;
+}
+
+/** UTC range [from, to) for an IST calendar day (0 = today, 1 = tomorrow). */
+function istDayRange(dayOffset: number): { from: string; to: string } {
+  const IST = 5.5 * 3600 * 1000;
+  const ist = new Date(Date.now() + IST);
+  const from = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + dayOffset, 0, 0, 0) - IST;
+  return { from: new Date(from).toISOString(), to: new Date(from + 86400000).toISOString() };
+}
+
+/** List the user's pending reminders (optionally filtered), tappable → mark done. */
+async function sendRemindersList(fromPhone: string, userId: string, filter: ReminderFilter = "all") {
+  let q = supabase.from("reminders")
+    .select("id, text, remind_at").eq("user_id", userId).eq("status", "pending");
+
+  let label = "Your reminders";
+  let emptyMsg = "📝 You have no reminders.\n\nAdd one by sending *me <note> - <time>*\ne.g. *me call the vendor - tomorrow 9am*";
+  if (filter === "today" || filter === "tomorrow") {
+    const { from, to } = istDayRange(filter === "today" ? 0 : 1);
+    q = q.gte("remind_at", from).lt("remind_at", to);
+    label = filter === "today" ? "Today's reminders" : "Tomorrow's reminders";
+    emptyMsg = `📝 Nothing due ${filter}.`;
+  } else if (filter === "week") {
+    q = q.gte("remind_at", new Date().toISOString()).lt("remind_at", new Date(Date.now() + 7 * 86400000).toISOString());
+    label = "This week's reminders";
+    emptyMsg = "📝 Nothing due in the next 7 days.";
   }
+  q = q.order("remind_at", { ascending: true, nullsFirst: false })
+       .order("created_at", { ascending: false }).limit(10);
+  const { data } = await q;
+
+  if (!data || data.length === 0) { await sendText(fromPhone, emptyMsg); return; }
   await sendList(
     fromPhone,
-    "📝 *Your reminders* — tap one to mark it done:",
+    `📝 *${label}* — tap one to mark it done.${filter === "all" ? "\n(Reply *today* or *tomorrow* to filter.)" : ""}`,
     "Reminders",
     data.map((r: any) => ({ id: `rdone~${r.id}`, title: r.text, description: r.remind_at ? fmtWhen(r.remind_at) : "no time set" })),
   );
