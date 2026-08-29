@@ -399,7 +399,7 @@ async function pendingTrainingCount(userId: string, tenantId: string | null, use
 async function handleMenuSelection(id: string, fromPhone: string, userId: string, tenantId: string | null) {
   switch (id) {
     case "menu_create_task":   await startAwaitingInput(fromPhone, userId, tenantId, "create_task"); break;
-    case "menu_reminders":     await sendRemindersList(fromPhone, userId); break;
+    case "menu_reminders":     await sendRemindersList(fromPhone, userId, "all", true); break;
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
     case "menu_view_tasks":    await sendTaskPickerForView(fromPhone, userId, tenantId); break;
     case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
@@ -781,8 +781,10 @@ function istDayRange(dayOffset: number): { from: string; to: string } {
   return { from: new Date(from).toISOString(), to: new Date(from + 86400000).toISOString() };
 }
 
-/** List the user's pending reminders (optionally filtered), tappable → mark done. */
-async function sendRemindersList(fromPhone: string, userId: string, filter: ReminderFilter = "all") {
+/** List the user's pending reminders (optionally filtered), tappable → mark done.
+ *  `showHint` adds the add/see instructions — on only for the menu "Remind" tap,
+ *  not for a plain "me" / "me today" fetch. */
+async function sendRemindersList(fromPhone: string, userId: string, filter: ReminderFilter = "all", showHint = false) {
   let q = supabase.from("reminders")
     .select("id, text, remind_at").eq("user_id", userId).eq("status", "pending");
 
@@ -803,8 +805,8 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   const { data } = await q;
 
   if (!data || data.length === 0) { await sendText(fromPhone, emptyMsg); return; }
-  const hint = filter === "all"
-    ? "\n\n➕ Add: send *me <note> - <time>*  (e.g. *me call vendor - tomorrow 9am*)\n🔎 See: send *me* · *today* · *tomorrow*"
+  const hint = showHint
+    ? "\n\n➕ Add: send *me <note> - <time>*  (e.g. *me call vendor - tomorrow 9am*)\n🔎 See: send *me* or *me today* or *me tomorrow*"
     : "";
   await sendList(
     fromPhone,
