@@ -126,6 +126,8 @@ serve(async (req) => {
       await handleUrgentPush(body.kind, body.record, body.userIds, body.tenantId);
     } else if (type === "TASK_REASSIGNED") {
       await handleTaskReassigned(body.record, body.newPrimaryId, body.actorName);
+    } else if (type === "NUDGE") {
+      await handleMorningNudge(body.userId, body.tenantId, body.summary);
     }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
@@ -342,6 +344,35 @@ async function getTrainingAudience(training: any): Promise<any[]> {
     (dept === "All Departments" || String(u.department) === dept) &&
     (role === "All Roles" || String(u.role) === role)
   );
+}
+
+/**
+ * Morning "reply Hi" nudge — a single Utility (horae_task_alert) WhatsApp that
+ * prompts the staff member to reply Hi and get their full briefing FREE inside
+ * the window they open by replying. Sent by daily-digest's morning run ONLY to
+ * users who actually have pending items (so it's genuinely transactional, not a
+ * blast). Respects opt-in + the daily cap. This is the only scheduled paid ping.
+ */
+async function handleMorningNudge(userId: string, tenantId: string, summary: string) {
+  const user = await getUser(userId);
+  if (!user || !user.phone_number || !user.whatsapp_opted_in || DISABLE_WHATSAPP) return;
+
+  // Daily WhatsApp cap (real sends only) — never exceed it with the nudge.
+  const today = new Date().toISOString().slice(0, 10);
+  const { count } = await supabase.from("notification_log")
+    .select("id", { count: "exact" })
+    .eq("user_id", user.id).eq("channel", "whatsapp").eq("status", "sent")
+    .neq("event_type", "debug").gte("sent_at", today + "T00:00:00Z");
+  if ((count || 0) >= MAX_MESSAGES_PER_USER_DAY) return;
+
+  const deepLink = `${APP_BASE_URL}/digest`;
+  const body = `${summary} Reply *Hi* here for your full briefing. ${deepLink}`;
+  try {
+    const wamid = await sendWhatsApp(user.phone_number, "", { name: TASK_TEMPLATE_NAME, params: ["Updates for the day", body] });
+    await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "sent", undefined, false, wamid);
+  } catch (e) {
+    await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "failed", String(e));
+  }
 }
 
 async function handleDigest(userId: string, tenantId: string, items: any, runMode: "morning" | "evening" = "morning") {

@@ -259,6 +259,24 @@ serve(async (req) => {
       } else {
         console.error(`[daily-digest] Failed for user ${user.id}:`, await res.text());
       }
+
+      // Morning-only WhatsApp "reply Hi" nudge — sent ONLY to users who have real
+      // pending items AND WhatsApp, so it stays transactional (Utility) and cheap.
+      // The digest itself is push-only; this single Utility ping earns the free
+      // 24h window when they reply Hi.
+      if (runMode === "morning" && user.phone_number && user.whatsapp_opted_in) {
+        const bits: string[] = [];
+        if (items.tasks.length)      bits.push(`${items.tasks.length} task${items.tasks.length === 1 ? "" : "s"}`);
+        if (items.notices.length)    bits.push(`${items.notices.length} notice${items.notices.length === 1 ? "" : "s"}`);
+        if (items.checklists.length) bits.push(`${items.checklists.length} checklist${items.checklists.length === 1 ? "" : "s"}`);
+        if (items.training.length)   bits.push(`${items.training.length} training`);
+        const summary = bits.length ? `You have ${bits.join(", ")} today.` : "You have updates today.";
+        await fetch(DISPATCHER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SUPABASE_SERVICE}` },
+          body: JSON.stringify({ type: "NUDGE", userId: user.id, tenantId: tenant.id, summary }),
+        }).catch(() => { /* non-fatal */ });
+      }
     }
   }
 
