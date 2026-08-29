@@ -365,8 +365,7 @@ async function handleMorningNudge(userId: string, tenantId: string, summary: str
     .neq("event_type", "debug").gte("sent_at", today + "T00:00:00Z");
   if ((count || 0) >= MAX_MESSAGES_PER_USER_DAY) return;
 
-  const deepLink = `${APP_BASE_URL}/digest`;
-  const body = `${summary} Reply *Hi* here for your full briefing. ${deepLink}`;
+  const body = `${summary} Reply *Hi* here for the details.`;
   try {
     const wamid = await sendWhatsApp(user.phone_number, "", { name: TASK_TEMPLATE_NAME, params: ["Updates for the day", body] });
     await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "sent", undefined, false, wamid);

@@ -266,10 +266,10 @@ serve(async (req) => {
       // 24h window when they reply Hi.
       if (runMode === "morning" && user.phone_number && user.whatsapp_opted_in) {
         const bits: string[] = [];
-        if (items.tasks.length)      bits.push(`${items.tasks.length} task${items.tasks.length === 1 ? "" : "s"}`);
-        if (items.notices.length)    bits.push(`${items.notices.length} notice${items.notices.length === 1 ? "" : "s"}`);
-        if (items.checklists.length) bits.push(`${items.checklists.length} checklist${items.checklists.length === 1 ? "" : "s"}`);
-        if (items.training.length)   bits.push(`${items.training.length} training`);
+        if (items.tasks.length)      bits.push("Pending tasks");
+        if (items.notices.length)    bits.push("Unread notices");
+        if (items.checklists.length) bits.push("Pending checklists");
+        if (items.training.length)   bits.push("Pending training");
         const summary = bits.length ? `You have ${bits.join(", ")} today.` : "You have updates today.";
         await fetch(DISPATCHER_URL, {
           method: "POST",

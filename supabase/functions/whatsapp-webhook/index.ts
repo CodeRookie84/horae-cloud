@@ -175,6 +175,21 @@ async function handleInboundMessage(m: any, contact: any) {
     return;
   }
 
+  // A greeting / menu / cancel command ALWAYS takes priority — even mid-flow — so
+  // a stray "Hi" is never swallowed as task/comment content. Clear any pending
+  // input session and show the menu (this fixes "Hi" replying with a task link).
+  if (m.type === "text") {
+    const t = (m.text?.body || "").trim();
+    if ((t.length <= 12 && /^\s*(hi|hai|hey|hello|menu|start)\b/i.test(t)) || /^\s*(cancel|back|stop)\b/i.test(t)) {
+      await supabase.from("whatsapp_conversations")
+        .update({ state: "cancelled", updated_at: new Date().toISOString() })
+        .eq("user_id", userId).eq("state", "awaiting_input");
+      await sendMainMenu(fromPhone, userId, tenantId);
+      return;
+    }
+    if (t.length <= 8 && /^\s*(help|\?)/i.test(t)) { await sendHelp(fromPhone, userId); return; }
+  }
+
   // If the user just chose "Create a task"/"Raise a complaint" from the menu,
   // their next text/voice message IS the content — consume it here.
   if (m.type === "text" || m.type === "audio") {
