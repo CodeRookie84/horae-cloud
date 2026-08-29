@@ -146,11 +146,9 @@ async function handleInboundMessage(m: any, contact: any) {
   if (m.type === "interactive") {
     const listId = m.interactive?.list_reply?.id;
     if (listId) {
-      // "tpick~<taskId>" = a task chosen from the menu's status-update picker →
-      // show its status list. "ts~<taskId>~<status>" = a status chosen from that
-      // list → apply it. Everything else is a main-menu selection.
-      if (listId.startsWith("tpick~")) { await sendTaskStatusList(fromPhone, listId.slice(6), userId); return; }
-      if (listId.startsWith("cpick~")) { await startCommentForTask(fromPhone, userId, tenantId, listId.slice(6)); return; }
+      // "tview~<taskId>" = a task chosen from "View my tasks" → show its detail.
+      // "ts~<taskId>~<status>" = a status chosen from a task's status list → apply.
+      // Everything else is a main-menu selection.
       if (listId.startsWith("tview~")) { await sendTaskDetail(fromPhone, userId, tenantId, listId.slice(6)); return; }
       if (listId.startsWith("ts~")) { await handleTaskStatusUpdate(listId, fromPhone, userId); return; }
       await handleMenuSelection(listId, fromPhone, userId, tenantId); return;
@@ -273,15 +271,13 @@ async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: strin
     body,
     "Choose",
     [
-      { id: "menu_create_task",   title: "📋 Create a task" },
-      { id: "menu_quick_task",    title: "⚡ Quick task (for me)" },
-      { id: "menu_add_comment",   title: "💬 Comment on a task" },
-      { id: "menu_update_status", title: "🔄 Update task status" },
       { id: "menu_view_tasks",    title: "📋 View my tasks" },
+      { id: "menu_create_task",   title: "📝 Create a task" },
+      { id: "menu_complaint",     title: "⚠️ Raise a complaint" },
       { id: "menu_checklists",    title: "✅ My checklists" },
       { id: "menu_training",      title: "📚 My training" },
-      { id: "menu_complaint",     title: "⚠️ Raise a complaint" },
       { id: "menu_go_app",        title: "🔗 Go to Horae app", description: `${APP_BASE_URL}/dashboard` },
+      { id: "menu_quick_task",    title: "⚡ Quick task (for me)" },
     ],
   );
 }
@@ -368,9 +364,7 @@ async function handleMenuSelection(id: string, fromPhone: string, userId: string
   switch (id) {
     case "menu_create_task":   await startAwaitingInput(fromPhone, userId, tenantId, "create_task"); break;
     case "menu_quick_task":    await startAwaitingInput(fromPhone, userId, tenantId, "quick_task"); break;
-    case "menu_add_comment":   await sendTaskPickerForComment(fromPhone, userId, tenantId); break;
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
-    case "menu_update_status": await sendTaskPickerForStatus(fromPhone, userId, tenantId); break;
     case "menu_view_tasks":    await sendTaskPickerForView(fromPhone, userId, tenantId); break;
     case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
     case "menu_training":      await sendTrainingList(fromPhone, userId, tenantId); break;
@@ -411,69 +405,17 @@ async function takePendingInput(userId: string): Promise<{ id: string; intent: s
 }
 
 /**
- * Menu → "Update task status": show the user's open tasks as a TAPPABLE list.
- * Tapping a task (row id `tpick~<taskId>`) then shows the status picker — so the
- * whole update happens inside WhatsApp, no app link needed. This is the
- * button-free equivalent of the task-alert "Update status" button.
- */
-async function sendTaskPickerForStatus(fromPhone: string, userId: string, tenantId: string | null) {
-  let q = supabase.from("tasks")
-    .select("id, title, status")
-    .contains("assigned_user_ids", [userId])
-    .not("status", "in", '("Completed","Closed")')
-    .order("created_at", { ascending: false }).limit(10);
-  if (tenantId) q = q.eq("tenant_id", tenantId);
-  const { data: tasks } = await q;
-
-  if (!tasks || tasks.length === 0) {
-    await sendText(fromPhone, "✅ You have no open tasks to update right now.");
-    return;
-  }
-  await sendList(
-    fromPhone,
-    "🔄 *Update a task* — pick which one:",
-    "Pick task",
-    tasks.map((t: any) => ({ id: `tpick~${t.id}`, title: t.title, description: `Currently: ${t.status}` })),
-  );
-}
-
-/**
- * Menu → "Comment on a task": show the user's open tasks as a tappable list.
- * Tapping a task (row id `cpick~<taskId>`) then asks for the comment text/voice,
- * which is captured back into the task chat — mirrors the update-status flow.
- */
-async function sendTaskPickerForComment(fromPhone: string, userId: string, tenantId: string | null) {
-  let q = supabase.from("tasks")
-    .select("id, title, status")
-    .contains("assigned_user_ids", [userId])
-    .not("status", "in", '("Completed","Closed")')
-    .order("created_at", { ascending: false }).limit(10);
-  if (tenantId) q = q.eq("tenant_id", tenantId);
-  const { data: tasks } = await q;
-
-  if (!tasks || tasks.length === 0) {
-    await sendText(fromPhone, "✅ You have no open tasks to comment on right now.");
-    return;
-  }
-  await sendList(
-    fromPhone,
-    "💬 *Comment on a task* — pick which one:",
-    "Pick task",
-    tasks.map((t: any) => ({ id: `cpick~${t.id}`, title: t.title, description: `Currently: ${t.status}` })),
-  );
-}
-
-/**
  * Menu → "View my tasks": list the user's tasks (primary or CC) as a tappable
  * list. Tapping one (row id `tview~<taskId>`) shows the FULL task detail —
  * description, assigned-by, comments and photos — entirely in WhatsApp.
  */
 async function sendTaskPickerForView(fromPhone: string, userId: string, tenantId: string | null) {
+  // Fetch one extra (11) so we can tell whether there are MORE than 10.
   let q = supabase.from("tasks")
     .select("id, title, status")
     .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
     .not("status", "in", '("Completed","Closed")')
-    .order("created_at", { ascending: false }).limit(10);
+    .order("created_at", { ascending: false }).limit(11);
   if (tenantId) q = q.eq("tenant_id", tenantId);
   const { data: tasks } = await q;
 
@@ -481,11 +423,23 @@ async function sendTaskPickerForView(fromPhone: string, userId: string, tenantId
     await sendText(fromPhone, "📋 You have no active tasks right now.");
     return;
   }
+  // Exactly one task → skip the picker and open it straight away (fewer taps).
+  if (tasks.length === 1) {
+    await sendTaskDetail(fromPhone, userId, tenantId, tasks[0].id);
+    return;
+  }
+  // A WhatsApp list caps at 10 rows; if there are more, show the newest 10 and
+  // point the rest to the app.
+  const hasMore = tasks.length > 10;
+  const rows = tasks.slice(0, 10);
+  const body = hasMore
+    ? "📋 *Your tasks* — your 10 most recent are below (open the app to see them all). Pick one:"
+    : "📋 *Your tasks* — pick one to see the full details:";
   await sendList(
     fromPhone,
-    "📋 *Your tasks* — pick one to see the full details:",
+    body,
     "View task",
-    tasks.map((t: any) => ({ id: `tview~${t.id}`, title: t.title, description: t.status })),
+    rows.map((t: any) => ({ id: `tview~${t.id}`, title: t.title, description: t.status })),
   );
 }
 
