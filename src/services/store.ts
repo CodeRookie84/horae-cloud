@@ -2125,8 +2125,10 @@ export class StoreService {
   // ── Personal reminders / notes (pull-only; created here or from WhatsApp) ──────
   public async getReminders(): Promise<Reminder[]> {
     const me = await this.getActiveUser();
+    // Reminders only — the same table also holds WhatsApp "meet" meetings
+    // (kind = 'meeting'), which must not appear on the Reminders screen.
     const { data } = await supabase.from('reminders').select('*')
-      .eq('user_id', me.id).order('created_at', { ascending: false });
+      .eq('user_id', me.id).eq('kind', 'reminder').order('created_at', { ascending: false });
     return (data || []).map((r: any) => ({
       id: r.id, userId: r.user_id, tenantId: r.tenant_id, text: r.text,
       remindAt: r.remind_at || undefined, status: r.status, createdAt: r.created_at,
@@ -2137,7 +2139,7 @@ export class StoreService {
     const me = await this.getActiveUser();
     await supabase.from('reminders').insert([{
       id: 'rem-' + Date.now(), user_id: me.id, tenant_id: me.tenantId,
-      text: text.slice(0, 300), remind_at: remindAt || null, status: 'pending',
+      text: text.slice(0, 300), remind_at: remindAt || null, status: 'pending', kind: 'reminder',
     }]);
   }
 

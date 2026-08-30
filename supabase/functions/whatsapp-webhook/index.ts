@@ -122,13 +122,15 @@ async function handleInboundMessage(m: any, contact: any) {
   const contextWamid: string | undefined = m?.context?.id;
 
   // Resolve to a Horae user by the last 10 digits of their phone number — same
-  // convention store.ts's normalizePhone() uses for login matching.
+  // convention store.ts's normalizePhone() uses for login matching. Matched
+  // against the indexed generated column `phone_last10` (exact match, not a
+  // leading-wildcard LIKE) so this stays fast as the users table grows.
   const last10 = fromPhone.replace(/\D/g, "").slice(-10);
   let userId: string | null = null;
   let tenantId: string | null = null;
   if (last10.length === 10) {
     const { data: matched } = await supabase
-      .from("users").select("id, tenant_id").like("phone_number", `%${last10}`).limit(1);
+      .from("users").select("id, tenant_id").eq("phone_last10", last10).limit(1);
     if (matched && matched[0]) { userId = matched[0].id; tenantId = matched[0].tenant_id; }
   }
 
@@ -243,6 +245,14 @@ async function handleInboundMessage(m: any, contact: any) {
       await sendHelp(fromPhone, userId);
       return;
     }
+    // "done N" / "remove N" → mark item N (from the numbered list we last showed
+    // this user) done. Also accepts several numbers, e.g. "done 1 3".
+    const doneMatch = text.match(/^\s*(?:done|remove|del|delete|complete|did|finish(?:ed)?)\s+([\d,\s]+)$/i);
+    if (doneMatch) {
+      const handled = await handleListDone(fromPhone, userId, doneMatch[1]);
+      if (handled) return;
+      // Not a valid "done N" against any recent list → fall through to normal handling.
+    }
     // "rem …" → save a personal reminder/note (pull-only, no push, no cost).
     // "rem" alone (or a keyword: reminders, today, tomorrow, week) → LIST them,
     // filtered by the keyword. Anything else after "rem" is the note to save.
@@ -250,8 +260,31 @@ async function handleInboundMessage(m: any, contact: any) {
     if (rem) {
       const rest = (rem[1] || "").trim();
       const filter = reminderFilterFromKeyword(rest);
-      if (filter) { await sendRemindersList(fromPhone, userId, filter); return; }
-      await createReminder(fromPhone, userId, tenantId, rest);
+      if (filter) { await sendRemindersList(fromPhone, userId, filter, false, "reminder"); return; }
+      await createReminder(fromPhone, userId, tenantId, rest, "reminder");
+      return;
+    }
+    // "meet …" → save/list MEETINGS. Same reminders table, kind = 'meeting'.
+    // "meet" alone (or a date keyword) → LIST meetings; anything else → save one.
+    const meet = text.match(/^\s*meet(?:ing)?\b(.*)$/is);
+    if (meet) {
+      const rest = (meet[1] || "").trim();
+      const filter = reminderFilterFromKeyword(rest);
+      if (filter) { await sendRemindersList(fromPhone, userId, filter, false, "meeting"); return; }
+      await createReminder(fromPhone, userId, tenantId, rest, "meeting");
+      return;
+    }
+    // "task"/"tasks" → FETCH your tasks (bare, or "task list/all/open/pending").
+    // "task <details>" → CREATE: opens the same prefilled task form (assignees,
+    // due date, …) as "Create a task" does. ("new task …" is handled earlier.)
+    const taskKw = text.match(/^\s*tasks?\b(.*)$/is);
+    if (taskKw) {
+      const rest = (taskKw[1] || "").trim();
+      if (!rest || /^(list|all|my|open|pending|view)$/i.test(rest)) {
+        await sendTaskPickerForView(fromPhone, userId, tenantId);
+      } else {
+        await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_newtask", rest);
+      }
       return;
     }
     // Standalone fetch keywords (exact, short): reminders / notes / today / tomorrow / week.
@@ -259,7 +292,7 @@ async function handleInboundMessage(m: any, contact: any) {
       const kw = reminderFilterFromKeyword(text.trim());
       // Only the specific date/list words trigger here (not an empty string).
       if (kw && /^(reminders?|notes?|today|tomorrow|tmrw|this ?week|week)$/i.test(text.trim())) {
-        await sendRemindersList(fromPhone, userId, kw);
+        await sendRemindersList(fromPhone, userId, kw, false, "reminder");
         return;
       }
     }
@@ -310,6 +343,7 @@ async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: strin
       { id: "menu_training",      title: "📚 My training" },
       { id: "menu_go_app",        title: "🔗 Go to Horae app", description: `${APP_BASE_URL}/dashboard` },
       { id: "menu_reminders",     title: "⏰ Remind" },
+      { id: "menu_meetings",      title: "📅 Meetings" },
     ],
   );
 }
@@ -366,9 +400,11 @@ async function buildBriefingBody(userId: string, tenantId: string | null): Promi
     if (pending) lines.push(`📚 ${pending} training pending`);
   } catch (_) { /* skip training line */ }
 
-  if (lines.length === 0 && !noticeLine) return `👋 Hi ${firstName}! You're all caught up 🎉\n\nWhat would you like to do?`;
+  // Quick keyword hints so staff discover the type-to-do shortcuts.
+  const tips = `💡 *Quick keywords:* type *task*, *rem* or *meet* to see them — or add with *rem <note> # <time>* (e.g. *rem call vendor # 31-08 3pm*).`;
+  if (lines.length === 0 && !noticeLine) return `👋 Hi ${firstName}! You're all caught up 🎉\n\n${tips}\n\nWhat would you like to do?`;
   const head = noticeLine ? `${noticeLine}\n` : "";
-  return `👋 Hi ${firstName}! Here's your briefing:\n\n${head}${lines.join("\n")}\n\nWhat would you like to do?`;
+  return `👋 Hi ${firstName}! Here's your briefing:\n\n${head}${lines.join("\n")}\n\n${tips}\n\nWhat would you like to do?`;
 }
 
 /** Count published trainings targeted to this user that they haven't passed. */
@@ -399,7 +435,8 @@ async function pendingTrainingCount(userId: string, tenantId: string | null, use
 async function handleMenuSelection(id: string, fromPhone: string, userId: string, tenantId: string | null) {
   switch (id) {
     case "menu_create_task":   await startAwaitingInput(fromPhone, userId, tenantId, "create_task"); break;
-    case "menu_reminders":     await sendRemindersList(fromPhone, userId, "all", true); break;
+    case "menu_reminders":     await sendRemindersList(fromPhone, userId, "all", true, "reminder"); break;
+    case "menu_meetings":      await sendRemindersList(fromPhone, userId, "all", true, "meeting"); break;
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
     case "menu_view_tasks":    await sendTaskPickerForView(fromPhone, userId, tenantId); break;
     case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
@@ -688,12 +725,12 @@ function parseClock(s: string): { h: number; m: number } | null {
 
 /**
  * India-aware "when" parser. Handles bare days (27 / 27th → current month),
- * day+month (27 Aug / 27th August), and DD/MM[/YY] slash dates (5/8 = 5 Aug, NOT
- * May 8 — chrono's US default gets this wrong). Falls back to chrono for natural
- * language (tomorrow, next week, in an hour, 10am, today 3pm, next monday…).
- * Returns a UTC Date or null; absolute dates are interpreted in IST. Dash-form
- * numeric dates (27-08-26) are intentionally unsupported — they'd clash with the
- * "- <time>" separator — so use slash or month-name form.
+ * day+month (27 Aug / 27th August), and DD/MM[/YY] or DD-MM[-YY] numeric dates
+ * (5/8 = 5-8 = 5 Aug, NOT May 8 — chrono's US default gets this wrong). Falls
+ * back to chrono for natural language (tomorrow, next week, in an hour, 10am,
+ * today 3pm, next monday…). Returns a UTC Date or null; absolute dates are
+ * interpreted in IST. Dash dates are safe here because the "rem/meet" separator
+ * is now "#" (not "-"), so "31-08" reaches this parser intact.
  */
 function parseReminderWhen(phrase: string, now: Date): Date | null {
   const p = (phrase || "").trim();
@@ -704,13 +741,14 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
     new Date(Date.UTC(y, mo, d, h, mi) - 5.5 * 3600 * 1000);
   let m: RegExpMatchArray | null;
 
-  // DD/MM[/YY[YY]] slash date (day-first), optional trailing time.
-  m = lower.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(.*)$/);
-  if (m) {
-    const d = +m[1], mo = +m[2] - 1;
-    const y = m[3] ? (m[3].length <= 2 ? 2000 + +m[3] : +m[3]) : curY;
+  // DD/MM[/YY[YY]] or DD-MM[-YY[YY]] numeric date (day-first), optional trailing time.
+  // A dash followed straight by am/pm (e.g. "3-4pm") is a time range, not a date.
+  m = lower.match(/^(\d{1,2})([/-])(\d{1,2})(?:\2(\d{2,4}))?(.*)$/);
+  if (m && !/^\s*(am|pm)\b/i.test(m[5] || "")) {
+    const d = +m[1], mo = +m[3] - 1;
+    const y = m[4] ? (m[4].length <= 2 ? 2000 + +m[4] : +m[4]) : curY;
     if (mo >= 0 && mo <= 11 && d >= 1 && d <= 31) {
-      const t = parseClock(m[4]) || { h: 9, m: 0 };
+      const t = parseClock(m[5]) || { h: 9, m: 0 };
       return istToUtc(y, mo, d, t.h, t.m);
     }
   }
@@ -734,31 +772,41 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
   return chrono.parseDate(p, { instant: now, timezone: 330 } as any, { forwardDate: true }) as Date | null;
 }
 
-/** Save a reminder/note from "rem …". A trailing "- <time>" / "_ <time>"
- *  is parsed (India-aware, IST) into an optional remind_at; nothing is ever pushed. */
-async function createReminder(fromPhone: string, userId: string, tenantId: string | null, rest: string) {
+/** Save a reminder/note ("rem …") or a meeting ("meet …") — same table, told
+ *  apart by `kind`. A trailing "- <time>" / "_ <time>" is parsed (India-aware,
+ *  IST) into an optional remind_at; nothing is ever pushed. */
+async function createReminder(fromPhone: string, userId: string, tenantId: string | null, rest: string, kind: "reminder" | "meeting" = "reminder") {
+  const isMeeting = kind === "meeting";
   let noteText = rest;
   let remindAt: string | null = null;
 
-  // Split on the LAST "-" or "_": text before, time phrase after.
-  const m = rest.match(/^(.*)[\-_]\s*([^\-_]+)$/s);
+  // Split on the LAST "#": text before, time phrase after. We use "#" (not "-")
+  // so a dash date like "31-08" inside the time phrase isn't eaten as the separator.
+  const m = rest.match(/^(.*)#\s*(.+)$/s);
   if (m && m[1].trim()) {
     const phrase = m[2].trim();
     const dt = parseReminderWhen(phrase, new Date());
     if (dt && !isNaN(dt.getTime())) { noteText = m[1].trim(); remindAt = dt.toISOString(); }
   }
   noteText = noteText.trim();
-  if (!noteText) { await sendText(fromPhone, "📝 What should I note? e.g. *rem call the vendor - at 3pm*"); return; }
+  if (!noteText) {
+    await sendText(fromPhone, isMeeting
+      ? "📅 What meeting? e.g. *meet vendor call # tomorrow 3pm*"
+      : "📝 What should I note? e.g. *rem call the vendor # 3pm*");
+    return;
+  }
 
-  const id = "rem-" + Date.now();
+  const id = (isMeeting ? "meet-" : "rem-") + Date.now();
   const { error } = await supabase.from("reminders").insert([{
     id, user_id: userId, tenant_id: tenantId, text: noteText.slice(0, 300),
-    remind_at: remindAt, status: "pending",
+    remind_at: remindAt, status: "pending", kind,
   }]);
   if (error) { console.error("[whatsapp-webhook] createReminder failed:", error); await sendText(fromPhone, "Sorry, I couldn't save that. Please try again."); return; }
 
   const whenStr = remindAt ? ` for *${fmtWhen(remindAt)}*` : "";
-  await sendText(fromPhone, `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"\n\nSend *rem* (or *menu → My reminders*) any time to see your list.`);
+  await sendText(fromPhone, isMeeting
+    ? `📅 Meeting saved${whenStr}:\n"${noteText.slice(0, 200)}"\n\nSend *meet* any time to see your meetings.`
+    : `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"\n\nSend *rem* any time to see your list.`);
 }
 
 type ReminderFilter = "all" | "today" | "tomorrow" | "week";
@@ -781,42 +829,113 @@ function istDayRange(dayOffset: number): { from: string; to: string } {
   return { from: new Date(from).toISOString(), to: new Date(from + 86400000).toISOString() };
 }
 
-/** List the user's pending reminders (optionally filtered), tappable → mark done.
- *  `showHint` adds the add/see instructions — on only for the menu "Remind" tap,
- *  not for a plain "rem" / "rem today" fetch. */
-async function sendRemindersList(fromPhone: string, userId: string, filter: ReminderFilter = "all", showHint = false) {
+/** List the user's pending reminders ("reminder") or meetings ("meeting"),
+ *  optionally filtered by date. Sent as a PLAIN-TEXT numbered message (not a
+ *  WhatsApp interactive list) so item text is never truncated at 24 chars, there
+ *  is no "Tap to select an item" footer, and there is no 10-row cap. To remove an
+ *  item the user replies "done <n>" — see handleListDone.
+ *  `showHint` adds the add/see instructions — on only for the menu "Remind" tap. */
+async function sendRemindersList(fromPhone: string, userId: string, filter: ReminderFilter = "all", showHint = false, kind: "reminder" | "meeting" = "reminder") {
+  const isMeeting = kind === "meeting";
+  const noun = isMeeting ? "meetings" : "reminders";
+  const icon = isMeeting ? "📅" : "📝";
   let q = supabase.from("reminders")
-    .select("id, text, remind_at").eq("user_id", userId).eq("status", "pending");
+    .select("id, text, remind_at").eq("user_id", userId).eq("status", "pending").eq("kind", kind);
 
-  let label = "Your reminders";
-  let emptyMsg = "📝 You have no reminders.\n\nAdd one by sending *rem <note> - <time>*\ne.g. *rem call the vendor - tomorrow 9am*";
+  let label = isMeeting ? "Your meetings" : "Your reminders";
+  let emptyMsg = isMeeting
+    ? "📅 You have no meetings saved.\n\nAdd one by sending *meet <what> # <time>*\ne.g. *meet vendor call # tomorrow 3pm*"
+    : "📝 You have no reminders.\n\nAdd one by sending *rem <note> # <time>*\ne.g. *rem call the vendor # tomorrow 9am*";
   if (filter === "today" || filter === "tomorrow") {
     const { from, to } = istDayRange(filter === "today" ? 0 : 1);
     q = q.gte("remind_at", from).lt("remind_at", to);
-    label = filter === "today" ? "Today's reminders" : "Tomorrow's reminders";
-    emptyMsg = `📝 Nothing due ${filter}.`;
+    label = `${filter === "today" ? "Today's" : "Tomorrow's"} ${noun}`;
+    emptyMsg = `${icon} Nothing ${isMeeting ? "scheduled" : "due"} ${filter}.`;
   } else if (filter === "week") {
     q = q.gte("remind_at", new Date().toISOString()).lt("remind_at", new Date(Date.now() + 7 * 86400000).toISOString());
-    label = "This week's reminders";
-    emptyMsg = "📝 Nothing due in the next 7 days.";
+    label = `This week's ${noun}`;
+    emptyMsg = `${icon} Nothing ${isMeeting ? "scheduled" : "due"} in the next 7 days.`;
   }
+  // Up to 50 — far above the old 10-row list cap; a text body holds ~4096 chars.
   q = q.order("remind_at", { ascending: true, nullsFirst: false })
-       .order("created_at", { ascending: false }).limit(10);
+       .order("created_at", { ascending: false }).limit(50);
   const { data } = await q;
 
   if (!data || data.length === 0) { await sendText(fromPhone, emptyMsg); return; }
-  const hint = showHint
-    ? "\n\n➕ Add: send *rem <note> - <time>*  (e.g. *rem call vendor - tomorrow 9am*)\n🔎 See: send *rem* or *rem today* or *rem tomorrow*"
+
+  const lines = data.map((r: any, i: number) => {
+    const when = r.remind_at ? fmtWhen(r.remind_at) : "no time set";
+    return `*${i + 1}.* ${r.text}\n      🕒 ${when}`;
+  });
+  const removeHint = data.length === 1
+    ? `\n\n❌ To remove it, reply *done 1*.`
+    : `\n\n❌ To remove one, reply *done 1* (or *done 2*, *done 1 3*…).`;
+  const addHint = showHint
+    ? (isMeeting
+        ? `\n➕ Add: *meet <what> # <time>*   ·   🔎 See: *meet*, *meet today*, *meet tomorrow*`
+        : `\n➕ Add: *rem <note> # <time>*   ·   🔎 See: *rem*, *rem today*, *rem tomorrow*`)
     : "";
-  await sendList(
-    fromPhone,
-    `📝 *${label}* — tap one to mark it done.${hint}`,
-    "Reminders",
-    data.map((r: any) => ({ id: `rdone~${r.id}`, title: r.text, description: r.remind_at ? fmtWhen(r.remind_at) : "no time set" })),
-  );
+  await sendText(fromPhone, `${icon} *${label}*\n\n${lines.join("\n")}${removeHint}${addHint}`);
+
+  // Remember the shown order so a later "done <n>" maps N → the right row. Expire
+  // any earlier list first so "done 2" always refers to the most recent listing.
+  await supabase.from("whatsapp_conversations")
+    .update({ state: "expired", updated_at: new Date().toISOString() })
+    .eq("user_id", userId).eq("state", "list_shown");
+  await supabase.from("whatsapp_conversations").insert([{
+    user_id: userId, from_phone: fromPhone, state: "list_shown", intent: "reminder_list",
+    payload: { ids: data.map((r: any) => r.id), kind },
+  }]);
 }
 
-/** Mark a reminder done (tapped from the list). */
+/** Handle "done <n>" (also "remove/delete <n>", several numbers allowed) against
+ *  the numbered reminders/meetings list we last showed this user. Returns true if
+ *  it acted (or reported an invalid number), false if there's no list to act on. */
+async function handleListDone(fromPhone: string, userId: string, numsRaw: string): Promise<boolean> {
+  const nums = [...new Set((numsRaw.match(/\d+/g) || []).map(Number).filter((n) => n >= 1))];
+  if (!nums.length) return false;
+
+  const { data: convs } = await supabase.from("whatsapp_conversations")
+    .select("id, payload").eq("user_id", userId).eq("state", "list_shown")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false }).limit(1);
+  const conv = convs?.[0];
+  const ids: string[] = (conv?.payload as any)?.ids || [];
+  const kind: string = (conv?.payload as any)?.kind || "reminder";
+  if (!conv || !ids.length) return false;
+
+  const seeCmd = kind === "meeting" ? "meet" : "rem";
+  const noun = kind === "meeting" ? "meeting" : "reminder";
+  const bad = nums.filter((n) => !ids[n - 1]);
+  const good = nums.filter((n) => ids[n - 1]);
+  if (!good.length) {
+    await sendText(fromPhone, `That number isn't on the list. Reply *${seeCmd}* to see it again.`);
+    return true;
+  }
+
+  const doneTexts: string[] = [];
+  for (const n of good) {
+    const id = ids[n - 1];
+    const { data: r } = await supabase.from("reminders")
+      .select("id, text, status").eq("id", id).eq("user_id", userId).maybeSingle();
+    if (!r) continue;
+    if (r.status !== "done") {
+      await supabase.from("reminders").update({ status: "done", updated_at: new Date().toISOString() }).eq("id", id);
+    }
+    doneTexts.push(String(r.text || noun));
+  }
+  if (!doneTexts.length) {
+    await sendText(fromPhone, `Those are already cleared. Reply *${seeCmd}* to see your ${noun}s.`);
+    return true;
+  }
+  const label = doneTexts.map((t) => `"${t.slice(0, 60)}"`).join(", ");
+  let msg = `✅ Removed ${doneTexts.length} ${noun}${doneTexts.length === 1 ? "" : "s"}: ${label}`;
+  if (bad.length) msg += `\n(No item ${bad.join(", ")} on the list.)`;
+  await sendText(fromPhone, msg);
+  return true;
+}
+
+/** Mark a reminder done (tapped from a legacy interactive list, if any remain). */
 async function handleReminderDone(id: string, fromPhone: string) {
   const { data: r } = await supabase.from("reminders").select("id, text").eq("id", id).single();
   await supabase.from("reminders").update({ status: "done", updated_at: new Date().toISOString() }).eq("id", id);
@@ -885,8 +1004,11 @@ async function sendHelp(fromPhone: string, userId: string) {
     fromPhone,
     `👋 Hi ${first}! I'm *Horae*.\n\nHere's what I can do:\n\n` +
     `📋 *Send "menu"* → create a task, comment on a task, update or view tasks, see your checklists & training, or raise a complaint.\n` +
+    `📝 *task* → see your tasks · *task <details>* → create one.\n` +
+    `⏰ *rem* → see reminders · *rem <note> # <time>* → add one (e.g. *rem call vendor # 31-08 3pm*).\n` +
+    `📅 *meet* → see meetings · *meet <what> # <time>* → add one.\n` +
+    `✅ To clear a listed item, reply *done 1* (or *done 2*, …).\n` +
     `↪️ *Forward me any message* → I'll offer to turn it into a task.\n` +
-    `✍️ Send *"new task <details>"* → I'll create a task from it.\n` +
     `🎙️ Send a *voice note* → I'll turn it into a task (or a comment when I ask for one).\n\n` +
     `You'll also get task alerts and your daily briefing right here.\n\n👉 Open Horae: ${APP_BASE_URL}`,
   );
