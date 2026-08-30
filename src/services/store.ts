@@ -2125,14 +2125,22 @@ export class StoreService {
   // ── Personal reminders / notes (pull-only; created here or from WhatsApp) ──────
   public async getReminders(): Promise<Reminder[]> {
     const me = await this.getActiveUser();
-    // Reminders only — the same table also holds WhatsApp "meet" meetings
-    // (kind = 'meeting'), which must not appear on the Reminders screen.
-    const { data } = await supabase.from('reminders').select('*')
-      .eq('user_id', me.id).eq('kind', 'reminder').order('created_at', { ascending: false });
-    return (data || []).map((r: any) => ({
+    const map = (rows: any[] | null) => (rows || []).map((r: any) => ({
       id: r.id, userId: r.user_id, tenantId: r.tenant_id, text: r.text,
       remindAt: r.remind_at || undefined, status: r.status, createdAt: r.created_at,
     }));
+    // Reminders only — the same table also holds WhatsApp "meet" meetings
+    // (kind = 'meeting'), which must not appear on the Reminders screen. If the
+    // `kind` column isn't present yet (migration not applied), the filtered query
+    // errors; fall back to returning all rows so the screen still works.
+    const { data, error } = await supabase.from('reminders').select('*')
+      .eq('user_id', me.id).eq('kind', 'reminder').order('created_at', { ascending: false });
+    if (error) {
+      const { data: all } = await supabase.from('reminders').select('*')
+        .eq('user_id', me.id).order('created_at', { ascending: false });
+      return map(all);
+    }
+    return map(data);
   }
 
   public async addReminder(text: string, remindAt?: string): Promise<void> {
