@@ -342,7 +342,7 @@ async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: strin
       { id: "menu_checklists",    title: "✅ My checklists" },
       { id: "menu_training",      title: "📚 My training" },
       { id: "menu_go_app",        title: "🔗 Go to Horae app", description: `${APP_BASE_URL}/dashboard` },
-      { id: "menu_reminders",     title: "⏰ Remind" },
+      { id: "menu_reminders",     title: "⏰ Reminders" },
       { id: "menu_meetings",      title: "📅 Meetings" },
     ],
   );
