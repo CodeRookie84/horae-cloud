@@ -16,6 +16,11 @@ coverage/
 # Supabase CLI cache
 supabase/.temp
 
+# Backup script config (contains DB password) and its outputs
+scripts/.backup.env
+scripts/_drift/
+HoraeBackups/
+
 # Editor
 .vscode/
 .idea/
