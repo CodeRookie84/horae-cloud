@@ -1,0 +1,53 @@
+# Supabase project config.
+#
+# The [functions.*] blocks below PIN each edge function's `verify_jwt` setting so
+# that a plain `supabase functions deploy <name>` can never silently change it.
+#
+# Why this matters: with no config.toml, the CLI defaults `verify_jwt = true`.
+# A redeploy of a PUBLIC webhook (e.g. whatsapp-webhook, called by Meta with no
+# Supabase JWT) then turns auth ON and every inbound call is rejected 401 at the
+# gateway BEFORE the handler runs — the whole webhook goes silent. This happened
+# on 2026-08-30. These pins prevent it.
+#
+# Rule of thumb:
+#   verify_jwt = false → called by an EXTERNAL service or cron with no user JWT
+#                        (Meta webhook, Supabase DB webhook, pg_cron). Guard these
+#                        with their own secret / idempotency inside the handler.
+#   verify_jwt = true  → invoked from the app via supabase.functions.invoke(),
+#                        which sends the caller's JWT automatically.
+#
+# Values below were verified against live production on 2026-08-30 (401 = JWT on).
+
+project_id = "vexqmdrldxhwrpcwbxow"
+
+# ── Public / external / cron (no caller JWT) ──────────────────────────────
+[functions.whatsapp-webhook]
+verify_jwt = false   # Meta WhatsApp Cloud API webhook (GET verify + POST events)
+
+[functions.notify-dispatcher]
+verify_jwt = false   # Supabase DB webhook trigger
+
+[functions.daily-digest]
+verify_jwt = false   # Supabase cron (twice daily)
+
+[functions.kot-reminders]
+verify_jwt = false   # Supabase cron
+
+[functions.kot-notify]
+verify_jwt = false   # KOT notification lane (cron/internal)
+
+[functions.purge-demos]
+verify_jwt = false   # pg_cron; guarded by x-purge-secret header
+
+[functions.kot-extract]
+verify_jwt = false   # vision extract (currently public in prod)
+
+[functions.push-ack]
+verify_jwt = false   # push-notification ack (POST only)
+
+# ── App-invoked (caller JWT required) ─────────────────────────────────────
+[functions.ai-draft]
+verify_jwt = true    # called from the app with the user's JWT
+
+[functions.auth-admin]
+verify_jwt = true    # relies on the CALLER's JWT (admin actions)

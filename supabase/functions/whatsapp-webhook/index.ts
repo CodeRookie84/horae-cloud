@@ -243,12 +243,12 @@ async function handleInboundMessage(m: any, contact: any) {
       await sendHelp(fromPhone, userId);
       return;
     }
-    // "me …" / "I …" → save a personal reminder/note (pull-only, no push, no cost).
-    // "me"/"I" alone (or a keyword: reminders, today, tomorrow, week) → LIST them,
-    // filtered by the keyword. Anything else after me/I is the note to save.
-    const rem = text.match(/^\s*(me|i)\b(.*)$/is);
+    // "rem …" → save a personal reminder/note (pull-only, no push, no cost).
+    // "rem" alone (or a keyword: reminders, today, tomorrow, week) → LIST them,
+    // filtered by the keyword. Anything else after "rem" is the note to save.
+    const rem = text.match(/^\s*rem\b(.*)$/is);
     if (rem) {
-      const rest = (rem[2] || "").trim();
+      const rest = (rem[1] || "").trim();
       const filter = reminderFilterFromKeyword(rest);
       if (filter) { await sendRemindersList(fromPhone, userId, filter); return; }
       await createReminder(fromPhone, userId, tenantId, rest);
@@ -734,7 +734,7 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
   return chrono.parseDate(p, { instant: now, timezone: 330 } as any, { forwardDate: true }) as Date | null;
 }
 
-/** Save a reminder/note from "me …" / "I …". A trailing "- <time>" / "_ <time>"
+/** Save a reminder/note from "rem …". A trailing "- <time>" / "_ <time>"
  *  is parsed (India-aware, IST) into an optional remind_at; nothing is ever pushed. */
 async function createReminder(fromPhone: string, userId: string, tenantId: string | null, rest: string) {
   let noteText = rest;
@@ -748,7 +748,7 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
     if (dt && !isNaN(dt.getTime())) { noteText = m[1].trim(); remindAt = dt.toISOString(); }
   }
   noteText = noteText.trim();
-  if (!noteText) { await sendText(fromPhone, "📝 What should I note? e.g. *me call the vendor - at 3pm*"); return; }
+  if (!noteText) { await sendText(fromPhone, "📝 What should I note? e.g. *rem call the vendor - at 3pm*"); return; }
 
   const id = "rem-" + Date.now();
   const { error } = await supabase.from("reminders").insert([{
@@ -758,7 +758,7 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
   if (error) { console.error("[whatsapp-webhook] createReminder failed:", error); await sendText(fromPhone, "Sorry, I couldn't save that. Please try again."); return; }
 
   const whenStr = remindAt ? ` for *${fmtWhen(remindAt)}*` : "";
-  await sendText(fromPhone, `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"\n\nSend *me* (or *menu → My reminders*) any time to see your list.`);
+  await sendText(fromPhone, `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"\n\nSend *rem* (or *menu → My reminders*) any time to see your list.`);
 }
 
 type ReminderFilter = "all" | "today" | "tomorrow" | "week";
@@ -783,13 +783,13 @@ function istDayRange(dayOffset: number): { from: string; to: string } {
 
 /** List the user's pending reminders (optionally filtered), tappable → mark done.
  *  `showHint` adds the add/see instructions — on only for the menu "Remind" tap,
- *  not for a plain "me" / "me today" fetch. */
+ *  not for a plain "rem" / "rem today" fetch. */
 async function sendRemindersList(fromPhone: string, userId: string, filter: ReminderFilter = "all", showHint = false) {
   let q = supabase.from("reminders")
     .select("id, text, remind_at").eq("user_id", userId).eq("status", "pending");
 
   let label = "Your reminders";
-  let emptyMsg = "📝 You have no reminders.\n\nAdd one by sending *me <note> - <time>*\ne.g. *me call the vendor - tomorrow 9am*";
+  let emptyMsg = "📝 You have no reminders.\n\nAdd one by sending *rem <note> - <time>*\ne.g. *rem call the vendor - tomorrow 9am*";
   if (filter === "today" || filter === "tomorrow") {
     const { from, to } = istDayRange(filter === "today" ? 0 : 1);
     q = q.gte("remind_at", from).lt("remind_at", to);
@@ -806,7 +806,7 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
 
   if (!data || data.length === 0) { await sendText(fromPhone, emptyMsg); return; }
   const hint = showHint
-    ? "\n\n➕ Add: send *me <note> - <time>*  (e.g. *me call vendor - tomorrow 9am*)\n🔎 See: send *me* or *me today* or *me tomorrow*"
+    ? "\n\n➕ Add: send *rem <note> - <time>*  (e.g. *rem call vendor - tomorrow 9am*)\n🔎 See: send *rem* or *rem today* or *rem tomorrow*"
     : "";
   await sendList(
     fromPhone,
