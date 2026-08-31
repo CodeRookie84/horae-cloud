@@ -46,12 +46,14 @@ const MAX_MESSAGES_PER_USER_DAY  = 20;   // Daily WhatsApp cap per user
 // client-side fallback call).
 const SINGLE_FIRE_EVENTS = new Set(["task_assigned"]);
 
-// Template routing — the only Utility template that ships WhatsApp is
-// horae_task_alert (task assignments, reassignments, urgent task pings).
-// Everything else — notices, task CC/status/chat, training, checklist, digest —
-// is push + in-app ONLY (no waTemplate), because Meta flagged the generic and
-// notice templates Marketing, and we won't pay Marketing rates.
+// Template routing — two approved Utility templates ship WhatsApp:
+//   • horae_task_alert — task assignments, reassignments, urgent task pings ONLY.
+//   • notice_alert     — the generic 2-variable template ("Update for your outlet:
+//     {{1}} / {{2}} / Hi for more details"), used for the morning digest nudge.
+// Everything else — notices, task CC/status/chat, training, checklist, the full
+// digest body — stays push + in-app ONLY (no waTemplate).
 const TASK_TEMPLATE_NAME   = "horae_task_alert";
+const DIGEST_TEMPLATE_NAME = "notice_alert";
 
 // ─── Plan B: push-first, WhatsApp only as last-mile fallback ───────────────────
 // WhatsApp is paid; web push is free. So paid WhatsApp is sent ONLY for:
@@ -347,11 +349,13 @@ async function getTrainingAudience(training: any): Promise<any[]> {
 }
 
 /**
- * Morning "reply Hi" nudge — a single Utility (horae_task_alert) WhatsApp that
- * prompts the staff member to reply Hi and get their full briefing FREE inside
- * the window they open by replying. Sent by daily-digest's morning run ONLY to
- * users who actually have pending items (so it's genuinely transactional, not a
- * blast). Respects opt-in + the daily cap. This is the only scheduled paid ping.
+ * Morning "reply Hi" nudge — a single Utility WhatsApp on the generic
+ * notice_alert template that prompts the staff member to reply Hi and get their
+ * full briefing FREE inside the window they open by replying. (Its wording is
+ * more generic than horae_task_alert, which we reserve for real task alerts.)
+ * Sent by daily-digest's morning run ONLY to users who actually have pending
+ * items (so it's genuinely transactional, not a blast). Respects opt-in + the
+ * daily cap. This is the only scheduled paid ping.
  */
 async function handleMorningNudge(userId: string, tenantId: string, summary: string) {
   const user = await getUser(userId);
@@ -365,9 +369,12 @@ async function handleMorningNudge(userId: string, tenantId: string, summary: str
     .neq("event_type", "debug").gte("sent_at", today + "T00:00:00Z");
   if ((count || 0) >= MAX_MESSAGES_PER_USER_DAY) return;
 
-  const body = `${summary} Reply *Hi* here for the details.`;
+  // notice_alert renders: "Update for your outlet: {{1}} / {{2}} / Hi for more
+  // details". {{1}} = short headline, {{2}} = the pending-items summary. The
+  // template's static last line already prompts the reply-Hi that opens the
+  // free window, so we don't repeat it here.
   try {
-    const wamid = await sendWhatsApp(user.phone_number, "", { name: TASK_TEMPLATE_NAME, params: ["Updates for the day", body] });
+    const wamid = await sendWhatsApp(user.phone_number, "", { name: DIGEST_TEMPLATE_NAME, params: ["your morning briefing", summary] });
     await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "sent", undefined, false, wamid);
   } catch (e) {
     await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "failed", String(e));
