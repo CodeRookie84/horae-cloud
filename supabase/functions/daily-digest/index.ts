@@ -266,11 +266,15 @@ serve(async (req) => {
       // 24h window when they reply Hi.
       if (runMode === "morning" && user.phone_number && user.whatsapp_opted_in) {
         const bits: string[] = [];
-        if (items.tasks.length)      bits.push("Pending tasks");
-        if (items.notices.length)    bits.push("Unread notices");
-        if (items.checklists.length) bits.push("Pending checklists");
-        if (items.training.length)   bits.push("Pending training");
-        const summary = bits.length ? `You have ${bits.join(", ")} today.` : "You have updates today.";
+        if (items.tasks.length)      bits.push("pending tasks");
+        if (items.notices.length)    bits.push("unread notices");
+        if (items.checklists.length) bits.push("pending checklists");
+        if (items.training.length)   bits.push("pending training");
+        // Join grammatically: "a", "a and b", "a, b and c" (lowercase mid-sentence).
+        const joined = bits.length <= 1
+          ? (bits[0] || "")
+          : `${bits.slice(0, -1).join(", ")} and ${bits[bits.length - 1]}`;
+        const summary = bits.length ? `You have ${joined} today.` : "You have updates today.";
         await fetch(DISPATCHER_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SUPABASE_SERVICE}` },

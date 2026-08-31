@@ -369,12 +369,12 @@ async function handleMorningNudge(userId: string, tenantId: string, summary: str
     .neq("event_type", "debug").gte("sent_at", today + "T00:00:00Z");
   if ((count || 0) >= MAX_MESSAGES_PER_USER_DAY) return;
 
-  // notice_alert renders: "Update for your outlet: {{1}} / {{2}} / Hi for more
-  // details". {{1}} = short headline, {{2}} = the pending-items summary. The
-  // template's static last line already prompts the reply-Hi that opens the
-  // free window, so we don't repeat it here.
+  // notice_alert renders: "Your Horae update: {{1}} / {{2}} / Reply Hi for your
+  // full briefing". {{1}} = short headline, {{2}} = the pending-items summary.
+  // The template's static last line prompts the reply-Hi that opens the free
+  // window, so we don't repeat it here.
   try {
-    const wamid = await sendWhatsApp(user.phone_number, "", { name: DIGEST_TEMPLATE_NAME, params: ["your morning briefing", summary] });
+    const wamid = await sendWhatsApp(user.phone_number, "", { name: DIGEST_TEMPLATE_NAME, params: ["today's summary", summary] });
     await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "sent", undefined, false, wamid);
   } catch (e) {
     await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "failed", String(e));
