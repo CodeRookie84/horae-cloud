@@ -253,6 +253,14 @@ async function handleInboundMessage(m: any, contact: any) {
       if (handled) return;
       // Not a valid "done N" against any recent list → fall through to normal handling.
     }
+    // "cal N" / "calendar N" → get a Google Calendar link for item N of the
+    // numbered reminders/meetings list we last showed. Zero cost — the link just
+    // opens the user's own calendar prefilled; their calendar owns the reminding.
+    const calMatch = text.match(/^\s*(?:cal|calendar|remind)\s+(\d+)$/i);
+    if (calMatch) {
+      const handled = await handleListCal(fromPhone, userId, +calMatch[1]);
+      if (handled) return;
+    }
     // "rem …" → save a personal reminder/note (pull-only, no push, no cost).
     // "rem" alone (or a keyword: reminders, today, tomorrow, week) → LIST them,
     // filtered by the keyword. Anything else after "rem" is the note to save.
@@ -280,8 +288,15 @@ async function handleInboundMessage(m: any, contact: any) {
     const taskKw = text.match(/^\s*tasks?\b(.*)$/is);
     if (taskKw) {
       const rest = (taskKw[1] || "").trim();
-      if (!rest || /^(list|all|my|open|pending|view)$/i.test(rest)) {
-        await sendTaskPickerForView(fromPhone, userId, tenantId);
+      const tf = rest.toLowerCase();
+      if (!rest || /^(list|all|my|open|pending|view)$/i.test(tf)) {
+        await sendTaskPickerForView(fromPhone, userId, tenantId, "all");
+      } else if (/^(today|due ?today)$/i.test(tf)) {
+        await sendTaskPickerForView(fromPhone, userId, tenantId, "today");
+      } else if (/^(overdue|late|due|pending ?today)$/i.test(tf)) {
+        await sendTaskPickerForView(fromPhone, userId, tenantId, "overdue");
+      } else if (/^(week|this ?week)$/i.test(tf)) {
+        await sendTaskPickerForView(fromPhone, userId, tenantId, "week");
       } else {
         await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_newtask", rest);
       }
@@ -401,7 +416,7 @@ async function buildBriefingBody(userId: string, tenantId: string | null): Promi
   } catch (_) { /* skip training line */ }
 
   // Quick keyword hints so staff discover the type-to-do shortcuts.
-  const tips = `💡 *Quick keywords:* type *task*, *rem* or *meet* to see them — or add with *rem <note> # <time>* (e.g. *rem call vendor # 31-08 3pm*).`;
+  const tips = `💡 *Quick keywords:* type *task*, *rem* or *meet* to see them (add *today* / *overdue* to filter, e.g. *task today*) — or add one with *rem <note> # <time>* (e.g. *rem call vendor # 31-08 3pm*).`;
   if (lines.length === 0 && !noticeLine) return `👋 Hi ${firstName}! You're all caught up 🎉\n\n${tips}\n\nWhat would you like to do?`;
   const head = noticeLine ? `${noticeLine}\n` : "";
   return `👋 Hi ${firstName}! Here's your briefing:\n\n${head}${lines.join("\n")}\n\n${tips}\n\nWhat would you like to do?`;
@@ -480,38 +495,107 @@ async function takePendingInput(userId: string): Promise<{ id: string; intent: s
  * list. Tapping one (row id `tview~<taskId>`) shows the FULL task detail —
  * description, assigned-by, comments and photos — entirely in WhatsApp.
  */
-async function sendTaskPickerForView(fromPhone: string, userId: string, tenantId: string | null) {
-  // Fetch one extra (11) so we can tell whether there are MORE than 10.
+type TaskFilter = "all" | "today" | "overdue" | "week";
+
+/** One-line row description conveying the task's due state (the overdue marker
+ *  is what gives "due date passed" its clear distinction inside the picker). */
+function taskDueLabel(t: any, istToday: string): string {
+  const d = t.due_date ? String(t.due_date).slice(0, 10) : "";
+  if (!d) return t.status || "no due date";
+  if (d < istToday) return `⚠️ was due ${d}`;
+  if (d === istToday) return "📅 due today";
+  return `due ${d}`;
+}
+
+async function sendTaskPickerForView(fromPhone: string, userId: string, tenantId: string | null, filter: TaskFilter = "all") {
   let q = supabase.from("tasks")
-    .select("id, title, status")
+    .select("id, title, status, due_date")
     .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
     .not("status", "in", '("Completed","Closed")')
-    .order("created_at", { ascending: false }).limit(11);
+    .order("due_date", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: false }).limit(50);
   if (tenantId) q = q.eq("tenant_id", tenantId);
-  const { data: tasks } = await q;
+  const { data: all } = await q;
 
-  if (!tasks || tasks.length === 0) {
-    await sendText(fromPhone, "📋 You have no active tasks right now.");
+  // Tasks the user CREATED that assignees have marked Completed but not yet Closed.
+  // The close action is creator/admin-only and valid only once Completed (see
+  // canCloseTask), but the picker used to hide Completed tasks entirely — so the
+  // creator could never reach one to close it. Surface them here, in the "all"
+  // view only (the date filters are about due dates, moot once a task is done).
+  let completedMine: any[] = [];
+  if (filter === "all") {
+    let cq = supabase.from("tasks")
+      .select("id, title, status, due_date")
+      .eq("created_by_user_id", userId)
+      .eq("status", "Completed")
+      .order("updated_at", { ascending: false }).limit(20);
+    if (tenantId) cq = cq.eq("tenant_id", tenantId);
+    const { data: cm } = await cq;
+    completedMine = cm || [];
+  }
+
+  // IST calendar dates (tasks store due_date as a DATE, not a timestamp).
+  const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
+  const istToday = istNow.toISOString().slice(0, 10);
+  const istWeekEnd = new Date(istNow.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+  const dOf = (t: any) => (t.due_date ? String(t.due_date).slice(0, 10) : "");
+
+  const overdue: any[] = [], today: any[] = [], upcoming: any[] = [], undated: any[] = [];
+  for (const t of (all || [])) {
+    const d = dOf(t);
+    if (!d) { undated.push(t); continue; }
+    if (d < istToday) overdue.push(t);
+    else if (d === istToday) today.push(t);
+    else upcoming.push(t);
+  }
+
+  // Overdue is surfaced in every filter except a bare "overdue" query (which is
+  // overdue-only). "today" combines overdue + today; "week" spans the next 7 days.
+  let groups: { title: string; items: any[]; completed?: boolean }[];
+  if (filter === "overdue") {
+    groups = [{ title: "⚠️ Overdue", items: overdue }];
+  } else if (filter === "today") {
+    groups = [{ title: "⚠️ Overdue", items: overdue }, { title: "📅 Today", items: today }];
+  } else if (filter === "week") {
+    groups = [{ title: "⚠️ Overdue", items: overdue }, { title: "📅 This week", items: [...today, ...upcoming.filter(t => dOf(t) <= istWeekEnd)] }];
+  } else {
+    groups = [
+      { title: "⚠️ Overdue", items: overdue },
+      { title: "📋 Active", items: [...today, ...upcoming, ...undated] },
+      { title: "✅ Completed", items: completedMine, completed: true },
+    ];
+  }
+
+  const total = groups.reduce((s, g) => s + g.items.length, 0);
+  if (total === 0) {
+    const msg = filter === "overdue" ? "✅ No overdue tasks — you're all caught up."
+      : filter === "today" ? "📋 Nothing due today, and nothing overdue. 🎉"
+      : filter === "week" ? "📋 Nothing due this week, and nothing overdue. 🎉"
+      : "📋 You have no active tasks right now.";
+    await sendText(fromPhone, msg);
     return;
   }
-  // Exactly one task → skip the picker and open it straight away (fewer taps).
-  if (tasks.length === 1) {
-    await sendTaskDetail(fromPhone, userId, tenantId, tasks[0].id);
-    return;
+  // Exactly one task overall → open it straight away (fewer taps).
+  const flat = groups.flatMap(g => g.items);
+  if (flat.length === 1) { await sendTaskDetail(fromPhone, userId, tenantId, flat[0].id); return; }
+
+  // Interactive lists cap at 10 rows total. Groups are already ordered by urgency
+  // (overdue → today → upcoming), so keep the first 10 and flag any hidden ones.
+  let budget = 10;
+  const sections: { title: string; rows: ListRow[] }[] = [];
+  for (const g of groups) {
+    if (budget <= 0) break;
+    const take = g.items.slice(0, budget);
+    if (!take.length) continue;
+    budget -= take.length;
+    sections.push({ title: g.title, rows: take.map((t: any) => ({ id: `tview~${t.id}`, title: t.title, description: g.completed ? "✅ tap → set Closed" : taskDueLabel(t, istToday) })) });
   }
-  // A WhatsApp list caps at 10 rows; if there are more, show the newest 10 and
-  // point the rest to the app.
-  const hasMore = tasks.length > 10;
-  const rows = tasks.slice(0, 10);
-  const body = hasMore
-    ? "📋 *Your tasks* — your 10 most recent are below (open the app to see them all). Pick one:"
-    : "📋 *Your tasks* — pick one to see the full details:";
-  await sendList(
-    fromPhone,
-    body,
-    "View task",
-    rows.map((t: any) => ({ id: `tview~${t.id}`, title: t.title, description: t.status })),
-  );
+  const header = filter === "today" ? "📋 *Tasks — today & overdue*"
+    : filter === "overdue" ? "📋 *Overdue tasks*"
+    : filter === "week" ? "📋 *This week's tasks*"
+    : "📋 *Your tasks*";
+  const moreNote = total > 10 ? " (showing the 10 most urgent — open the app for the rest)" : "";
+  await sendList(fromPhone, `${header}${moreNote} — pick one to see the full details:`, "View task", [], sections);
 }
 
 /** Send a task's full detail (description, assigned-by, comments, photos) plus
@@ -804,9 +888,30 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
   if (error) { console.error("[whatsapp-webhook] createReminder failed:", error); await sendText(fromPhone, "Sorry, I couldn't save that. Please try again."); return; }
 
   const whenStr = remindAt ? ` for *${fmtWhen(remindAt)}*` : "";
+  // When a time was set, offer a Google Calendar link so the user's OWN calendar
+  // handles the reminding (free — no push, no paid template). Undated notes get
+  // no link (nothing to schedule).
+  const calStr = remindAt ? `\n\n🗓️ Add to calendar:\n${googleCalUrl(noteText, remindAt, kind)}` : "";
   await sendText(fromPhone, isMeeting
-    ? `📅 Meeting saved${whenStr}:\n"${noteText.slice(0, 200)}"\n\nSend *meet* any time to see your meetings.`
-    : `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"\n\nSend *rem* any time to see your list.`);
+    ? `📅 Meeting saved${whenStr}:\n"${noteText.slice(0, 200)}"${calStr}\n\nSend *meet* any time to see your meetings.`
+    : `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"${calStr}\n\nSend *rem* any time to see your list.`);
+}
+
+/** Build a Google Calendar "add event" link (action=TEMPLATE). Opens the user's
+ *  calendar prefilled; they tap save and their calendar owns the reminding. Meetings
+ *  default to a 60-min block, reminders to 30 min. Times are emitted in UTC (the
+ *  Z form), which Google renders in the viewer's local zone. */
+function googleCalUrl(title: string, startISO: string, kind: "reminder" | "meeting" = "reminder"): string {
+  const start = new Date(startISO);
+  const end = new Date(start.getTime() + (kind === "meeting" ? 60 : 30) * 60000);
+  const fmt = (d: Date) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: title.slice(0, 200),
+    dates: `${fmt(start)}/${fmt(end)}`,
+    details: "Added from Horae via WhatsApp",
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
 type ReminderFilter = "all" | "today" | "tomorrow" | "week";
@@ -839,43 +944,84 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   const isMeeting = kind === "meeting";
   const noun = isMeeting ? "meetings" : "reminders";
   const icon = isMeeting ? "📅" : "📝";
-  let q = supabase.from("reminders")
-    .select("id, text, remind_at").eq("user_id", userId).eq("status", "pending").eq("kind", kind);
+  const verb = isMeeting ? "scheduled" : "due";
 
-  let label = isMeeting ? "Your meetings" : "Your reminders";
-  let emptyMsg = isMeeting
-    ? "📅 You have no meetings saved.\n\nAdd one by sending *meet <what> # <time>*\ne.g. *meet vendor call # tomorrow 3pm*"
-    : "📝 You have no reminders.\n\nAdd one by sending *rem <note> # <time>*\ne.g. *rem call the vendor # tomorrow 9am*";
-  if (filter === "today" || filter === "tomorrow") {
-    const { from, to } = istDayRange(filter === "today" ? 0 : 1);
-    q = q.gte("remind_at", from).lt("remind_at", to);
-    label = `${filter === "today" ? "Today's" : "Tomorrow's"} ${noun}`;
-    emptyMsg = `${icon} Nothing ${isMeeting ? "scheduled" : "due"} ${filter}.`;
-  } else if (filter === "week") {
-    q = q.gte("remind_at", new Date().toISOString()).lt("remind_at", new Date(Date.now() + 7 * 86400000).toISOString());
-    label = `This week's ${noun}`;
-    emptyMsg = `${icon} Nothing ${isMeeting ? "scheduled" : "due"} in the next 7 days.`;
+  // Fetch ALL pending rows and bucket them in JS. Overdue and undated items are
+  // never hidden by a date filter — a missed item matters whatever view you asked
+  // for — so only the *future* bucket is narrowed to the requested window.
+  const { data } = await supabase.from("reminders")
+    .select("id, text, remind_at, created_at")
+    .eq("user_id", userId).eq("status", "pending").eq("kind", kind)
+    .order("remind_at", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const rows = data || [];
+
+  const now = Date.now();
+  const todayEnd = new Date(istDayRange(0).to).getTime();
+  const tomo = istDayRange(1);
+  const weekEnd = now + 7 * 86400000;
+
+  const overdue: any[] = [];  // remind_at in the past — date/time already passed
+  const nowGroup: any[] = []; // undated → treated as "today & now" (user decision)
+  const upcoming: any[] = []; // future, within the requested window
+  for (const r of rows) {
+    if (!r.remind_at) { nowGroup.push(r); continue; }
+    const t = new Date(r.remind_at).getTime();
+    if (t < now) { overdue.push(r); continue; }
+    let keep = true;
+    if (filter === "today")         keep = t < todayEnd;
+    else if (filter === "tomorrow") keep = t >= new Date(tomo.from).getTime() && t < new Date(tomo.to).getTime();
+    else if (filter === "week")     keep = t < weekEnd;
+    if (keep) upcoming.push(r);
   }
-  // Up to 50 — far above the old 10-row list cap; a text body holds ~4096 chars.
-  q = q.order("remind_at", { ascending: true, nullsFirst: false })
-       .order("created_at", { ascending: false }).limit(50);
-  const { data } = await q;
+  // A "tomorrow" view shouldn't carry today's loose undated notes; overdue still
+  // shows everywhere (never silently drop a missed item).
+  const showNow = filter !== "tomorrow";
 
-  if (!data || data.length === 0) { await sendText(fromPhone, emptyMsg); return; }
+  const total = overdue.length + (showNow ? nowGroup.length : 0) + upcoming.length;
+  if (total === 0) {
+    const emptyMsg = filter === "all"
+      ? (isMeeting
+          ? "📅 You have no meetings saved.\n\nAdd one by sending *meet <what> # <time>*\ne.g. *meet vendor call # tomorrow 3pm*"
+          : "📝 You have no reminders.\n\nAdd one by sending *rem <note> # <time>*\ne.g. *rem call the vendor # tomorrow 9am*")
+      : `${icon} Nothing ${verb} ${filter === "week" ? "this week" : filter} — and nothing overdue. 🎉`;
+    await sendText(fromPhone, emptyMsg);
+    return;
+  }
 
-  const lines = data.map((r: any, i: number) => {
-    const when = r.remind_at ? fmtWhen(r.remind_at) : "no time set";
-    return `*${i + 1}.* ${r.text}\n      🕒 ${when}`;
-  });
-  const removeHint = data.length === 1
-    ? `\n\n❌ To remove it, reply *done 1*.`
-    : `\n\n❌ To remove one, reply *done 1* (or *done 2*, *done 1 3*…).`;
+  const label = filter === "today" ? `Today's ${noun} (with overdue)`
+    : filter === "tomorrow" ? `Tomorrow's ${noun}`
+    : filter === "week" ? `This week's ${noun}`
+    : `Your ${noun}`;
+
+  // Build one continuously-numbered message across groups so "done <n>" maps
+  // cleanly onto the ids we store, in the exact display order.
+  const parts: string[] = [`${icon} *${label}*`];
+  const ids: string[] = [];
+  let n = 0;
+  if (overdue.length) {
+    parts.push(`\n⚠️ *Overdue — ${verb === "due" ? "due date passed" : "date passed"}*`);
+    for (const r of overdue) { n++; ids.push(r.id); parts.push(`*${n}.* ${r.text}\n      🕒 was ${verb} ${fmtWhen(r.remind_at)}`); }
+  }
+  if (showNow && nowGroup.length) {
+    parts.push(`\n📌 *Today / now*`);
+    for (const r of nowGroup) { n++; ids.push(r.id); parts.push(`*${n}.* ${r.text}\n      🕒 no time set`); }
+  }
+  if (upcoming.length) {
+    parts.push(`\n🔜 *Upcoming*`);
+    for (const r of upcoming) { n++; ids.push(r.id); parts.push(`*${n}.* ${r.text}\n      🕒 ${fmtWhen(r.remind_at)}`); }
+  }
+
+  const removeHint = ids.length === 1
+    ? `\n\n❌ Remove it: *done 1*   ·   🗓️ Add to calendar: *cal 1*`
+    : `\n\n❌ Remove: *done 1* (or *done 1 3*…)   ·   🗓️ Add to calendar: *cal 1*`;
   const addHint = showHint
     ? (isMeeting
         ? `\n➕ Add: *meet <what> # <time>*   ·   🔎 See: *meet*, *meet today*, *meet tomorrow*`
         : `\n➕ Add: *rem <note> # <time>*   ·   🔎 See: *rem*, *rem today*, *rem tomorrow*`)
     : "";
-  await sendText(fromPhone, `${icon} *${label}*\n\n${lines.join("\n")}${removeHint}${addHint}`);
+  await sendText(fromPhone, `${parts.join("\n")}${removeHint}${addHint}`);
 
   // Remember the shown order so a later "done <n>" maps N → the right row. Expire
   // any earlier list first so "done 2" always refers to the most recent listing.
@@ -884,7 +1030,7 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
     .eq("user_id", userId).eq("state", "list_shown");
   await supabase.from("whatsapp_conversations").insert([{
     user_id: userId, from_phone: fromPhone, state: "list_shown", intent: "reminder_list",
-    payload: { ids: data.map((r: any) => r.id), kind },
+    payload: { ids, kind },
   }]);
 }
 
@@ -932,6 +1078,30 @@ async function handleListDone(fromPhone: string, userId: string, numsRaw: string
   let msg = `✅ Removed ${doneTexts.length} ${noun}${doneTexts.length === 1 ? "" : "s"}: ${label}`;
   if (bad.length) msg += `\n(No item ${bad.join(", ")} on the list.)`;
   await sendText(fromPhone, msg);
+  return true;
+}
+
+/** Handle "cal <n>" against the numbered reminders/meetings list last shown —
+ *  reply with a Google Calendar link for item N. Returns true if it acted, false
+ *  if there's no live list (so the caller can fall through to normal handling). */
+async function handleListCal(fromPhone: string, userId: string, num: number): Promise<boolean> {
+  if (!num || num < 1) return false;
+  const { data: convs } = await supabase.from("whatsapp_conversations")
+    .select("payload").eq("user_id", userId).eq("state", "list_shown")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false }).limit(1);
+  const ids: string[] = (convs?.[0]?.payload as any)?.ids || [];
+  const kind: "reminder" | "meeting" = ((convs?.[0]?.payload as any)?.kind === "meeting") ? "meeting" : "reminder";
+  if (!ids.length) return false;
+  const id = ids[num - 1];
+  if (!id) { await sendText(fromPhone, `That number isn't on the list. Reply *${kind === "meeting" ? "meet" : "rem"}* to see it again.`); return true; }
+
+  const { data: r } = await supabase.from("reminders")
+    .select("text, remind_at").eq("id", id).eq("user_id", userId).maybeSingle();
+  if (!r) { await sendText(fromPhone, "That item couldn't be found — it may have been removed."); return true; }
+  if (!r.remind_at) { await sendText(fromPhone, `That ${kind} has no time set, so there's nothing to schedule.\nAdd a time first, e.g. *${kind === "meeting" ? "meet" : "rem"} ${String(r.text).slice(0, 30)} # tomorrow 3pm*.`); return true; }
+
+  await sendText(fromPhone, `🗓️ Add to your calendar:\n"${String(r.text).slice(0, 120)}" — ${fmtWhen(r.remind_at)}\n\n${googleCalUrl(String(r.text), r.remind_at, kind)}`);
   return true;
 }
 
@@ -1224,21 +1394,27 @@ async function sendButtons(to: string, bodyText: string, buttons: { id: string; 
   });
 }
 
-async function sendList(to: string, bodyText: string, buttonLabel: string, rows: { id: string; title: string; description?: string }[]): Promise<string | undefined> {
+type ListRow = { id: string; title: string; description?: string };
+
+/** Interactive WhatsApp list. Pass `rows` for a single unlabelled section, or
+ *  `sections` (title + rows) to group them — e.g. an "⚠️ Overdue" section above
+ *  a "Today" one. WhatsApp caps the list at 10 rows total across all sections. */
+async function sendList(to: string, bodyText: string, buttonLabel: string, rows: ListRow[], sections?: { title: string; rows: ListRow[] }[]): Promise<string | undefined> {
+  const mapRow = (r: ListRow) => {
+    const row: Record<string, string> = { id: r.id, title: r.title.slice(0, 24) };
+    if (r.description) row.description = r.description.slice(0, 72);
+    return row;
+  };
+  const finalSections = (sections && sections.length)
+    ? sections.filter(s => s.rows.length).map(s => ({ title: s.title.slice(0, 24), rows: s.rows.map(mapRow) }))
+    : [{ title: "Options", rows: rows.slice(0, 10).map(mapRow) }];
   return waSend({
     type: "interactive",
     to: to.replace(/\D/g, ""),
     interactive: {
       type: "list",
       body: { text: bodyText },
-      action: {
-        button: buttonLabel.slice(0, 20),
-        sections: [{ title: "Options", rows: rows.slice(0, 10).map(r => {
-          const row: Record<string, string> = { id: r.id, title: r.title.slice(0, 24) };
-          if (r.description) row.description = r.description.slice(0, 72);
-          return row;
-        }) }],
-      },
+      action: { button: buttonLabel.slice(0, 20), sections: finalSections },
     },
   });
 }
