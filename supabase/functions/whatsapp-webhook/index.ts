@@ -1008,15 +1008,15 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   let n = 0;
   if (overdue.length) {
     parts.push(`\n⚠️ *Overdue — ${verb === "due" ? "due date passed" : "date passed"}*`);
-    for (const r of overdue) { n++; ids.push(r.id); parts.push(`*${n}.* ${r.text}\n      🕒 was ${verb} ${fmtWhen(r.remind_at)}`); }
+    for (const r of overdue) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 was ${verb} ${fmtWhen(r.remind_at)}`); }
   }
   if (showNow && nowGroup.length) {
     parts.push(`\n📌 *Today / now*`);
-    for (const r of nowGroup) { n++; ids.push(r.id); parts.push(`*${n}.* ${r.text}\n      🕒 no time set`); }
+    for (const r of nowGroup) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 no time set`); }
   }
   if (upcoming.length) {
     parts.push(`\n🔜 *Upcoming*`);
-    for (const r of upcoming) { n++; ids.push(r.id); parts.push(`*${n}.* ${r.text}\n      🕒 ${fmtWhen(r.remind_at)}`); }
+    for (const r of upcoming) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 ${fmtWhen(r.remind_at)}`); }
   }
 
   const removeHint = ids.length === 1
