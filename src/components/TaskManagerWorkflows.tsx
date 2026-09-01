@@ -35,7 +35,9 @@ import {
   Maximize2,
   Minimize2,
   X,
-  Download
+  Download,
+  Camera,
+  Upload
 } from "lucide-react";
 import { Task, User as AppUser, Role, Department, Tenant } from "../types";
 import { supabase } from '../services/supabaseClient';
@@ -152,6 +154,7 @@ export default function TaskManagerWorkflows({
       };
       reader.readAsDataURL(file);
     });
+    e.target.value = ""; // allow re-picking / retaking the same photo
   };
 
   const removePhoto = (index: number) => {
@@ -1680,10 +1683,16 @@ export default function TaskManagerWorkflows({
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] text-slate-400 font-medium tracking-wide block">Attached Photos ({activeTask.photos?.length || 0}/3)</span>
                       {onAddPhoto && (activeTask.photos?.length || 0) < 3 && (
-                        <label className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1 shrink-0">
-                          + Add photo
-                          <input type="file" accept="image/*" className="hidden" onChange={(e) => { readAndAddPhoto(activeTask.id, e.target.files?.[0]); e.target.value = ""; }} />
-                        </label>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <label className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1">
+                            <Camera className="w-3.5 h-3.5" /> Camera
+                            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { readAndAddPhoto(activeTask.id, e.target.files?.[0]); e.target.value = ""; }} />
+                          </label>
+                          <label className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1">
+                            <Upload className="w-3.5 h-3.5" /> Upload
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => { readAndAddPhoto(activeTask.id, e.target.files?.[0]); e.target.value = ""; }} />
+                          </label>
+                        </div>
                       )}
                     </div>
                     {activeTask.photos && activeTask.photos.length > 0 ? (
@@ -2154,10 +2163,16 @@ export default function TaskManagerWorkflows({
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] text-slate-400 font-medium tracking-wide block font-sans">Attached Photos ({activeTask.photos?.length || 0}/3)</span>
                       {onAddPhoto && (activeTask.photos?.length || 0) < 3 && (
-                        <label className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1 shrink-0">
-                          + Add photo
-                          <input type="file" accept="image/*" className="hidden" onChange={(e) => { readAndAddPhoto(activeTask.id, e.target.files?.[0]); e.target.value = ""; }} />
-                        </label>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <label className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1">
+                            <Camera className="w-3.5 h-3.5" /> Camera
+                            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { readAndAddPhoto(activeTask.id, e.target.files?.[0]); e.target.value = ""; }} />
+                          </label>
+                          <label className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer flex items-center gap-1">
+                            <Upload className="w-3.5 h-3.5" /> Upload
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => { readAndAddPhoto(activeTask.id, e.target.files?.[0]); e.target.value = ""; }} />
+                          </label>
+                        </div>
                       )}
                     </div>
                     {activeTask.photos && activeTask.photos.length > 0 ? (
@@ -2600,14 +2615,16 @@ export default function TaskManagerWorkflows({
 
               <div className="space-y-1">
                 <label className="text-sm text-slate-700 font-semibold tracking-wider block">Task Photos (Optional, Max 3)</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  disabled={taskPhotos.length >= 3}
-                  onChange={handlePhotoUpload}
-                  className="w-full text-sm text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-[12px] file:font-medium file:bg-amber-50 file:text-amber-800 hover:file:bg-amber-100/50 cursor-pointer"
-                />
+                <div className="flex items-center gap-2">
+                  <label className={`flex items-center gap-1.5 py-1.5 px-3 rounded-xl text-[12px] font-medium bg-amber-50 text-amber-800 hover:bg-amber-100/50 cursor-pointer ${taskPhotos.length >= 3 ? "opacity-50 pointer-events-none" : ""}`}>
+                    <Camera className="w-3.5 h-3.5" /> Take photo
+                    <input type="file" accept="image/*" capture="environment" disabled={taskPhotos.length >= 3} onChange={handlePhotoUpload} className="hidden" />
+                  </label>
+                  <label className={`flex items-center gap-1.5 py-1.5 px-3 rounded-xl text-[12px] font-medium bg-amber-50 text-amber-800 hover:bg-amber-100/50 cursor-pointer ${taskPhotos.length >= 3 ? "opacity-50 pointer-events-none" : ""}`}>
+                    <Upload className="w-3.5 h-3.5" /> Upload
+                    <input type="file" accept="image/*" multiple disabled={taskPhotos.length >= 3} onChange={handlePhotoUpload} className="hidden" />
+                  </label>
+                </div>
                 {taskPhotos.length > 0 && (
                   <div className="flex gap-2 mt-2 flex-wrap">
                     {taskPhotos.map((photo, index) => (
