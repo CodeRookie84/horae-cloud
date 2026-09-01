@@ -416,7 +416,7 @@ async function buildBriefingBody(userId: string, tenantId: string | null): Promi
   } catch (_) { /* skip training line */ }
 
   // Quick keyword hints so staff discover the type-to-do shortcuts.
-  const tips = `💡 *Quick keywords:* type *task*, *rem* or *meet* to see them (add *today* / *overdue* to filter, e.g. *task today*) — or add one with *rem <note> # <time>* (e.g. *rem call vendor # 31-08 3pm*).`;
+  const tips = `💡 *Quick keywords to add new:* *task*, *rem* or *meet*\n📋 Task → *task* fix the freezer\n⏰ Reminder → *rem* call vendor # tomorrow 3pm\n📅 Meeting → *meet* supplier call # 3 Sept 11am`;
   if (lines.length === 0 && !noticeLine) return `👋 Hi ${firstName}! You're all caught up 🎉\n\n${tips}\n\nWhat would you like to do?`;
   const head = noticeLine ? `${noticeLine}\n` : "";
   return `👋 Hi ${firstName}! Here's your briefing:\n\n${head}${lines.join("\n")}\n\n${tips}\n\nWhat would you like to do?`;
@@ -836,11 +836,13 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
       return istToUtc(y, mo, d, t.h, t.m);
     }
   }
-  // Day + month name (optional year, optional time).
-  m = lower.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\.?(?:\s+(\d{2,4}))?(.*)$/);
+  // Day + month name (optional 4-digit year, optional time). The year is matched
+  // as 4 digits ONLY: a 2-digit number here is almost always the hour ("3 Sept 11
+  // am"), not a year — matching it as a year swallowed the time and forced 9 am.
+  m = lower.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\.?(?:\s+(\d{4}))?(.*)$/);
   if (m && REMINDER_MONTHS[m[2]] !== undefined) {
     const d = +m[1], mo = REMINDER_MONTHS[m[2]];
-    const y = m[3] ? (m[3].length <= 2 ? 2000 + +m[3] : +m[3]) : curY;
+    const y = m[3] ? +m[3] : curY;
     const t = parseClock(m[4]) || { h: 9, m: 0 };
     return istToUtc(y, mo, d, t.h, t.m);
   }
@@ -852,8 +854,20 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
     const t = parseClock(bd[2] || "") || { h: 9, m: 0 };
     return istToUtc(curY, curM, d, t.h, t.m);
   }
-  // Natural language.
-  return chrono.parseDate(p, { instant: now, timezone: 330 } as any, { forwardDate: true }) as Date | null;
+  // Natural language (tomorrow, next monday, next week, in an hour, today 3pm…).
+  // When the phrase carries NO explicit clock time, chrono fills in the CURRENT
+  // time (that's the "6:39 pm" surprise). Instead default to 9:00 am IST on the
+  // resolved day — matching every branch above. An explicit or relative time
+  // (10am, today 3pm, in an hour) is kept as chrono parsed it.
+  const results = chrono.parse(p, { instant: now, timezone: 330 } as any, { forwardDate: true });
+  const r = results?.[0];
+  if (!r) return null;
+  const dt = r.start.date();
+  if (!r.start.isCertain("hour")) {
+    const istDay = new Date(dt.getTime() + 5.5 * 3600 * 1000);
+    return istToUtc(istDay.getUTCFullYear(), istDay.getUTCMonth(), istDay.getUTCDate(), 9, 0);
+  }
+  return dt;
 }
 
 /** Save a reminder/note ("rem …") or a meeting ("meet …") — same table, told
@@ -897,7 +911,7 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
   // A CTA-URL button avoids the big Google-Calendar preview card. Undated notes
   // get no button (nothing to schedule).
   if (remindAt) {
-    await sendCtaUrl(fromPhone, `${savedLine}\n\n${seeHint}`, "Add to Calendar", googleCalUrl(noteText, remindAt, kind));
+    await sendCtaUrl(fromPhone, `${savedLine}\n\n${seeHint}\n\nTo turn on notification 👇 (_optional_)`, "Add to Calendar", googleCalUrl(noteText, remindAt, kind));
   } else {
     await sendText(fromPhone, `${savedLine}\n\n${seeHint}`);
   }
@@ -1020,8 +1034,8 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   }
 
   const removeHint = ids.length === 1
-    ? `\n\n❌ Remove it: *done 1*   ·   🗓️ Add to calendar: *cal 1*`
-    : `\n\n❌ Remove: *done 1* (or *done 1 3*…)   ·   🗓️ Add to calendar: *cal 1*`;
+    ? `\n\n❌ Remove it: *done 1*   ·   🗓️ Turn on Calendar notification: *cal 1*`
+    : `\n\n❌ Remove: *done 1* (or *done 1 3*…)   ·   🗓️ Turn on Calendar notification: *cal 1* or *cal 2*…`;
   const addHint = showHint
     ? (isMeeting
         ? `\n➕ Add: *meet <what> # <time>*   ·   🔎 See: *meet*, *meet today*, *meet tomorrow*`
@@ -1033,7 +1047,7 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   // event) so the user can eyeball what they've already scheduled. `/r/day` with
   // no date opens the DAY view for the viewer's current day — always "today".
   // CTA-URL avoids the big preview card.
-  await sendCtaUrl(fromPhone, "🗓️ Open your calendar to check what's scheduled.",
+  await sendCtaUrl(fromPhone, "🗓️ To check if notification turned on 👇",
     "Open Calendar", "https://calendar.google.com/calendar/r/day");
 
   // Remember the shown order so a later "done <n>" maps N → the right row. Expire
