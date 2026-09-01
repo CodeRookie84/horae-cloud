@@ -888,13 +888,19 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
   if (error) { console.error("[whatsapp-webhook] createReminder failed:", error); await sendText(fromPhone, "Sorry, I couldn't save that. Please try again."); return; }
 
   const whenStr = remindAt ? ` for *${fmtWhen(remindAt)}*` : "";
-  // When a time was set, offer a Google Calendar link so the user's OWN calendar
-  // handles the reminding (free — no push, no paid template). Undated notes get
-  // no link (nothing to schedule).
-  const calStr = remindAt ? `\n\n🗓️ Add to calendar:\n${googleCalUrl(noteText, remindAt, kind)}` : "";
-  await sendText(fromPhone, isMeeting
-    ? `📅 Meeting saved${whenStr}:\n"${noteText.slice(0, 200)}"${calStr}\n\nSend *meet* any time to see your meetings.`
-    : `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"${calStr}\n\nSend *rem* any time to see your list.`);
+  const seeHint = isMeeting ? "Send *meet* any time to see your meetings." : "Send *rem* any time to see your list.";
+  const savedLine = isMeeting
+    ? `📅 Meeting saved${whenStr}:\n"${noteText.slice(0, 200)}"`
+    : `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"`;
+  // When a time was set, offer a one-tap "Add to Calendar" URL button so the
+  // user's OWN calendar handles the reminding (free — no push, no paid template).
+  // A CTA-URL button avoids the big Google-Calendar preview card. Undated notes
+  // get no button (nothing to schedule).
+  if (remindAt) {
+    await sendCtaUrl(fromPhone, `${savedLine}\n\n${seeHint}`, "Add to Calendar", googleCalUrl(noteText, remindAt, kind));
+  } else {
+    await sendText(fromPhone, `${savedLine}\n\n${seeHint}`);
+  }
 }
 
 /** Build a Google Calendar "add event" link (action=TEMPLATE). Opens the user's
@@ -1023,6 +1029,13 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
     : "";
   await sendText(fromPhone, `${parts.join("\n")}${removeHint}${addHint}`);
 
+  // A one-tap button to open Google Calendar (the calendar itself, not a specific
+  // event) so the user can eyeball what they've already scheduled. `/r/day` with
+  // no date opens the DAY view for the viewer's current day — always "today".
+  // CTA-URL avoids the big preview card.
+  await sendCtaUrl(fromPhone, "🗓️ Open your calendar to check what's scheduled.",
+    "Open Calendar", "https://calendar.google.com/calendar/r/day");
+
   // Remember the shown order so a later "done <n>" maps N → the right row. Expire
   // any earlier list first so "done 2" always refers to the most recent listing.
   await supabase.from("whatsapp_conversations")
@@ -1101,7 +1114,11 @@ async function handleListCal(fromPhone: string, userId: string, num: number): Pr
   if (!r) { await sendText(fromPhone, "That item couldn't be found — it may have been removed."); return true; }
   if (!r.remind_at) { await sendText(fromPhone, `That ${kind} has no time set, so there's nothing to schedule.\nAdd a time first, e.g. *${kind === "meeting" ? "meet" : "rem"} ${String(r.text).slice(0, 30)} # tomorrow 3pm*.`); return true; }
 
-  await sendText(fromPhone, `🗓️ Add to your calendar:\n"${String(r.text).slice(0, 120)}" — ${fmtWhen(r.remind_at)}\n\n${googleCalUrl(String(r.text), r.remind_at, kind)}`);
+  // One-tap "Add to Calendar" button (CTA-URL → opens the prefilled Google event
+  // directly, no big preview card). No tracking — the user just adds it.
+  await sendCtaUrl(fromPhone,
+    `🗓️ Add to your calendar:\n"${String(r.text).slice(0, 120)}" — ${fmtWhen(r.remind_at)}`,
+    "Add to Calendar", googleCalUrl(String(r.text), r.remind_at, kind));
   return true;
 }
 
@@ -1390,6 +1407,23 @@ async function sendButtons(to: string, bodyText: string, buttons: { id: string; 
       type: "button",
       body: { text: bodyText },
       action: { buttons: buttons.slice(0, 3).map(b => ({ type: "reply", reply: { id: b.id, title: b.title.slice(0, 20) } })) },
+    },
+  });
+}
+
+/** Interactive "call-to-action URL" message: body text + a single tappable
+ *  button that opens `url`. Unlike a plain-text link it shows NO big link-preview
+ *  card (the Google-Calendar "Easier Time Management…" box), and renders as a
+ *  clean button. Note: a button TAP sends us no webhook — it just opens the URL —
+ *  so it can't be tracked. Allowed inside the 24-hr customer window. */
+async function sendCtaUrl(to: string, bodyText: string, buttonText: string, url: string): Promise<string | undefined> {
+  return waSend({
+    type: "interactive",
+    to: to.replace(/\D/g, ""),
+    interactive: {
+      type: "cta_url",
+      body: { text: bodyText },
+      action: { name: "cta_url", parameters: { display_text: buttonText.slice(0, 20), url } },
     },
   });
 }
