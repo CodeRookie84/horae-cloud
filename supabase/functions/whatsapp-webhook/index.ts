@@ -369,51 +369,58 @@ async function buildBriefingBody(userId: string, tenantId: string | null): Promi
   const today = new Date().toISOString().slice(0, 10);
   const { data: u } = await supabase.from("users").select("name, department, role").eq("id", userId).limit(1);
   const firstName = (String(u?.[0]?.name || "there")).split(" ")[0];
-  const lines: string[] = [];
+  // The four sections are independent, so run them in PARALLEL — the briefing
+  // then costs ONE round-trip instead of four in series. Each is self-guarded so
+  // a single query hiccup can't blank the menu; each resolves to its display line
+  // ("" = nothing to show). Notices are handled separately (shown FIRST, bolded).
+  const [taskLine, checklistLine, noticeLine, trainingLine] = await Promise.all([
+    (async () => {
+      try {
+        const { data: tasks } = await supabase.from("tasks")
+          .select("due_date")
+          .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
+          .not("status", "in", '("Completed","Closed")');
+        const open = tasks?.length || 0;
+        const overdue = (tasks || []).filter((t: any) => (t.due_date || "").slice(0, 10) < today).length;
+        return open ? `📋 ${open} task${open === 1 ? "" : "s"} open${overdue ? ` · *${overdue} overdue*` : ""}` : "";
+      } catch (_) { return ""; }
+    })(),
+    (async () => {
+      try {
+        if (!tenantId) return "";
+        // Real compliance checklists only — SOP/quiz rows share the table as JSON
+        // in `description` and are filtered out (mirrors daily-digest).
+        const { data: rows } = await supabase.from("checklists").select("description").eq("tenant_id", tenantId);
+        const count = (rows || []).filter((c: any) => {
+          try {
+            if (typeof c.description === "string" && c.description.startsWith("{")) {
+              const o = JSON.parse(c.description);
+              if (o.type === "sop" || o.type === "quiz") return false;
+            }
+          } catch (_) { /* plain-text description = real checklist */ }
+          return true;
+        }).length;
+        return count ? `✅ ${count} checklist${count === 1 ? "" : "s"} to complete` : "";
+      } catch (_) { return ""; }
+    })(),
+    (async () => {
+      try {
+        const since = new Date(Date.now() - 86400000).toISOString();
+        let q = supabase.from("notices").select("id", { count: "exact", head: true }).gte("created_at", since);
+        if (tenantId) q = q.eq("tenant_id", tenantId);
+        const { count } = await q;
+        return count ? `📢 *${count} NEW NOTICE${count === 1 ? "" : "S"} — PLEASE READ*\n➖➖➖➖➖➖➖➖➖` : "";
+      } catch (_) { return ""; }
+    })(),
+    (async () => {
+      try {
+        const pending = await pendingTrainingCount(userId, tenantId, u?.[0]);
+        return pending ? `📚 ${pending} training pending` : "";
+      } catch (_) { return ""; }
+    })(),
+  ]);
 
-  try {
-    const { data: tasks } = await supabase.from("tasks")
-      .select("due_date")
-      .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
-      .not("status", "in", '("Completed","Closed")');
-    const open = tasks?.length || 0;
-    const overdue = (tasks || []).filter((t: any) => (t.due_date || "").slice(0, 10) < today).length;
-    if (open) lines.push(`📋 ${open} task${open === 1 ? "" : "s"} open${overdue ? ` · *${overdue} overdue*` : ""}`);
-  } catch (_) { /* skip tasks line */ }
-
-  try {
-    if (tenantId) {
-      // Real compliance checklists only — SOP/quiz rows share the table as JSON
-      // in `description` and are filtered out (mirrors daily-digest).
-      const { data: rows } = await supabase.from("checklists").select("description").eq("tenant_id", tenantId);
-      const count = (rows || []).filter((c: any) => {
-        try {
-          if (typeof c.description === "string" && c.description.startsWith("{")) {
-            const o = JSON.parse(c.description);
-            if (o.type === "sop" || o.type === "quiz") return false;
-          }
-        } catch (_) { /* plain-text description = real checklist */ }
-        return true;
-      }).length;
-      if (count) lines.push(`✅ ${count} checklist${count === 1 ? "" : "s"} to complete`);
-    }
-  } catch (_) { /* skip checklist line */ }
-
-  // Notices are highlighted and shown FIRST — management uses them for important
-  // updates, so they get emphasis (bold + a divider) above the rest.
-  let noticeLine = "";
-  try {
-    const since = new Date(Date.now() - 86400000).toISOString();
-    let q = supabase.from("notices").select("id", { count: "exact", head: true }).gte("created_at", since);
-    if (tenantId) q = q.eq("tenant_id", tenantId);
-    const { count } = await q;
-    if (count) noticeLine = `📢 *${count} NEW NOTICE${count === 1 ? "" : "S"} — PLEASE READ*\n➖➖➖➖➖➖➖➖➖`;
-  } catch (_) { /* skip notices line */ }
-
-  try {
-    const pending = await pendingTrainingCount(userId, tenantId, u?.[0]);
-    if (pending) lines.push(`📚 ${pending} training pending`);
-  } catch (_) { /* skip training line */ }
+  const lines: string[] = [taskLine, checklistLine, trainingLine].filter(Boolean);
 
   // Quick keyword hints so staff discover the type-to-do shortcuts.
   const tips = `💡 *Quick keywords to add new:* *task*, *rem* or *meet*\n📋 Task → *task* fix the freezer\n⏰ Reminder → *rem* call vendor # tomorrow 3pm\n📅 Meeting → *meet* supplier call # 3 Sept 11am`;
