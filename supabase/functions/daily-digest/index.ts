@@ -265,12 +265,15 @@ serve(async (req) => {
       // The digest itself is push-only; this single Utility ping earns the free
       // 24h window when they reply Hi.
       if (runMode === "morning" && user.phone_number && user.whatsapp_opted_in) {
+        // Bold, capitalized labels — each added ONLY when that category has items,
+        // so the line never shows an empty category. This is a WhatsApp template
+        // variable, so it must stay a SINGLE line (no newlines allowed there).
         const bits: string[] = [];
-        if (items.tasks.length)      bits.push("pending tasks");
-        if (items.notices.length)    bits.push("unread notices");
-        if (items.checklists.length) bits.push("pending checklists");
-        if (items.training.length)   bits.push("pending training");
-        // Join grammatically: "a", "a and b", "a, b and c" (lowercase mid-sentence).
+        if (items.tasks.length)      bits.push("*Pending Tasks*");
+        if (items.notices.length)    bits.push("*Unread Notices*");
+        if (items.checklists.length) bits.push("*Pending Checklists*");
+        if (items.training.length)   bits.push("*Pending Training Assessment*");
+        // Join grammatically: "a", "a and b", "a, b and c".
         const joined = bits.length <= 1
           ? (bits[0] || "")
           : `${bits.slice(0, -1).join(", ")} and ${bits[bits.length - 1]}`;
