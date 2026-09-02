@@ -982,24 +982,28 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   const tomo = istDayRange(1);
   const weekEnd = now + 7 * 86400000;
 
-  const overdue: any[] = [];  // remind_at in the past — date/time already passed
-  const nowGroup: any[] = []; // undated → treated as "today & now" (user decision)
-  const upcoming: any[] = []; // future, within the requested window
+  const overdue: any[] = [];    // remind_at in the past — date/time already passed
+  const undated: any[] = [];    // no time — treated as "today"
+  const todayDated: any[] = []; // dated, still to come today (now ≤ t < end of today)
+  const upcoming: any[] = [];   // dated, tomorrow onward, within the requested window
   for (const r of rows) {
-    if (!r.remind_at) { nowGroup.push(r); continue; }
+    if (!r.remind_at) { undated.push(r); continue; }
     const t = new Date(r.remind_at).getTime();
     if (t < now) { overdue.push(r); continue; }
+    if (t < todayEnd) { if (filter !== "tomorrow") todayDated.push(r); continue; }
     let keep = true;
-    if (filter === "today")         keep = t < todayEnd;
+    if (filter === "today")         keep = false; // a "today" view stops at end of today
     else if (filter === "tomorrow") keep = t >= new Date(tomo.from).getTime() && t < new Date(tomo.to).getTime();
     else if (filter === "week")     keep = t < weekEnd;
     if (keep) upcoming.push(r);
   }
   // A "tomorrow" view shouldn't carry today's loose undated notes; overdue still
-  // shows everywhere (never silently drop a missed item).
+  // shows everywhere (never silently drop a missed item). Today = dated-today first,
+  // then undated notes (shown as "no time set").
   const showNow = filter !== "tomorrow";
+  const todayItems = [...todayDated, ...(showNow ? undated : [])];
 
-  const total = overdue.length + (showNow ? nowGroup.length : 0) + upcoming.length;
+  const total = overdue.length + todayItems.length + upcoming.length;
   if (total === 0) {
     const emptyMsg = filter === "all"
       ? (isMeeting
@@ -1017,19 +1021,21 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
 
   // Build one continuously-numbered message across groups so "done <n>" maps
   // cleanly onto the ids we store, in the exact display order.
+  // Each heading carries a trailing "\n" so a blank line sits between it and its
+  // entries (parts are joined with "\n").
   const parts: string[] = [`${icon} *${label}*`];
   const ids: string[] = [];
   let n = 0;
   if (overdue.length) {
-    parts.push(`\n⚠️ *Overdue — ${verb === "due" ? "due date passed" : "date passed"}*`);
+    parts.push(`\n⚠️ *Overdue — ${verb === "due" ? "due date passed" : "date passed"}*\n`);
     for (const r of overdue) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 was ${verb} ${fmtWhen(r.remind_at)}`); }
   }
-  if (showNow && nowGroup.length) {
-    parts.push(`\n📌 *Today / now*`);
-    for (const r of nowGroup) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 no time set`); }
+  if (todayItems.length) {
+    parts.push(`\n📅 *Today*\n`);
+    for (const r of todayItems) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 ${r.remind_at ? fmtWhen(r.remind_at) : "no time set"}`); }
   }
   if (upcoming.length) {
-    parts.push(`\n🔜 *Upcoming*`);
+    parts.push(`\n🔜 *Upcoming*\n`);
     for (const r of upcoming) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 ${fmtWhen(r.remind_at)}`); }
   }
 
