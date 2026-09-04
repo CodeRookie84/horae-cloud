@@ -221,6 +221,11 @@ async function handleInboundMessage(m: any, contact: any) {
       await sendText(fromPhone, "🎙️ I couldn't read that voice note. Please type the task, or send it again.");
       return;
     }
+    // Route the transcript through the same verb commands as typed text, so a
+    // spoken "remind me to call the vendor at 3pm" or "meeting with Sam tomorrow
+    // 4pm" lands as a reminder/meeting — not always a task. If no verb is
+    // recognized, fall back to the original behavior: a straight task capture.
+    if (await routeVerbCommand(fromPhone, userId, tenantId, transcript)) return;
     await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_voice", transcript);
     return;
   }
@@ -261,56 +266,9 @@ async function handleInboundMessage(m: any, contact: any) {
       const handled = await handleListCal(fromPhone, userId, +calMatch[1]);
       if (handled) return;
     }
-    // "rem …" → save a personal reminder/note (pull-only, no push, no cost).
-    // "rem" alone (or a keyword: reminders, today, tomorrow, week) → LIST them,
-    // filtered by the keyword. Anything else after "rem" is the note to save.
-    const rem = text.match(/^\s*rem\b(.*)$/is);
-    if (rem) {
-      const rest = (rem[1] || "").trim();
-      const filter = reminderFilterFromKeyword(rest);
-      if (filter) { await sendRemindersList(fromPhone, userId, filter, false, "reminder"); return; }
-      await createReminder(fromPhone, userId, tenantId, rest, "reminder");
-      return;
-    }
-    // "meet …" → save/list MEETINGS. Same reminders table, kind = 'meeting'.
-    // "meet" alone (or a date keyword) → LIST meetings; anything else → save one.
-    const meet = text.match(/^\s*meet(?:ing)?\b(.*)$/is);
-    if (meet) {
-      const rest = (meet[1] || "").trim();
-      const filter = reminderFilterFromKeyword(rest);
-      if (filter) { await sendRemindersList(fromPhone, userId, filter, false, "meeting"); return; }
-      await createReminder(fromPhone, userId, tenantId, rest, "meeting");
-      return;
-    }
-    // "task"/"tasks" → FETCH your tasks (bare, or "task list/all/open/pending").
-    // "task <details>" → CREATE: opens the same prefilled task form (assignees,
-    // due date, …) as "Create a task" does. ("new task …" is handled earlier.)
-    const taskKw = text.match(/^\s*tasks?\b(.*)$/is);
-    if (taskKw) {
-      const rest = (taskKw[1] || "").trim();
-      const tf = rest.toLowerCase();
-      if (!rest || /^(list|all|my|open|pending|view)$/i.test(tf)) {
-        await sendTaskPickerForView(fromPhone, userId, tenantId, "all");
-      } else if (/^(today|due ?today)$/i.test(tf)) {
-        await sendTaskPickerForView(fromPhone, userId, tenantId, "today");
-      } else if (/^(overdue|late|due|pending ?today)$/i.test(tf)) {
-        await sendTaskPickerForView(fromPhone, userId, tenantId, "overdue");
-      } else if (/^(week|this ?week)$/i.test(tf)) {
-        await sendTaskPickerForView(fromPhone, userId, tenantId, "week");
-      } else {
-        await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_newtask", rest);
-      }
-      return;
-    }
-    // Standalone fetch keywords (exact, short): reminders / notes / today / tomorrow / week.
-    if (text.length <= 12) {
-      const kw = reminderFilterFromKeyword(text.trim());
-      // Only the specific date/list words trigger here (not an empty string).
-      if (kw && /^(reminders?|notes?|today|tomorrow|tmrw|this ?week|week)$/i.test(text.trim())) {
-        await sendRemindersList(fromPhone, userId, kw, false, "reminder");
-        return;
-      }
-    }
+    // Verb commands shared with voice notes: rem/remind, meet/meeting, task, and
+    // the standalone fetch keywords. Returns true once it has handled the message.
+    if (await routeVerbCommand(fromPhone, userId, tenantId, text)) return;
     // Any other free text (e.g. a forwarded message) → offer the action menu.
     await offerCaptureMenu(fromPhone, userId, tenantId, text);
     return;
@@ -336,6 +294,71 @@ async function handleInboundMessage(m: any, contact: any) {
     return;
   }
   // Everything else (reactions, location, contacts, …) is logged, no reply.
+}
+
+/**
+ * Verb commands that behave identically whether typed or spoken (voice notes are
+ * transcribed, then run through here). Handles "rem/remind …", "meet/meeting …",
+ * "task …", and the standalone fetch keywords. Returns true if it handled the
+ * message; false on no match so each caller can apply its own fallback — the text
+ * branch offers the capture menu, the voice branch defaults to a task capture.
+ *
+ * The keyword regexes accept the full spoken words ("remind", "reminder",
+ * "meeting") as well as the short typed forms ("rem", "meet"), because Whisper
+ * transcribes complete words. `\b` keeps them from matching look-alikes like
+ * "remember"/"remove"/"reminders".
+ */
+async function routeVerbCommand(fromPhone: string, userId: string, tenantId: string | null, text: string): Promise<boolean> {
+  // "rem …" / "remind …" / "reminder …" → save a reminder, or LIST when the tail
+  // is a filter keyword (reminders / today / tomorrow / week).
+  const rem = text.match(/^\s*rem(?:ind(?:er)?)?\b(.*)$/is);
+  if (rem) {
+    const rest = (rem[1] || "").trim();
+    const filter = reminderFilterFromKeyword(rest);
+    if (filter) { await sendRemindersList(fromPhone, userId, filter, false, "reminder"); return true; }
+    // Drop a leading "me/us" and/or "to/that" so the natural "remind me to call
+    // the vendor" (very common in speech) saves the note as "call the vendor".
+    const note = rest.replace(/^(?:me\b|us\b)?\s*(?:to\b|that\b)?\s*/i, "");
+    await createReminder(fromPhone, userId, tenantId, note, "reminder");
+    return true;
+  }
+  // "meet …" / "meeting …" → save/list MEETINGS. Same reminders table, kind = 'meeting'.
+  const meet = text.match(/^\s*meet(?:ing)?\b(.*)$/is);
+  if (meet) {
+    const rest = (meet[1] || "").trim();
+    const filter = reminderFilterFromKeyword(rest);
+    if (filter) { await sendRemindersList(fromPhone, userId, filter, false, "meeting"); return true; }
+    await createReminder(fromPhone, userId, tenantId, rest, "meeting");
+    return true;
+  }
+  // "task"/"tasks" → FETCH your tasks (bare, or "task list/all/open/pending").
+  // "task <details>" → CREATE: opens the same prefilled task form as "Create a task".
+  const taskKw = text.match(/^\s*tasks?\b(.*)$/is);
+  if (taskKw) {
+    const rest = (taskKw[1] || "").trim();
+    const tf = rest.toLowerCase();
+    if (!rest || /^(list|all|my|open|pending|view)$/i.test(tf)) {
+      await sendTaskPickerForView(fromPhone, userId, tenantId, "all");
+    } else if (/^(today|due ?today)$/i.test(tf)) {
+      await sendTaskPickerForView(fromPhone, userId, tenantId, "today");
+    } else if (/^(overdue|late|due|pending ?today)$/i.test(tf)) {
+      await sendTaskPickerForView(fromPhone, userId, tenantId, "overdue");
+    } else if (/^(week|this ?week)$/i.test(tf)) {
+      await sendTaskPickerForView(fromPhone, userId, tenantId, "week");
+    } else {
+      await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_newtask", rest);
+    }
+    return true;
+  }
+  // Standalone fetch keywords (exact, short): reminders / notes / today / tomorrow / week.
+  if (text.trim().length <= 12) {
+    const kw = reminderFilterFromKeyword(text.trim());
+    if (kw && /^(reminders?|notes?|today|tomorrow|tmrw|this ?week|week)$/i.test(text.trim())) {
+      await sendRemindersList(fromPhone, userId, kw, false, "reminder");
+      return true;
+    }
+  }
+  return false;
 }
 
 // ── Main menu (WhatsApp interactive list) ─────────────────────────────────────
@@ -423,7 +446,7 @@ async function buildBriefingBody(userId: string, tenantId: string | null): Promi
   const lines: string[] = [taskLine, checklistLine, trainingLine].filter(Boolean);
 
   // Quick keyword hints so staff discover the type-to-do shortcuts.
-  const tips = `💡 *Quick keywords to add new:* *task*, *rem* or *meet*\n📋 Task → *task* fix the freezer\n⏰ Reminder → *rem* call vendor # tomorrow 3pm\n📅 Meeting → *meet* supplier call # 3 Sept 11am`;
+  const tips = `💡 *Quick keywords to add new:* *task*, *remind* or *meeting* — type or send a voice note\n📋 Task → *task* fix the freezer\n⏰ Reminder → *remind* call vendor at 3pm tomorrow\n📅 Meeting → *meeting* supplier call on 3 Sept 11am`;
   if (lines.length === 0 && !noticeLine) return `👋 Hi ${firstName}! You're all caught up 🎉\n\n${tips}\n\nWhat would you like to do?`;
   const head = noticeLine ? `${noticeLine}\n` : "";
   return `👋 Hi ${firstName}! Here's your briefing:\n\n${head}${lines.join("\n")}\n\n${tips}\n\nWhat would you like to do?`;
@@ -877,27 +900,63 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
   return dt;
 }
 
+/** The tail after a separator only counts as a time phrase when it STARTS
+ *  time-like — a number, a weekday/month, "today/tomorrow/tonight", a part of
+ *  day, "next/this …", or "in a/an/<n> …". This keeps a plain preposition
+ *  ("meet at the office", "on the roof", "stand by the door") from being split. */
+const TIMEISH_START = /^(?:\d|noon|midnight|morning|afternoon|evening|tonight|today|tomorrow|tmrw|mon|tue|wed|thu|fri|sat|sun|next\b|this\b|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|in\s+(?:a|an|\d))/i;
+
+/**
+ * Split a "rem/meet" body into { text, remindAt } — the note and an optional
+ * parsed time. An explicit "#" wins (unambiguous, what typed power-users use).
+ * Otherwise we accept a natural separator — "at", "on", or "by" — so a spoken
+ * "call the vendor at 3pm tomorrow" or "sync on monday" splits without a "#"
+ * that nobody says out loud. To avoid eating an ordinary preposition, a word
+ * separator is only honoured when the tail after it starts time-like AND then
+ * parses to a real date/time; we scan candidates from the LAST backwards so the
+ * time phrase stays whole. Returns null when no usable time phrase is found.
+ */
+function splitReminderWhen(rest: string): { text: string; remindAt: string } | null {
+  const accept = (before: string, phrase: string): { text: string; remindAt: string } | null => {
+    if (!before.trim() || !phrase.trim()) return null;
+    const dt = parseReminderWhen(phrase.trim(), new Date());
+    return dt && !isNaN(dt.getTime()) ? { text: before.trim(), remindAt: dt.toISOString() } : null;
+  };
+  // Explicit "#" separator (LAST one): text before, time phrase after.
+  const hash = rest.match(/^(.*)#\s*(.+)$/s);
+  if (hash) { const r = accept(hash[1], hash[2]); if (r) return r; }
+  // Word separators: at / on / by. Try each occurrence from the last backwards.
+  const sepRe = /\b(?:at|on|by)\b/gi;
+  const idxs: number[] = [];
+  let mm: RegExpExecArray | null;
+  while ((mm = sepRe.exec(rest)) !== null) idxs.push(mm.index);
+  for (let i = idxs.length - 1; i >= 0; i--) {
+    const before = rest.slice(0, idxs[i]);
+    const phrase = rest.slice(idxs[i]).replace(/^\s*(?:at|on|by)\b\s*/i, "");
+    if (!TIMEISH_START.test(phrase.trim())) continue;
+    const r = accept(before, phrase);
+    if (r) return r;
+  }
+  return null;
+}
+
 /** Save a reminder/note ("rem …") or a meeting ("meet …") — same table, told
- *  apart by `kind`. A trailing "- <time>" / "_ <time>" is parsed (India-aware,
- *  IST) into an optional remind_at; nothing is ever pushed. */
+ *  apart by `kind`. A trailing "# <time>" (or "at/on/by <time>") is parsed
+ *  (India-aware, IST) into an optional remind_at; nothing is ever pushed. */
 async function createReminder(fromPhone: string, userId: string, tenantId: string | null, rest: string, kind: "reminder" | "meeting" = "reminder") {
   const isMeeting = kind === "meeting";
   let noteText = rest;
   let remindAt: string | null = null;
 
-  // Split on the LAST "#": text before, time phrase after. We use "#" (not "-")
-  // so a dash date like "31-08" inside the time phrase isn't eaten as the separator.
-  const m = rest.match(/^(.*)#\s*(.+)$/s);
-  if (m && m[1].trim()) {
-    const phrase = m[2].trim();
-    const dt = parseReminderWhen(phrase, new Date());
-    if (dt && !isNaN(dt.getTime())) { noteText = m[1].trim(); remindAt = dt.toISOString(); }
-  }
+  // Separate the note text from the time phrase (see splitReminderWhen: explicit
+  // "#" first, else a spoken/typed "at"/"on"/"by" whose tail parses as a time).
+  const split = splitReminderWhen(rest);
+  if (split) { noteText = split.text; remindAt = split.remindAt; }
   noteText = noteText.trim();
   if (!noteText) {
     await sendText(fromPhone, isMeeting
-      ? "📅 What meeting? e.g. *meet vendor call # tomorrow 3pm*"
-      : "📝 What should I note? e.g. *rem call the vendor # 3pm*");
+      ? "📅 What meeting? e.g. *meeting vendor call at tomorrow 3pm*"
+      : "📝 What should I note? e.g. *remind call the vendor at 3pm*");
     return;
   }
 
@@ -1014,8 +1073,8 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   if (total === 0) {
     const emptyMsg = filter === "all"
       ? (isMeeting
-          ? "📅 You have no meetings saved.\n\nAdd one by sending *meet <what> # <time>*\ne.g. *meet vendor call # tomorrow 3pm*"
-          : "📝 You have no reminders.\n\nAdd one by sending *rem <note> # <time>*\ne.g. *rem call the vendor # tomorrow 9am*")
+          ? "📅 You have no meetings saved.\n\nAdd one by sending *meeting <what> at <time>*\ne.g. *meeting vendor call at 3pm tomorrow*"
+          : "📝 You have no reminders.\n\nAdd one by sending *remind <note> at <time>*\ne.g. *remind call the vendor at 9am tomorrow*")
       : `${icon} Nothing ${verb} ${filter === "week" ? "this week" : filter} — and nothing overdue. 🎉`;
     await sendText(fromPhone, emptyMsg);
     return;
@@ -1051,8 +1110,8 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
     : `\n\n❌ Remove: *done 1* (or *done 1 3*…)   ·   🗓️ Turn on Calendar notification: *cal 1* or *cal 2*…`;
   const addHint = showHint
     ? (isMeeting
-        ? `\n➕ Add: *meet <what> # <time>*   ·   🔎 See: *meet*, *meet today*, *meet tomorrow*`
-        : `\n➕ Add: *rem <note> # <time>*   ·   🔎 See: *rem*, *rem today*, *rem tomorrow*`)
+        ? `\n➕ Add: *meeting <what> at <time>*   ·   🔎 See: *meet*, *meet today*, *meet tomorrow*`
+        : `\n➕ Add: *remind <note> at <time>*   ·   🔎 See: *rem*, *rem today*, *rem tomorrow*`)
     : "";
   await sendText(fromPhone, `${parts.join("\n")}${removeHint}${addHint}`);
 
@@ -1139,7 +1198,7 @@ async function handleListCal(fromPhone: string, userId: string, num: number): Pr
   const { data: r } = await supabase.from("reminders")
     .select("text, remind_at").eq("id", id).eq("user_id", userId).maybeSingle();
   if (!r) { await sendText(fromPhone, "That item couldn't be found — it may have been removed."); return true; }
-  if (!r.remind_at) { await sendText(fromPhone, `That ${kind} has no time set, so there's nothing to schedule.\nAdd a time first, e.g. *${kind === "meeting" ? "meet" : "rem"} ${String(r.text).slice(0, 30)} # tomorrow 3pm*.`); return true; }
+  if (!r.remind_at) { await sendText(fromPhone, `That ${kind} has no time set, so there's nothing to schedule.\nAdd a time first, e.g. *${kind === "meeting" ? "meeting" : "remind"} ${String(r.text).slice(0, 30)} at 3pm tomorrow*.`); return true; }
 
   // One-tap "Add to Calendar" button (CTA-URL → opens the prefilled Google event
   // directly, no big preview card). No tracking — the user just adds it.
@@ -1219,11 +1278,11 @@ async function sendHelp(fromPhone: string, userId: string) {
     `👋 Hi ${first}! I'm *Horae*.\n\nHere's what I can do:\n\n` +
     `📋 *Send "menu"* → create a task, comment on a task, update or view tasks, see your checklists & training, or raise a complaint.\n` +
     `📝 *task* → see your tasks · *task <details>* → create one.\n` +
-    `⏰ *rem* → see reminders · *rem <note> # <time>* → add one (e.g. *rem call vendor # 31-08 3pm*).\n` +
-    `📅 *meet* → see meetings · *meet <what> # <time>* → add one.\n` +
+    `⏰ *rem* → see reminders · *remind <note> at <time>* → add one (e.g. *remind call vendor at 3pm 31-08*).\n` +
+    `📅 *meet* → see meetings · *meeting <what> at <time>* → add one.\n` +
     `✅ To clear a listed item, reply *done 1* (or *done 2*, …).\n` +
     `↪️ *Forward me any message* → I'll offer to turn it into a task.\n` +
-    `🎙️ Send a *voice note* → I'll turn it into a task (or a comment when I ask for one).\n\n` +
+    `🎙️ Send a *voice note* → say *"task…"*, *"remind… at…"* or *"meeting… at…"* and I'll file it right; anything else becomes a task.\n\n` +
     `You'll also get task alerts and your daily briefing right here.\n\n👉 Open Horae: ${APP_BASE_URL}`,
   );
 }
