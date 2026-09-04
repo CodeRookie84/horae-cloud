@@ -886,6 +886,24 @@ export class StoreService {
       .update({ created_by_user_id: null })
       .eq('created_by_user_id', userId);
 
+    // Remove the Supabase Auth login FIRST, while the users row still exists.
+    // The auth-admin function resolves the target's auth_id (and client scope)
+    // from that row, so deleting the row first would leave the auth account
+    // orphaned. An orphaned auth account keeps the email — or the phone shim
+    // `91<last10>@horae.local` — registered in Supabase Auth, which later makes
+    // re-onboarding the SAME email or mobile number fail at provision_auth
+    // ("email already registered"). Deleting it here frees the identifier.
+    {
+      const { data: authRes, error: authErr } = await supabase.functions.invoke('auth-admin', {
+        body: { action: 'delete_auth', targetUserId: userId },
+      });
+      if (authErr || (authRes as any)?.error) {
+        let msg = (authRes as any)?.error || authErr?.message;
+        try { const b = await (authErr as any)?.context?.json?.(); if (b?.error) msg = b.error; } catch {}
+        throw new Error(`Couldn't remove this staff member's login: ${msg || 'unknown error'}`);
+      }
+    }
+
     // Delete user — verify a row was actually removed. With RLS enabled and no
     // DELETE policy the delete silently affects 0 rows and returns no error, so
     // `.select()` + a count check turns that false success into a real failure.

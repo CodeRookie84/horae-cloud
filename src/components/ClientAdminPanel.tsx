@@ -332,7 +332,9 @@ export default function ClientAdminPanel({
       setCustomDept("");
       setStaffRole(activeRoles[0] || "");
       setStaffDept(activeDepts[0] || "");
-      setTimeout(() => setStaffSuccessMsg(""), 8000);
+      // Deliberately NOT auto-dismissed: the temporary password is shown here and
+      // an admin needs time to copy it. It stays until manually closed (the ✕ on
+      // the banner) or the next onboarding replaces it.
     } catch (err: any) {
       setStaffErrorMsg(err?.message || "Failed to onboard staff. Please try again.");
     }
@@ -2154,9 +2156,17 @@ export default function ClientAdminPanel({
                   </div>
                 )}
                 {staffSuccessMsg && (
-                  <div className="p-2.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-xl text-[10px] font-semibold flex items-center gap-1.5">
-                    <Check className="w-3.5 h-3.5 shrink-0" />
-                    {staffSuccessMsg}
+                  <div className="p-2.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-xl text-[10px] font-semibold flex items-start gap-1.5">
+                    <Check className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span className="flex-1">{staffSuccessMsg}</span>
+                    <button
+                      type="button"
+                      onClick={() => setStaffSuccessMsg("")}
+                      className="shrink-0 -mt-0.5 -mr-0.5 p-0.5 rounded-md text-emerald-500 hover:text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
+                      title="Dismiss"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 )}
 
@@ -2790,7 +2800,7 @@ export default function ClientAdminPanel({
                 }
                 try {
                   await store.adminResetPassword(resetPwdUser.id, targetPassword);
-                  alert(`Password for ${resetPwdUser.name} has been reset.`);
+                  alert(`Password for ${resetPwdUser.name} has been reset to: ${targetPassword}\n\nShare it with them; they'll set their own on next login.`);
                   setResetPwdUser(null);
                 } catch (err: any) {
                   console.error(err);

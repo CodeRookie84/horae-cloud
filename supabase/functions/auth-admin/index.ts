@@ -73,6 +73,24 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
+/**
+ * Find a Supabase Auth user by email address. supabase-js exposes no
+ * "get user by email", so page through the admin list. Bounded so it can never
+ * loop unbounded on a very large project.
+ */
+async function findAuthUserByEmail(email: string) {
+  const target = email.toLowerCase();
+  const perPage = 200;
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error || !data?.users?.length) return null;
+    const hit = data.users.find((u) => (u.email || "").toLowerCase() === target);
+    if (hit) return hit;
+    if (data.users.length < perPage) return null;
+  }
+  return null;
+}
+
 /** Resolve a users row (+ its client_id) by app user id. */
 async function getTarget(userId: string) {
   const { data: u } = await admin.from("users").select("id, auth_id, tenant_id").eq("id", userId).single();
@@ -133,12 +151,29 @@ serve(async (req) => {
       if (!target) return json({ error: "User not found." }, 404);
       if (!inScope(target.clientId)) return json({ error: "You can only manage users in your own organization." }, 403);
       if (target.authId) return json({ error: "This user already has a login account." }, 400);
-      const { data: created, error } = await admin.auth.admin.createUser({
-        email: String(loginEmail).toLowerCase(),
+      const emailLc = String(loginEmail).toLowerCase();
+      const mkUser = () => admin.auth.admin.createUser({
+        email: emailLc,
         password: String(password),
         email_confirm: true,
         user_metadata: { app_user_id: targetUserId },
       });
+      let { data: created, error } = await mkUser();
+      if (error) {
+        // The email (or the phone shim `91<last10>@horae.local`) may belong to
+        // an ORPHANED auth account left behind when a staff member was deleted
+        // before delete-on-remove existed. If no users row references it, it's
+        // safe to reclaim: delete the orphan and retry so the same email /
+        // mobile number can be re-onboarded instead of failing forever.
+        const orphan = await findAuthUserByEmail(emailLc);
+        if (orphan) {
+          const { data: linked } = await admin.from("users").select("id").eq("auth_id", orphan.id).maybeSingle();
+          if (!linked) {
+            await admin.auth.admin.deleteUser(orphan.id);
+            ({ data: created, error } = await mkUser());
+          }
+        }
+      }
       if (error) throw error;
       await admin.from("users").update({ auth_id: created.user.id, pwd_changed: false }).eq("id", targetUserId);
 
