@@ -414,7 +414,7 @@ export default function TaskManagerWorkflows({
     if (!SpeechRecognition) {
       // Browser fallback simulation
       setIsListening(true);
-      setTimeout(() => {
+      setTimeout(async () => {
         let text = "";
         if (speechLanguage === "en-US") {
           text = "Prepare clean sheet pans for croissants baking in the morning.";
@@ -424,6 +424,10 @@ export default function TaskManagerWorkflows({
           text = "ಬೆಳಿಗ್ಗೆ ಕ್ರೋಸೆಂಟ್‌ಗಳನ್ನು ಬೇಕ್ ಮಾಡಲು ಕ್ಲೀನ್ ಶೀಟ್ ಪ್ಯಾನ್‌ಗಳನ್ನು ತಯಾರಿಸಿ.";
         } else {
           text = "காலையில் குரோசண்ட்ஸ் பேக் செய்ய சுத்தமான ஷீட் பான்களை தயார் செய்யவும்.";
+        }
+        // Task text is always English (see the live onresult handler).
+        if (speechLanguage !== "en-US") {
+          try { text = await translateText(text, "en"); } catch { /* keep original on failure */ }
         }
         setDescription(prev => prev ? prev + " " + text : text);
         setIsListening(false);
@@ -441,8 +445,15 @@ export default function TaskManagerWorkflows({
         setIsListening(true);
       };
 
-      recognition.onresult = (event: any) => {
-        const resultText = event.results[0][0].transcript;
+      recognition.onresult = async (event: any) => {
+        let resultText = event.results[0][0].transcript;
+        // Task text is ALWAYS stored in English. Speech may be dictated in any
+        // language (recognition.lang), so translate the transcript to English
+        // before it lands in the field. Comments/chat keep the spoken language
+        // (see startCommentListening) — only the task text is forced to English.
+        if (speechLanguage !== "en-US") {
+          try { resultText = await translateText(resultText, "en"); } catch { /* keep original transcript on failure */ }
+        }
         setDescription(prev => prev ? prev + " " + resultText : resultText);
       };
 
