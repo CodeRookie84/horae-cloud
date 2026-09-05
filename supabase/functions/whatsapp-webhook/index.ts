@@ -446,7 +446,7 @@ async function buildBriefingBody(userId: string, tenantId: string | null): Promi
   const lines: string[] = [taskLine, checklistLine, trainingLine].filter(Boolean);
 
   // Quick keyword hints so staff discover the type-to-do shortcuts.
-  const tips = `💡 *Quick keywords to add new:* *task*, *remind* or *meeting* — type or send a voice note\n📋 Task → *task* fix the freezer\n⏰ Reminder → *remind* call vendor at 3pm tomorrow\n📅 Meeting → *meeting* supplier call on 3 Sept 11am`;
+  const tips = `💡 *Quick keywords to add new:* *task*, *rem* or *meet* — type or send a voice note\n📋 Task → *task* fix the freezer\n⏰ Reminder → *rem* call vendor at 3pm tomorrow\n📅 Meeting → *meet* supplier call on 3 Sept 11am`;
   if (lines.length === 0 && !noticeLine) return `👋 Hi ${firstName}! You're all caught up 🎉\n\n${tips}\n\nWhat would you like to do?`;
   const head = noticeLine ? `${noticeLine}\n` : "";
   return `👋 Hi ${firstName}! Here's your briefing:\n\n${head}${lines.join("\n")}\n\n${tips}\n\nWhat would you like to do?`;
@@ -907,11 +907,51 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
 const TIMEISH_START = /^(?:\d|noon|midnight|morning|afternoon|evening|tonight|today|tomorrow|tmrw|mon|tue|wed|thu|fri|sat|sun|next\b|this\b|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|in\s+(?:a|an|\d))/i;
 
 /**
+ * Primary time extractor: run the local NLP date parser (chrono, already bundled
+ * — no network, no delay) over the WHOLE body, so natural speech that carries no
+ * "at"/"on"/"by" separator still yields a time. "call Remya tomorrow afternoon,
+ * 2 o'clock" and "team standup 9 am" both split here; the current at/on/by scan
+ * misses them because there is no preposition to key on.
+ *
+ * The note is the body with chrono's matched span cut out (dangling "at/on/by"
+ * and stray commas tidied). Two guards keep it from mangling ordinary notes:
+ *  • a match glued to a possessive apostrophe ("Monday's supplier") is left in
+ *    the note, not treated as a time;
+ *  • a time-only body (no note text left) returns null so the caller can prompt.
+ * The final date is re-derived by feeding chrono's matched text back through the
+ * India-aware parseReminderWhen — that keeps day-first dates (5/8 = 5 Aug) and
+ * the 9 am-IST default, and avoids chrono's US month/day + forward-year quirks
+ * (e.g. "3 Sept" staying in the current year). Returns null on no usable time.
+ */
+function splitReminderWhenNlp(rest: string): { text: string; remindAt: string } | null {
+  let results: any[];
+  try { results = chrono.parse(rest, { instant: new Date(), timezone: 330 } as any, { forwardDate: true }); }
+  catch (_) { return null; }
+  const r = results?.[0];
+  if (!r) return null;
+  const end = r.index + r.text.length;
+  if (rest[end] === "'" || rest[end] === "’") return null; // possessive, e.g. "Monday's"
+  const before = rest.slice(0, r.index);
+  const after = rest.slice(end);
+  const text = (before + " " + after)
+    .replace(/\s+/g, " ")
+    .replace(/[\s,]*\b(?:at|on|by)\s*$/i, "")   // drop a dangling separator ("call vendor at")
+    .replace(/^\s*,\s*/, "").replace(/\s*,\s*$/, "")
+    .trim();
+  if (!text) return null;
+  const matched = r.text.replace(/^\s*(?:at|on|by)\b\s*/i, "");
+  const dt = parseReminderWhen(matched, new Date()) || r.start.date();
+  if (!dt || isNaN(dt.getTime())) return null;
+  return { text, remindAt: dt.toISOString() };
+}
+
+/**
  * Split a "rem/meet" body into { text, remindAt } — the note and an optional
  * parsed time. An explicit "#" wins (unambiguous, what typed power-users use).
- * Otherwise we accept a natural separator — "at", "on", or "by" — so a spoken
- * "call the vendor at 3pm tomorrow" or "sync on monday" splits without a "#"
- * that nobody says out loud. To avoid eating an ordinary preposition, a word
+ * Then the NLP parser (splitReminderWhenNlp) handles natural, separator-free
+ * speech. As a final fallback we accept a natural separator — "at", "on", or
+ * "by" — so a spoken "call the vendor at 3pm tomorrow" or "sync on monday"
+ * splits even when NLP declines. To avoid eating an ordinary preposition, a word
  * separator is only honoured when the tail after it starts time-like AND then
  * parses to a real date/time; we scan candidates from the LAST backwards so the
  * time phrase stays whole. Returns null when no usable time phrase is found.
@@ -925,7 +965,10 @@ function splitReminderWhen(rest: string): { text: string; remindAt: string } | n
   // Explicit "#" separator (LAST one): text before, time phrase after.
   const hash = rest.match(/^(.*)#\s*(.+)$/s);
   if (hash) { const r = accept(hash[1], hash[2]); if (r) return r; }
-  // Word separators: at / on / by. Try each occurrence from the last backwards.
+  // Primary: local NLP parse over the whole body (no separator needed).
+  const nlp = splitReminderWhenNlp(rest);
+  if (nlp) return nlp;
+  // Fallback: word separators at / on / by. Try each occurrence from the last backwards.
   const sepRe = /\b(?:at|on|by)\b/gi;
   const idxs: number[] = [];
   let mm: RegExpExecArray | null;

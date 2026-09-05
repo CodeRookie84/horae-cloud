@@ -68,6 +68,24 @@ interface TaskManagerWorkflowsProps {
   languages?: string[];
 }
 
+/**
+ * Priority is DERIVED from the due date — the single source of truth — so it can
+ * never drift out of sync when the date changes. "Urgent" is the one manual
+ * override, for a within-2-hours emergency that a calendar date can't express.
+ *   today (or overdue) → High (EOD) · tomorrow → Medium · 2+ days → Low
+ * `due` is a local YYYY-MM-DD string (as produced by toLocaleDateString('en-CA')).
+ */
+function computeTaskPriority(due: string, urgent: boolean): string {
+  if (urgent) return "Critical";
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(`${due}T00:00:00`);
+  if (isNaN(d.getTime())) return "High";
+  const days = Math.round((d.getTime() - today.getTime()) / 86400000);
+  if (days <= 0) return "High";    // today or overdue → end of day
+  if (days === 1) return "Medium"; // tomorrow
+  return "Low";                    // 2+ days out
+}
+
 export default function TaskManagerWorkflows({
   tasks,
   tenantUsers,
@@ -101,8 +119,11 @@ export default function TaskManagerWorkflows({
   // Creation form states
   const [title, setTitle] = useState<string>("");
   const [description, setDescription] = useState<string>("");
-  const [priority, setPriority] = useState<string>("High");
+  const [urgent, setUrgent] = useState<boolean>(false);
   const [dueDate, setDueDate] = useState<string>(new Date().toLocaleDateString('en-CA'));
+  // Priority follows the due date automatically (see computeTaskPriority); the
+  // only manual lever is the Urgent toggle. Never set priority by hand.
+  const priority = computeTaskPriority(dueDate, urgent);
   const [assigneePicked, setAssigneePicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
   const assignedUserIds = resolveMemberIds(assigneePicked, tenantUsers, tenants);
   const [ccPicked, setCcPicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
@@ -534,7 +555,7 @@ export default function TaskManagerWorkflows({
     // reset creation states
     setTitle("");
     setDescription("");
-    setPriority("High");
+    setUrgent(false);
     setDueDate(new Date().toLocaleDateString('en-CA'));
     setAssigneePicked(EMPTY_SELECTION);
     setCcPicked(EMPTY_SELECTION);
@@ -776,7 +797,7 @@ export default function TaskManagerWorkflows({
   const renderPriorityBadge = (p: string) => {
     switch(p) {
       case "Critical":
-        return <span className="bg-red-50 text-red-750 font-medium border border-red-200 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0"><span className="h-1.5 w-1.5 rounded-full bg-red-600 animate-ping" />🔴 Critical (Within 1 Hr)</span>;
+        return <span className="bg-red-50 text-red-750 font-medium border border-red-200 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0"><span className="h-1.5 w-1.5 rounded-full bg-red-600 animate-ping" />🔴 Critical (Within 2 Hrs)</span>;
       case "High":
         return <span className="bg-orange-50 text-orange-750 font-medium border border-orange-200 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0">🟠 High (EOD)</span>;
       case "Medium":
@@ -1032,7 +1053,7 @@ export default function TaskManagerWorkflows({
                 
                 const headerColorClass = 'bg-[#162D4E] text-white';
                                          
-                const prioLabel = prio === 'Critical' ? 'Critical - Within 1 hour' : 
+                const prioLabel = prio === 'Critical' ? 'Critical - Within 2 hours' : 
                                   prio === 'High' ? 'High - EOD' : 
                                   prio === 'Medium' ? 'Medium - Tomorrow' : 
                                   'Low - More than 2 days';
@@ -1918,7 +1939,7 @@ export default function TaskManagerWorkflows({
                                          prio === 'Medium' ? 'bg-amber-100/80 text-amber-800 border-amber-200' :
                                          'bg-emerald-100/80 text-emerald-800 border-emerald-200';
                                          
-                const prioLabel = prio === 'Critical' ? 'Critical - Within 1 hour' : 
+                const prioLabel = prio === 'Critical' ? 'Critical - Within 2 hours' : 
                                   prio === 'High' ? 'High - EOD' : 
                                   prio === 'Medium' ? 'Medium - Tomorrow' : 
                                   'Low - More than 2 days';
@@ -2580,16 +2601,24 @@ export default function TaskManagerWorkflows({
                 </div>
                 <div className="space-y-0.5">
                   <label className="text-sm text-slate-700 font-semibold tracking-wider block">Priority Rank</label>
-                  <select
-                    value={priority}
-                    onChange={(e) => setPriority(e.target.value)}
-                    className="w-full px-2.5 py-2 bg-slate-500/10 border border-slate-200 rounded-xl text-sm font-semibold text-slate-750 focus:outline-none cursor-pointer"
-                  >
-                    <option value="Critical">Critical - Within 1 hour</option>
-                    <option value="High">High - EOD</option>
-                    <option value="Medium">Medium - Tomorrow</option>
-                    <option value="Low">Low - More than 2 days</option>
-                  </select>
+                  {/* Auto-derived from the Due Shift Date (single source of truth) —
+                      read-only so it can never drift out of sync. Urgent is the one
+                      manual override, for a within-2-hours emergency. */}
+                  <div className="w-full px-2.5 py-2 bg-slate-500/10 border border-slate-200 rounded-xl text-sm flex items-center gap-2 min-h-[42px]">
+                    {renderPriorityBadge(priority)}
+                    <span className="text-[11px] text-slate-400 leading-tight">
+                      {urgent ? "manually flagged urgent" : "auto-set from due date"}
+                    </span>
+                  </div>
+                  <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={urgent}
+                      onChange={(e) => setUrgent(e.target.checked)}
+                      className="accent-red-600 cursor-pointer w-3.5 h-3.5"
+                    />
+                    <span className="text-[12px] font-medium text-slate-700">🔴 Mark Urgent — within 2 hrs</span>
+                  </label>
                 </div>
               </div>
 
