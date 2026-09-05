@@ -2729,5 +2729,45 @@ export async function translateText(text: string, targetLanguage: string): Promi
   }
 }
 
+/** True when text has characters beyond the Latin blocks (Devanagari, Tamil,
+ *  Malayalam, Arabic, CJK…) — i.e. it is NOT already plain English/Latin. */
+function hasNonLatin(text: string): boolean {
+  return /[^ -ɏ]/.test(text);
+}
+
+/**
+ * Transliterate (romanize) text into the Latin alphabet — phonetically, WITHOUT
+ * translating: "उसका नाम क्या है" → "uska naam kya hai" (still Hindi, Latin script).
+ * Used so voice-dictated task text always reads in English letters. Returns the
+ * text unchanged when it is already Latin. Uses Google's free romanization
+ * (dt=rm); if that yields nothing, falls back to an English translation so the
+ * result is still guaranteed to be Latin script (never the original native script).
+ */
+export async function transliterateText(text: string): Promise<string> {
+  if (!text || !text.trim() || !hasNonLatin(text)) return text;
+  try {
+    const response = await fetch(
+      `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&dt=rm&sl=auto&tl=en&q=${encodeURIComponent(text)}`
+    );
+    const data = await response.json();
+    // With dt=rm, Google appends romanization chunks to data[0]. A translation
+    // chunk is [translated, source, …]; a romanization chunk carries null there
+    // and the source's Latin form at index [2] (occasionally [3]). Collect those.
+    const chunks: any[] = Array.isArray(data?.[0]) ? data[0] : [];
+    let roman = "";
+    for (const c of chunks) {
+      if (!Array.isArray(c)) continue;
+      if (!c[0] && !c[1]) roman += (typeof c[2] === "string" ? c[2] : (typeof c[3] === "string" ? c[3] : ""));
+    }
+    roman = roman.trim();
+    if (roman && !hasNonLatin(roman)) return roman;
+    // Romanization unavailable → guarantee Latin output via English translation.
+    return await translateText(text, "en");
+  } catch (error) {
+    console.error("Transliteration failed, falling back to translation:", error);
+    return await translateText(text, "en");
+  }
+}
+
 export const store = new StoreService();
 export default store;

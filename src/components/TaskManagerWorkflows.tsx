@@ -41,7 +41,7 @@ import {
 } from "lucide-react";
 import { Task, User as AppUser, Role, Department, Tenant } from "../types";
 import { supabase } from '../services/supabaseClient';
-import { store, translateText } from "../services/store";
+import { store, translateText, transliterateText } from "../services/store";
 import MemberPicker, { resolveMemberIds, EMPTY_SELECTION, type MemberPickerSelection } from "./MemberPicker";
 import { resolveLanguages } from "../services/languages";
 
@@ -425,9 +425,9 @@ export default function TaskManagerWorkflows({
         } else {
           text = "காலையில் குரோசண்ட்ஸ் பேக் செய்ய சுத்தமான ஷீட் பான்களை தயார் செய்யவும்.";
         }
-        // Task text is always English (see the live onresult handler).
+        // Task text is always in Latin letters (see the live onresult handler).
         if (speechLanguage !== "en-US") {
-          try { text = await translateText(text, "en"); } catch { /* keep original on failure */ }
+          try { text = await transliterateText(text); } catch { /* keep original on failure */ }
         }
         setDescription(prev => prev ? prev + " " + text : text);
         setIsListening(false);
@@ -447,12 +447,13 @@ export default function TaskManagerWorkflows({
 
       recognition.onresult = async (event: any) => {
         let resultText = event.results[0][0].transcript;
-        // Task text is ALWAYS stored in English. Speech may be dictated in any
-        // language (recognition.lang), so translate the transcript to English
-        // before it lands in the field. Comments/chat keep the spoken language
-        // (see startCommentListening) — only the task text is forced to English.
+        // Task text is ALWAYS stored in Latin (English) letters. Speech may be
+        // dictated in any language (recognition.lang), so transliterate — not
+        // translate — the transcript: Hindi speech → "uska naam kya hai", keeping
+        // the words, just the script in English. Comments/chat keep the spoken
+        // language (see startCommentListening) — only the task text is romanized.
         if (speechLanguage !== "en-US") {
-          try { resultText = await translateText(resultText, "en"); } catch { /* keep original transcript on failure */ }
+          try { resultText = await transliterateText(resultText); } catch { /* keep original transcript on failure */ }
         }
         setDescription(prev => prev ? prev + " " + resultText : resultText);
       };
@@ -828,6 +829,28 @@ export default function TaskManagerWorkflows({
       default:
         return <span className="bg-emerald-50 text-emerald-700 font-medium border border-emerald-255 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0">🟢 Low (&gt; 2 Days)</span>;
     }
+  };
+
+  // Two-line priority badge for the create-task form's Priority Rank box, where the
+  // narrow column would otherwise clip the descriptor ("…EOD Tomorrow"). The main
+  // word sits on line 1, the timing note on line 2 — nothing gets cut.
+  const renderPriorityBadgeStacked = (p: string) => {
+    const meta: Record<string, { dot: string; main: string; sub: string; box: string; text: string }> = {
+      Critical: { dot: "🔴", main: "Critical", sub: "Within 2 Hrs", box: "bg-red-50 border-red-200",       text: "text-red-750" },
+      High:     { dot: "🟠", main: "High",     sub: "EOD",          box: "bg-orange-50 border-orange-200", text: "text-orange-750" },
+      Medium:   { dot: "🟡", main: "Medium",   sub: "EOD Tomorrow", box: "bg-amber-50 border-amber-250",   text: "text-slate-700" },
+      Low:      { dot: "🟢", main: "Low",      sub: "> 2 Days",     box: "bg-emerald-50 border-emerald-255", text: "text-emerald-700" },
+    };
+    const m = meta[p] || meta.Low;
+    return (
+      <span className={`${m.box} ${m.text} font-medium border rounded-lg px-2.5 py-1 flex flex-col items-start leading-tight`}>
+        <span className="flex items-center gap-1 text-[12px]">
+          {p === "Critical" && <span className="h-1.5 w-1.5 rounded-full bg-red-600 animate-ping" />}
+          <span>{m.dot} {m.main}</span>
+        </span>
+        <span className="text-[10px] opacity-70 tracking-wide">{m.sub}</span>
+      </span>
+    );
   };
 
   // Render Unread Chat Badge helper
@@ -2626,8 +2649,8 @@ export default function TaskManagerWorkflows({
                     <label className="text-sm text-slate-700 font-semibold tracking-wider block">Priority Rank</label>
                     {/* Auto-derived from the Due Shift Date (single source of truth) —
                         read-only so it can never drift out of sync. */}
-                    <div className="w-full px-2.5 min-h-[42px] bg-slate-500/10 border border-slate-200 rounded-xl flex items-center overflow-hidden">
-                      {renderPriorityBadge(priority)}
+                    <div className="w-full px-2.5 min-h-[42px] bg-slate-500/10 border border-slate-200 rounded-xl flex items-center">
+                      {renderPriorityBadgeStacked(priority)}
                     </div>
                   </div>
                 </div>

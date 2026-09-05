@@ -23,7 +23,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as chrono from "https://esm.sh/chrono-node@2.7.7";
-import { transcribeAudio } from "../_shared/ai.ts";
+import { transcribeAudio, romanizeText } from "../_shared/ai.ts";
 
 const SUPABASE_URL      = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -1496,6 +1496,11 @@ async function handleButtonReply(m: any, fromPhone: string, userId: string, tena
 async function createCaptureAndReply(
   fromPhone: string, userId: string, tenantId: string | null, source: string, content: string, complaint = false,
 ) {
+  // Task text is stored in Latin script — transliterate (not translate) so a task
+  // dictated/typed in Hindi, Tamil, Malayalam… reads as "uska naam kya hai", not
+  // native script. No-op for text already in English. (Comments keep their original
+  // language — they never pass through here.)
+  content = await romanizeText(content);
   const base = deriveTitle(content);
   // Flag complaints so an admin spots them in the Task Manager.
   const title = complaint ? `Complaint: ${base}`.slice(0, 80) : base;
