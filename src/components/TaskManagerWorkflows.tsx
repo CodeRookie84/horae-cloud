@@ -86,6 +86,15 @@ function computeTaskPriority(due: string, urgent: boolean): string {
   return "Low";                    // 2+ days out
 }
 
+// "Critical / within 2 hrs" only makes sense for a task due today — so the
+// Urgent override is offered (and honoured) only when the due date is today.
+function isDueToday(due: string): boolean {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(`${due}T00:00:00`);
+  if (isNaN(d.getTime())) return false;
+  return d.getTime() === today.getTime();
+}
+
 export default function TaskManagerWorkflows({
   tasks,
   tenantUsers,
@@ -122,8 +131,10 @@ export default function TaskManagerWorkflows({
   const [urgent, setUrgent] = useState<boolean>(false);
   const [dueDate, setDueDate] = useState<string>(new Date().toLocaleDateString('en-CA'));
   // Priority follows the due date automatically (see computeTaskPriority); the
-  // only manual lever is the Urgent toggle. Never set priority by hand.
-  const priority = computeTaskPriority(dueDate, urgent);
+  // only manual lever is the Urgent toggle, and that only applies when the task
+  // is due today. Never set priority by hand.
+  const dueToday = isDueToday(dueDate);
+  const priority = computeTaskPriority(dueDate, urgent && dueToday);
   const [assigneePicked, setAssigneePicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
   const assignedUserIds = resolveMemberIds(assigneePicked, tenantUsers, tenants);
   const [ccPicked, setCcPicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
@@ -2588,38 +2599,40 @@ export default function TaskManagerWorkflows({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-0.5">
-                  <label className="text-sm text-slate-700 font-semibold tracking-wider block">Due Shift Date</label>
-                  <input
-                    type="date"
-                    value={dueDate}
-                    min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split("T")[0]}
-                    onChange={(e) => setDueDate(e.target.value)}
-                    className="w-full px-2.5 py-2 bg-slate-500/10 border border-slate-200 rounded-xl text-sm font-semibold text-slate-750 focus:outline-none cursor-pointer"
-                  />
-                </div>
-                <div className="space-y-0.5">
-                  <label className="text-sm text-slate-700 font-semibold tracking-wider block">Priority Rank</label>
-                  {/* Auto-derived from the Due Shift Date (single source of truth) —
-                      read-only so it can never drift out of sync. Urgent is the one
-                      manual override, for a within-2-hours emergency. */}
-                  <div className="w-full px-2.5 py-2 bg-slate-500/10 border border-slate-200 rounded-xl text-sm flex items-center gap-2 min-h-[42px]">
-                    {renderPriorityBadge(priority)}
-                    <span className="text-[11px] text-slate-400 leading-tight">
-                      {urgent ? "manually flagged urgent" : "auto-set from due date"}
-                    </span>
+              <div className="space-y-2">
+                <div className="grid grid-cols-[0.9fr_1.1fr] gap-3 items-start">
+                  <div className="space-y-0.5">
+                    <label className="text-sm text-slate-700 font-semibold tracking-wider block">Due Shift Date</label>
+                    <input
+                      type="date"
+                      value={dueDate}
+                      min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split("T")[0]}
+                      onChange={(e) => { setDueDate(e.target.value); if (!isDueToday(e.target.value)) setUrgent(false); }}
+                      className="w-full px-2.5 py-2 bg-slate-500/10 border border-slate-200 rounded-xl text-sm font-semibold text-slate-750 focus:outline-none cursor-pointer"
+                    />
                   </div>
-                  <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer select-none">
+                  <div className="space-y-0.5">
+                    <label className="text-sm text-slate-700 font-semibold tracking-wider block">Priority Rank</label>
+                    {/* Auto-derived from the Due Shift Date (single source of truth) —
+                        read-only so it can never drift out of sync. */}
+                    <div className="w-full px-2.5 min-h-[42px] bg-slate-500/10 border border-slate-200 rounded-xl flex items-center overflow-hidden">
+                      {renderPriorityBadge(priority)}
+                    </div>
+                  </div>
+                </div>
+                {/* Urgent is the one manual override — a within-2-hours emergency —
+                    and only meaningful for a task due today. */}
+                {dueToday && (
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={urgent}
                       onChange={(e) => setUrgent(e.target.checked)}
-                      className="accent-red-600 cursor-pointer w-3.5 h-3.5"
+                      className="accent-red-600 cursor-pointer w-4 h-4 shrink-0"
                     />
                     <span className="text-[12px] font-medium text-slate-700">🔴 Mark Urgent — within 2 hrs</span>
                   </label>
-                </div>
+                )}
               </div>
 
               <div className="space-y-1">

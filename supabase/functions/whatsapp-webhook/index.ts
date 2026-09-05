@@ -837,6 +837,16 @@ function parseClock(s: string): { h: number; m: number } | null {
   return { h, m: mi };
 }
 
+// When a phrase names a part of the day but no clock time, resolve to a sensible
+// hour (IST): morning 9, afternoon 2 pm, evening 5 pm, night/tonight 8 pm, noon 12.
+const DAYPART_HOURS: Record<string, number> = {
+  morning: 9, noon: 12, afternoon: 14, evening: 17, night: 20, tonight: 20,
+};
+function daypartHour(s: string): number | null {
+  const m = s.match(/\b(morning|afternoon|evening|tonight|night|noon)\b/i);
+  return m ? DAYPART_HOURS[m[1].toLowerCase()] : null;
+}
+
 /**
  * India-aware "when" parser. Handles bare days (27 / 27th → current month),
  * day+month (27 Aug / 27th August), and DD/MM[/YY] or DD-MM[-YY] numeric dates
@@ -885,17 +895,28 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
     return istToUtc(curY, curM, d, t.h, t.m);
   }
   // Natural language (tomorrow, next monday, next week, in an hour, today 3pm…).
-  // When the phrase carries NO explicit clock time, chrono fills in the CURRENT
-  // time (that's the "6:39 pm" surprise). Instead default to 9:00 am IST on the
-  // resolved day — matching every branch above. An explicit or relative time
-  // (10am, today 3pm, in an hour) is kept as chrono parsed it.
   const results = chrono.parse(p, { instant: now, timezone: 330 } as any, { forwardDate: true });
   const r = results?.[0];
   if (!r) return null;
   const dt = r.start.date();
-  if (!r.start.isCertain("hour")) {
-    const istDay = new Date(dt.getTime() + 5.5 * 3600 * 1000);
-    return istToUtc(istDay.getUTCFullYear(), istDay.getUTCMonth(), istDay.getUTCDate(), 9, 0);
+  const istDay = new Date(dt.getTime() + 5.5 * 3600 * 1000);
+  const Y = istDay.getUTCFullYear(), Mo = istDay.getUTCMonth(), D = istDay.getUTCDate();
+  // A relative offset ("in an hour", "in 90 minutes") is an exact instant — never
+  // reinterpret its hour.
+  const relative = /\bin\s+(?:a|an|\d)/i.test(lower) || /\b\d+\s*(?:hours?|hrs?|minutes?|mins?)\b/i.test(lower);
+  if (!relative && !r.start.isCertain("hour")) {
+    // No explicit clock time. Honour a named part of the day (afternoon → 2 pm,
+    // evening → 5 pm…); otherwise default to 9:00 am IST — matching every branch
+    // above, instead of chrono's current-time fill ("6:39 pm" surprise).
+    return istToUtc(Y, Mo, D, daypartHour(lower) ?? 9, 0);
+  }
+  if (!relative && !r.start.isCertain("meridiem")) {
+    // Explicit hour but no am/pm ("2 o'clock", "tomorrow 2"). Snap a bare hour
+    // into office hours (8:00 am–7:59 pm IST) so 1–7 read as pm, not the small
+    // hours: "2 o'clock" → 2 pm.
+    let h = istDay.getUTCHours();
+    if (h >= 1 && h <= 7) h += 12;
+    return istToUtc(Y, Mo, D, h, istDay.getUTCMinutes());
   }
   return dt;
 }
