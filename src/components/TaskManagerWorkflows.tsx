@@ -159,8 +159,17 @@ export default function TaskManagerWorkflows({
       const cap = await store.getTaskCapture(prefillCaptureId);
       if (cancelled) return;
       if (cap && cap.status === "pending") {
-        if (cap.suggestedTitle) setTitle(cap.suggestedTitle);
-        if (cap.rawText) setDescription(cap.rawText);
+        // Task text is stored in Latin letters. A WhatsApp voice note dictated in
+        // Hindi/Tamil/Malayalam… is captured in native script, so transliterate
+        // (romanize, NOT translate) it here as the form auto-fills — keyless, run
+        // in the browser where Google's endpoint works. No-op for English text.
+        const [tTitle, tRaw] = await Promise.all([
+          cap.suggestedTitle ? transliterateText(cap.suggestedTitle) : Promise.resolve(""),
+          cap.rawText ? transliterateText(cap.rawText) : Promise.resolve(""),
+        ]);
+        if (cancelled) return;
+        if (tTitle) setTitle(tTitle);
+        if (tRaw) setDescription(tRaw);
         setShowCreateForm(true);
         store.consumeTaskCapture(cap.id).catch(() => {});
       }

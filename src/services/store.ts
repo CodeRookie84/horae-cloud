@@ -2750,14 +2750,16 @@ export async function transliterateText(text: string): Promise<string> {
       `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&dt=rm&sl=auto&tl=en&q=${encodeURIComponent(text)}`
     );
     const data = await response.json();
-    // With dt=rm, Google appends romanization chunks to data[0]. A translation
-    // chunk is [translated, source, …]; a romanization chunk carries null there
-    // and the source's Latin form at index [2] (occasionally [3]). Collect those.
+    // With dt=rm, Google appends a romanization chunk to data[0]. A translation
+    // chunk is [translated, source, …] (both strings); the romanization chunk
+    // carries null there and the SOURCE's Latin form at index [3] — e.g.
+    // [null, null, null, "hum dil de chuke sanam"]. (Index [2] holds the target's
+    // romanization, which is empty when translating to English.)
     const chunks: any[] = Array.isArray(data?.[0]) ? data[0] : [];
     let roman = "";
     for (const c of chunks) {
-      if (!Array.isArray(c)) continue;
-      if (!c[0] && !c[1]) roman += (typeof c[2] === "string" ? c[2] : (typeof c[3] === "string" ? c[3] : ""));
+      if (!Array.isArray(c) || c[0] || c[1]) continue;
+      roman += (typeof c[3] === "string" && c[3]) || (typeof c[2] === "string" && c[2]) || "";
     }
     roman = roman.trim();
     if (roman && !hasNonLatin(roman)) return roman;
