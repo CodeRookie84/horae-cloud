@@ -370,11 +370,12 @@ async function handleMorningNudge(userId: string, tenantId: string, summary: str
   if ((count || 0) >= MAX_MESSAGES_PER_USER_DAY) return;
 
   // notice_alert renders: "Your Horae update: {{1}} / {{2}} / Reply Hi for your
-  // full briefing". {{1}} = short headline, {{2}} = the pending-items summary.
-  // The template's static last line prompts the reply-Hi that opens the free
-  // window, so we don't repeat it here.
+  // full briefing". {{1}} = the staff member's first name (personal greeting),
+  // {{2}} = a generic action hook (built in daily-digest). The template's static
+  // last line prompts the reply-Hi that opens the free window.
+  const firstName = String(user.name || "there").split(" ")[0];
   try {
-    const wamid = await sendWhatsApp(user.phone_number, "", { name: DIGEST_TEMPLATE_NAME, params: ["today's summary", summary] });
+    const wamid = await sendWhatsApp(user.phone_number, "", { name: DIGEST_TEMPLATE_NAME, params: [firstName, summary] });
     await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "sent", undefined, false, wamid);
   } catch (e) {
     await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "failed", String(e));
@@ -432,16 +433,23 @@ async function handleUrgentPush(kind: "task" | "notice" | "training", record: an
     if (!await checkAntiSpam(userId, tenantId, "urgent_push", refId)) continue;
 
     const waMessage = kind === "task"
-      ? `🔴 *Urgent task — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\nImmediate action required.\n\n👉 ${deepLink}`
+      ? `⏰ *Task reminder — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\nPlease action this task.\n\n👉 ${deepLink}`
       : kind === "training"
       ? `📚 *Training reminder — Horae*\n\nHi ${user.name.split(" ")[0]},\nPlease complete your training: *${record.title}*.\n\n👉 ${deepLink}`
       : `🔴 *Urgent notice — Horae*\n\nHi ${user.name.split(" ")[0]},\n*${record.title}*\n\n👉 ${deepLink}`;
 
+    // A manual task push is a REMINDER for an already-assigned task, so it must NOT
+    // use horae_task_alert — that template's fixed header reads "New task assigned",
+    // which is wrong for a nudge. Route task reminders through the generic
+    // notice_alert template ({{1}} = task title, {{2}} = reminder line + link).
+    // Training keeps the task template; notices are push-only (pushOnly set below).
+    const waTemplate = kind === "task"
+      ? { name: DIGEST_TEMPLATE_NAME, params: [record.title, `Reminder — please action this. ${deepLink}`] }
+      : { name: TASK_TEMPLATE_NAME, params: [record.title, kind === "training" ? `Training to complete. ${deepLink}` : `Urgent — Immediate action needed. ${deepLink}`] };
+
     await sendNotifications(user, {
       waMessage,
-      // Task/training urgent pings go WhatsApp on the Utility task template.
-      // Notices are app-push-only, so pushOnly is set for them below (no template).
-      waTemplate: { name: TASK_TEMPLATE_NAME, params: [record.title, kind === "training" ? `Training to complete. ${deepLink}` : `Urgent — Immediate action needed. ${deepLink}`] },
+      waTemplate,
       pushTitle: kind === "task" ? `🔴 Urgent task: ${record.title}`
         : kind === "training" ? `📚 Training: ${record.title}`
         : `🔴 Urgent notice: ${record.title}`,

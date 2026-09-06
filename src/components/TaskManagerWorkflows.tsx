@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { 
   CheckSquare, 
   Trash2, 
@@ -141,6 +141,11 @@ export default function TaskManagerWorkflows({
   // CC = keep-informed users, minus anyone already a primary assignee.
   const ccUserIds = resolveMemberIds(ccPicked, tenantUsers, tenants).filter(id => !assignedUserIds.includes(id));
   const [taskPhotos, setTaskPhotos] = useState<string[]>([]);
+  // Native-script source text for the create form's "Translate to English" button.
+  // A WhatsApp capture stores the original (e.g. Hindi/Tamil) text; we keep it so
+  // the translation is done from the source, not the romanized display copy.
+  const [descNativeSource, setDescNativeSource] = useState<string>("");
+  const [descTranslating, setDescTranslating] = useState<boolean>(false);
   // Reassign / escalate flow (task detail).
   const [reassignOpen, setReassignOpen] = useState<boolean>(false);
   const [reassignTo, setReassignTo] = useState<string>("");
@@ -170,6 +175,9 @@ export default function TaskManagerWorkflows({
         if (cancelled) return;
         if (tTitle) setTitle(tTitle);
         if (tRaw) setDescription(tRaw);
+        // Remember the native-script original so "Translate to English" can work
+        // from the source text rather than the romanized copy shown in the field.
+        setDescNativeSource(cap.rawText || "");
         setShowCreateForm(true);
         store.consumeTaskCapture(cap.id).catch(() => {});
       }
@@ -178,6 +186,27 @@ export default function TaskManagerWorkflows({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefillCaptureId]);
+
+  // Client admin(s) are CC'd by default on every new task. The chip is prefilled
+  // and removable — the creator can drop it before assigning. We exclude the
+  // creator themselves (no point CC-ing your own task) and add the admins as
+  // individuals so they show as normal, removable CC chips.
+  const defaultCcAdminIds = useMemo(
+    () => tenantUsers.filter(u => u.role === Role.ADMIN && u.id !== activeUser.id).map(u => u.id),
+    [tenantUsers, activeUser.id]
+  );
+  const prevShowCreateRef = useRef<boolean>(false);
+  useEffect(() => {
+    // Only on the closed→open transition, so we never re-add an admin the user
+    // just removed while the form is still open.
+    if (showCreateForm && !prevShowCreateRef.current && defaultCcAdminIds.length) {
+      setCcPicked(prev => ({
+        ...prev,
+        individuals: Array.from(new Set([...prev.individuals, ...defaultCcAdminIds])),
+      }));
+    }
+    prevShowCreateRef.current = showCreateForm;
+  }, [showCreateForm, defaultCcAdminIds]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -491,11 +520,22 @@ export default function TaskManagerWorkflows({
   };
 
   const handleTranslateDescription = async () => {
-    if (!description.trim()) return;
+    // Translate from the native-script source when we have it (a WhatsApp voice
+    // capture keeps its original), otherwise from whatever is in the field.
+    const source = (descNativeSource && descNativeSource.trim()) || description;
+    if (!source.trim()) return;
     setTranslating(true);
     try {
-      const translated = await translateText(description, 'en');
-      setDescription(translated);
+      const translated = (await translateText(source, 'en')).trim();
+      // APPEND the English below the original (romanized) text with one blank line
+      // between — never overwrite what the user already has. Guard against
+      // double-appending the same translation on repeated taps.
+      setDescription(prev => {
+        const original = prev.trim();
+        if (!translated) return prev;
+        if (original.includes(translated)) return prev;
+        return original ? `${original}\n\n${translated}` : translated;
+      });
     } catch (error) {
       alert("Failed to translate description.");
     } finally {
@@ -587,6 +627,7 @@ export default function TaskManagerWorkflows({
     // reset creation states
     setTitle("");
     setDescription("");
+    setDescNativeSource("");
     setUrgent(false);
     setDueDate(new Date().toLocaleDateString('en-CA'));
     setAssigneePicked(EMPTY_SELECTION);
@@ -704,7 +745,11 @@ export default function TaskManagerWorkflows({
   };
 
   const downloadTasksCSV = () => {
-    let csvContent = "data:text/csv;charset=utf-8,";
+    // Build the CSV body only (no data: URI prefix). We download it via a Blob
+    // below — the old `data:` + encodeURI approach silently truncated the file at
+    // the first "#" (encodeURI doesn't escape it) and blew the data-URI size cap
+    // on long chat transcripts, which is why the report often came out empty.
+    let csvContent = "";
     csvContent += "Task ID,Title,Description,Outlet/Tenant,Priority,Status,Due Date,Creation Date,Assignees,Created By,Days Pending,Chat Transcript\n";
     
     filteredTasksList.forEach(t => {
@@ -734,12 +779,18 @@ export default function TaskManagerWorkflows({
       csvContent += `${taskId},${title},${desc},${outlet},${priority},${status},${dueDate},${creationDate},${assignees},${creator},${daysPending},${transcript}\n`;
     });
     
+    // Prepend a UTF-8 BOM so Excel renders romanized/native names correctly, then
+    // hand the whole thing off as a Blob object URL (handles "#", newlines and
+    // arbitrarily long transcripts that the old data: URI could not).
+    const blob = new Blob(["﻿" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodeURI(csvContent));
+    link.setAttribute("href", url);
     link.setAttribute("download", `Tasks_Report_${new Date().toISOString().split("T")[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
   const toggleGroupCollapse = (groupLabel: string) => {
     setCollapsedGroups(prev => ({
@@ -944,7 +995,12 @@ export default function TaskManagerWorkflows({
       <button
         onClick={(e) => {
           e.stopPropagation();
-          onUrgentNotify(t.id);
+          // Guard against accidental taps — this sends a paid WhatsApp ping.
+          const who = (t.assignedUserIds && t.assignedUserIds.length > 0 ? t.assignedUserIds : [t.assignedUserId])
+            .map(uid => getAssigneeName(uid)).filter(Boolean).join(", ") || "the assignee";
+          if (window.confirm(`Send a WhatsApp reminder for "${t.title}" to ${who}?`)) {
+            onUrgentNotify(t.id);
+          }
         }}
         title="Notify assignee on WhatsApp now"
         className="p-1 rounded-lg shrink-0 flex items-center gap-1 text-[11px] font-medium text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 cursor-pointer"
@@ -1398,7 +1454,8 @@ export default function TaskManagerWorkflows({
                 onClick={() => {
                   setActiveFilter(f.id);
                   setShowClosedOnly(false); // Reset closed tasks when clicking other status filters
-                  setSelectedEmployeeFilter(null); // clear row click filters
+                  // NOTE: the staff (person) filter is intentionally NOT cleared here —
+                  // it stacks with status filters and persists until its ✕ chip is tapped.
                 }}
                 className={`px-2 py-1 md:px-3 md:py-1.5 rounded-lg text-[12px] md:text-sm font-semibold tracking-tight whitespace-nowrap transition-all select-none cursor-pointer border border-transparent shadow-xs ${colorClasses} ${isActive ? 'scale-105 shadow-sm' : ''}`}
               >
@@ -1447,7 +1504,7 @@ export default function TaskManagerWorkflows({
                 setActiveFilter("Assigned To Me");
                 setShowClosedOnly(false);
               }
-              setSelectedEmployeeFilter(null);
+              // Staff filter persists across To-me / By-me switches (removed via its ✕ chip).
             }}
             className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-sm sm:text-base font-semibold tracking-tight transition-all select-none cursor-pointer border flex-1 sm:flex-none text-center ${
               activeFilter === "Assigned To Me" && !showClosedOnly
@@ -1468,7 +1525,7 @@ export default function TaskManagerWorkflows({
                 setActiveFilter("Assigned By Me");
                 setShowClosedOnly(false);
               }
-              setSelectedEmployeeFilter(null);
+              // Staff filter persists across To-me / By-me switches (removed via its ✕ chip).
             }}
             className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-sm sm:text-base font-semibold tracking-tight transition-all select-none cursor-pointer border flex-1 sm:flex-none text-center ${
               activeFilter === "Assigned By Me" && !showClosedOnly
@@ -1492,7 +1549,7 @@ export default function TaskManagerWorkflows({
               onChange={(e) => {
                 setShowClosedOnly(e.target.checked);
                 setActiveFilter("All");
-                setSelectedEmployeeFilter(null);
+                // Staff filter persists into the Closed archive too (removed via its ✕ chip).
               }}
               className="rounded border-slate-300 text-slate-900 focus:ring-[#162D4E] w-4 h-4 cursor-pointer"
             />

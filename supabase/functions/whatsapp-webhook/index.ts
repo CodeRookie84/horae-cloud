@@ -163,6 +163,8 @@ async function handleInboundMessage(m: any, contact: any) {
       if (bid.startsWith("tstatus~")) { await sendTaskStatusList(fromPhone, bid.slice(8), userId); return; }
       if (bid.startsWith("tcomment~")) { await startCommentForTask(fromPhone, userId, tenantId, bid.slice(9)); return; }
       if (bid.startsWith("tphoto~")) { await startPhotoForTask(fromPhone, userId, tenantId, bid.slice(7)); return; }
+      // "tscope~to-me" / "tscope~by-me" = scope chosen from the "Which tasks?" prompt.
+      if (bid.startsWith("tscope~")) { await sendTaskPickerForView(fromPhone, userId, tenantId, "all", bid.slice(7) === "by-me" ? "by-me" : "to-me"); return; }
       await handleButtonReply(m, fromPhone, userId, tenantId); return;
     }
     return;
@@ -337,8 +339,17 @@ async function routeVerbCommand(fromPhone: string, userId: string, tenantId: str
   if (taskKw) {
     const rest = (taskKw[1] || "").trim();
     const tf = rest.toLowerCase();
+    // Scope shortcuts — "tasks to me" / "tasks by me" jump straight to the right
+    // list (no extra tap). "assigned to/by me" and "for me" are accepted too.
+    if (/^(?:assigned\s+)?to\s*me$|^for\s*me$/i.test(tf)) {
+      await sendTaskPickerForView(fromPhone, userId, tenantId, "all", "to-me"); return true;
+    }
+    if (/^(?:assigned\s+)?by\s*me$|^created\s*by\s*me$|^i\s*(?:created|assigned)$/i.test(tf)) {
+      await sendTaskPickerForView(fromPhone, userId, tenantId, "all", "by-me"); return true;
+    }
     if (!rest || /^(list|all|my|open|pending|view)$/i.test(tf)) {
-      await sendTaskPickerForView(fromPhone, userId, tenantId, "all");
+      // Bare "task/tasks" → offer the two scopes as one-tap buttons.
+      await sendTaskScopePrompt(fromPhone);
     } else if (/^(today|due ?today)$/i.test(tf)) {
       await sendTaskPickerForView(fromPhone, userId, tenantId, "today");
     } else if (/^(overdue|late|due|pending ?today)$/i.test(tf)) {
@@ -381,6 +392,7 @@ async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: strin
       { id: "menu_training",      title: "📚 My training" },
       { id: "menu_reminders",     title: "⏰ Reminders" },
       { id: "menu_meetings",      title: "📅 Meetings" },
+      { id: "menu_help",          title: "❓ Help — how to use" },
       { id: "menu_go_app",        title: "🔗 Go to Horae app", description: `${APP_BASE_URL}/dashboard` },
     ],
   );
@@ -445,11 +457,11 @@ async function buildBriefingBody(userId: string, tenantId: string | null): Promi
 
   const lines: string[] = [taskLine, checklistLine, trainingLine].filter(Boolean);
 
-  // Quick keyword hints so staff discover the type-to-do shortcuts.
-  const tips = `💡 *Quick keywords to add new:* *task*, *rem* or *meet* — type or send a voice note\n📋 Task → *task* fix the freezer\n⏰ Reminder → *rem* call vendor at 3pm tomorrow\n📅 Meeting → *meet* supplier call on 3 Sept 11am`;
-  if (lines.length === 0 && !noticeLine) return `👋 Hi ${firstName}! You're all caught up 🎉\n\n${tips}\n\nWhat would you like to do?`;
+  // Keyword hints live in the "❓ Help" menu row / the "help" keyword now — the
+  // briefing stays clean (just the briefing + the options list).
+  if (lines.length === 0 && !noticeLine) return `👋 Hi ${firstName}! You're all caught up 🎉\n\nWhat would you like to do?`;
   const head = noticeLine ? `${noticeLine}\n` : "";
-  return `👋 Hi ${firstName}! Here's your briefing:\n\n${head}${lines.join("\n")}\n\n${tips}\n\nWhat would you like to do?`;
+  return `👋 Hi ${firstName}! Here's your briefing:\n\n${head}${lines.join("\n")}\n\nWhat would you like to do?`;
 }
 
 /** Count published trainings targeted to this user that they haven't passed. */
@@ -483,9 +495,10 @@ async function handleMenuSelection(id: string, fromPhone: string, userId: string
     case "menu_reminders":     await sendRemindersList(fromPhone, userId, "all", true, "reminder"); break;
     case "menu_meetings":      await sendRemindersList(fromPhone, userId, "all", true, "meeting"); break;
     case "menu_complaint":     await startAwaitingInput(fromPhone, userId, tenantId, "complaint"); break;
-    case "menu_view_tasks":    await sendTaskPickerForView(fromPhone, userId, tenantId); break;
+    case "menu_view_tasks":    await sendTaskScopePrompt(fromPhone); break;
     case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
     case "menu_training":      await sendTrainingList(fromPhone, userId, tenantId); break;
+    case "menu_help":          await sendHelp(fromPhone, userId); break;
     case "menu_go_app":        await sendText(fromPhone, `👉 *Go to Horae app*:\n${APP_BASE_URL}/dashboard`); break;
     default:                   await sendMainMenu(fromPhone, userId, tenantId);
   }
@@ -526,6 +539,7 @@ async function takePendingInput(userId: string): Promise<{ id: string; intent: s
  * description, assigned-by, comments and photos — entirely in WhatsApp.
  */
 type TaskFilter = "all" | "today" | "overdue" | "week";
+type TaskScope = "to-me" | "by-me";
 
 /** One-line row description conveying the task's due state (the overdue marker
  *  is what gives "due date passed" its clear distinction inside the picker). */
@@ -537,13 +551,29 @@ function taskDueLabel(t: any, istToday: string): string {
   return `due ${d}`;
 }
 
-async function sendTaskPickerForView(fromPhone: string, userId: string, tenantId: string | null, filter: TaskFilter = "all") {
+/** Bare "tasks" (or menu → View & Update Tasks) → ask which set the user wants,
+ *  as two one-tap buttons. Typing "tasks to me" / "tasks by me" skips this. */
+async function sendTaskScopePrompt(fromPhone: string) {
+  await sendButtons(
+    fromPhone,
+    "📋 *Which tasks?*\n\n📥 *To me* — assigned to you\n📤 *By me* — you assigned to others",
+    [
+      { id: "tscope~to-me", title: "📥 Tasks to me" },
+      { id: "tscope~by-me", title: "📤 Tasks by me" },
+    ],
+  );
+}
+
+async function sendTaskPickerForView(fromPhone: string, userId: string, tenantId: string | null, filter: TaskFilter = "all", scope: TaskScope = "to-me") {
   let q = supabase.from("tasks")
     .select("id, title, status, due_date")
-    .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
     .not("status", "in", '("Completed","Closed")')
     .order("due_date", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: false }).limit(50);
+  // "to-me" = tasks assigned to me or where I'm CC'd; "by-me" = tasks I created
+  // (assigned to others). This mirrors the app's "Assigned To Me / By Me" split.
+  if (scope === "by-me") q = q.eq("created_by_user_id", userId);
+  else q = q.or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`);
   if (tenantId) q = q.eq("tenant_id", tenantId);
   const { data: all } = await q;
 
@@ -598,10 +628,11 @@ async function sendTaskPickerForView(fromPhone: string, userId: string, tenantId
 
   const total = groups.reduce((s, g) => s + g.items.length, 0);
   if (total === 0) {
+    const noneWhose = scope === "by-me" ? "You haven't assigned any" : "You have no";
     const msg = filter === "overdue" ? "✅ No overdue tasks — you're all caught up."
       : filter === "today" ? "📋 Nothing due today, and nothing overdue. 🎉"
       : filter === "week" ? "📋 Nothing due this week, and nothing overdue. 🎉"
-      : "📋 You have no active tasks right now.";
+      : `📋 ${noneWhose} active tasks right now.`;
     await sendText(fromPhone, msg);
     return;
   }
@@ -620,10 +651,12 @@ async function sendTaskPickerForView(fromPhone: string, userId: string, tenantId
     budget -= take.length;
     sections.push({ title: g.title, rows: take.map((t: any) => ({ id: `tview~${t.id}`, title: t.title, description: g.completed ? "✅ tap → set Closed" : taskDueLabel(t, istToday) })) });
   }
-  const header = filter === "today" ? "📋 *Tasks — today & overdue*"
-    : filter === "overdue" ? "📋 *Overdue tasks*"
-    : filter === "week" ? "📋 *This week's tasks*"
-    : "📋 *Your tasks*";
+  const scopeLabel = scope === "by-me" ? " (by me)" : " (to me)";
+  const header = filter === "today" ? `📋 *Tasks — today & overdue*${scopeLabel}`
+    : filter === "overdue" ? `📋 *Overdue tasks*${scopeLabel}`
+    : filter === "week" ? `📋 *This week's tasks*${scopeLabel}`
+    : scope === "by-me" ? "📤 *Tasks you assigned (by me)*"
+    : "📥 *Your tasks (to me)*";
   const moreNote = total > 10 ? " (showing the 10 most urgent — open the app for the rest)" : "";
   await sendList(fromPhone, `${header}${moreNote} — pick one to see the full details:`, "View task", [], sections);
 }
@@ -1337,17 +1370,26 @@ async function sendTrainingList(fromPhone: string, userId: string, tenantId: str
 async function sendHelp(fromPhone: string, userId: string) {
   const { data: u } = await supabase.from("users").select("name").eq("id", userId).limit(1);
   const first = ((u?.[0]?.name as string) || "there").split(" ")[0];
+  // Three segments — tap the menu, type a keyword, or send a voice note. Examples
+  // only (no <syntax>); the fixed KEYWORD is bold and the example message italic so
+  // staff can tell the two apart at a glance.
   await sendText(
     fromPhone,
-    `👋 Hi ${first}! I'm *Horae*.\n\nHere's what I can do:\n\n` +
-    `📋 *Send "menu"* → create a task, comment on a task, update or view tasks, see your checklists & training, or raise a complaint.\n` +
-    `📝 *task* → see your tasks · *task <details>* → create one.\n` +
-    `⏰ *rem* → see reminders · *remind <note> at <time>* → add one (e.g. *remind call vendor at 3pm 31-08*).\n` +
-    `📅 *meet* → see meetings · *meeting <what> at <time>* → add one.\n` +
-    `✅ To clear a listed item, reply *done 1* (or *done 2*, …).\n` +
-    `↪️ *Forward me any message* → I'll offer to turn it into a task.\n` +
-    `🎙️ Send a *voice note* → say *"task…"*, *"remind… at…"* or *"meeting… at…"* and I'll file it right; anything else becomes a task.\n\n` +
-    `You'll also get task alerts and your daily briefing right here.\n\n👉 Open Horae: ${APP_BASE_URL}`,
+    `👋 Hi ${first}! Here's how to use *Horae* on WhatsApp:\n\n` +
+    `*1) TAP THE MENU*\n` +
+    `Send *Hi* or *menu* → view & update tasks, create a task, checklists, training, reminders, meetings, complaints.\n\n` +
+    `*2) TYPE A KEYWORD*\n` +
+    `• *task* _fix the freezer by tonight_\n` +
+    `• *tasks to me* · *tasks by me* · *tasks today*\n` +
+    `• *rem* _call the vendor at 3pm tomorrow_\n` +
+    `• *meet* _supplier call on 3 Sep 11am_\n` +
+    `• *done 1* _clear item 1 from the last list_\n` +
+    `• *cal 1* _add item 1 to your calendar_\n\n` +
+    `*3) SEND A VOICE NOTE* — just say it, starting with the keyword:\n` +
+    `• *task* _"paint the signboard before Friday"_\n` +
+    `• *remind* _"call the vendor at 3pm tomorrow"_\n` +
+    `• *meeting* _"supplier review on 3 Sep 11am"_\n\n` +
+    `👉 ${APP_BASE_URL}`,
   );
 }
 
