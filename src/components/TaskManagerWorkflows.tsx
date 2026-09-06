@@ -153,6 +153,10 @@ export default function TaskManagerWorkflows({
   // Collapse the reassign panel whenever a different task is opened.
   useEffect(() => { setReassignOpen(false); setReassignTo(""); setReassignNote(""); }, [selectedTaskId]);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  // Task pending a WhatsApp-reminder confirmation. We use an in-app modal instead
+  // of window.confirm() because native confirm() dialogs can be suppressed inside
+  // an installed PWA/WebView (which is why the "no confirmation" report happened).
+  const [notifyConfirmTask, setNotifyConfirmTask] = useState<Task | null>(null);
 
   // Prefill the create-task form from a WhatsApp capture (/tasks/new?capture=<id>).
   // The capture was created by the whatsapp-webhook from a forwarded message or a
@@ -995,12 +999,9 @@ export default function TaskManagerWorkflows({
       <button
         onClick={(e) => {
           e.stopPropagation();
-          // Guard against accidental taps — this sends a paid WhatsApp ping.
-          const who = (t.assignedUserIds && t.assignedUserIds.length > 0 ? t.assignedUserIds : [t.assignedUserId])
-            .map(uid => getAssigneeName(uid)).filter(Boolean).join(", ") || "the assignee";
-          if (window.confirm(`Send a WhatsApp reminder for "${t.title}" to ${who}?`)) {
-            onUrgentNotify(t.id);
-          }
+          // Open the in-app confirm modal — this sends a paid WhatsApp ping, so it
+          // must never fire on a stray tap.
+          setNotifyConfirmTask(t);
         }}
         title="Notify assignee on WhatsApp now"
         className="p-1 rounded-lg shrink-0 flex items-center gap-1 text-[11px] font-medium text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 cursor-pointer"
@@ -2805,8 +2806,50 @@ export default function TaskManagerWorkflows({
         </div>
       )}
 
+      {notifyConfirmTask && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-4"
+          onClick={() => setNotifyConfirmTask(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 text-slate-800">
+              <MessageSquare className="w-5 h-5 text-emerald-600 shrink-0" />
+              <h3 className="text-base font-bold">Send WhatsApp reminder?</h3>
+            </div>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              This sends a WhatsApp ping for <span className="font-semibold text-slate-800">"{notifyConfirmTask.title}"</span> to{" "}
+              <span className="font-semibold text-slate-800">
+                {(notifyConfirmTask.assignedUserIds && notifyConfirmTask.assignedUserIds.length > 0
+                  ? notifyConfirmTask.assignedUserIds
+                  : [notifyConfirmTask.assignedUserId])
+                  .map(uid => getAssigneeName(uid)).filter(Boolean).join(", ") || "the assignee"}
+              </span>.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setNotifyConfirmTask(null)}
+                className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => { onUrgentNotify(notifyConfirmTask.id); setNotifyConfirmTask(null); }}
+                className="px-4 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl cursor-pointer flex items-center gap-1.5"
+              >
+                <MessageSquare className="w-4 h-4" /> Send reminder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {lightboxImage && (
-        <div 
+        <div
           className="fixed inset-0 z-[9999] bg-black/95 flex items-center justify-center p-4 cursor-pointer"
           onClick={() => setLightboxImage(null)}
         >
