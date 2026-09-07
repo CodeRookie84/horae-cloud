@@ -95,6 +95,22 @@ export async function listOutlets(clientId: string): Promise<KotOutlet[]> {
   return (data || []).map((t: any) => ({ id: t.id, name: t.name || t.id }));
 }
 
+/** Outlets for the PUBLIC kiosk picker. The kiosk renders before any Horae login,
+ *  so it can't read the auth-gated `tenants` table — it reads the anon-readable
+ *  `kot_stations` instead (permissive RLS). This is also semantically right: you
+ *  can only sign into an outlet that has an active station. The station `label`
+ *  defaults to the outlet name (see StationEditor), so it reads naturally. */
+export async function listStationOutlets(clientId: string): Promise<KotOutlet[]> {
+  const { data } = await supabase
+    .from("kot_stations").select("tenant_id, label, active")
+    .eq("client_id", clientId).eq("active", true);
+  const seen = new Map<string, KotOutlet>();
+  for (const r of data || []) {
+    if (!seen.has(r.tenant_id)) seen.set(r.tenant_id, { id: r.tenant_id, name: (r.label || "").trim() || r.tenant_id });
+  }
+  return [...seen.values()];
+}
+
 // ── Station access codes ──────────────────────────────────────────────────────
 
 async function sha256Hex(s: string): Promise<string> {

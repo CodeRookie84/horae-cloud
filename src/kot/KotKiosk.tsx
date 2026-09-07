@@ -12,7 +12,7 @@
 import { useEffect, useState } from "react";
 import KotApp, { type KotViewer } from "./KotApp";
 import {
-  listOutlets, authenticateStation, revalidateStation, type KotOutlet,
+  listStationOutlets, authenticateStation, revalidateStation, type KotOutlet,
 } from "./services/kotStore";
 import { KotButton, KotCard, KotSpinner, cn } from "./ui/primitives";
 
@@ -69,7 +69,7 @@ export default function KotKiosk() {
   // Outlet list for the picker.
   useEffect(() => {
     if (!clientId) return;
-    listOutlets(clientId)
+    listStationOutlets(clientId)
       .then(setOutlets)
       .catch(() => setOutlets([]))
       .finally(() => setOutletsLoaded(true));
@@ -145,7 +145,7 @@ export default function KotKiosk() {
         <label className="mb-3 block">
           <span className="mb-1 block text-xs font-semibold text-slate-500">Outlet</span>
           <select className={inp} value={tenantId} onChange={(e) => setTenantId(e.target.value)} disabled={outlets.length === 0}>
-            {outlets.length === 0 && <option value="">{outletsLoaded ? "No outlets for this link" : "Loading…"}</option>}
+            {outlets.length === 0 && <option value="">{outletsLoaded ? "No station set up yet — ask your manager" : "Loading…"}</option>}
             {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
           </select>
         </label>
