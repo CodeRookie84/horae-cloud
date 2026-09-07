@@ -34,6 +34,18 @@ const APP_BASE_URL      = Deno.env.get("APP_BASE_URL") || "https://horae.cloud";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE);
 
+/** Run a promise in the background so it never sits in the reply's critical path.
+ *  Uses EdgeRuntime.waitUntil in prod (keeps the isolate alive after the 200) and
+ *  falls back to fire-and-forget locally. Use for writes the user's reply doesn't
+ *  depend on (e.g. the inbound-message log). */
+function bg(work: PromiseLike<unknown>) {
+  // Promise.resolve() so this works on Supabase query builders too (they're
+  // thenable but have no .catch of their own).
+  const guarded = Promise.resolve(work).catch((e: unknown) => console.error("[whatsapp-webhook] bg task failed:", e));
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt?.waitUntil) rt.waitUntil(guarded);
+}
+
 serve(async (req) => {
   const url = new URL(req.url);
 
@@ -110,40 +122,54 @@ async function handleInboundMessage(m: any, contact: any) {
   const fromPhone: string = m?.from || contact?.wa_id || "";
   if (!fromPhone) return;
 
-  // Idempotency: Meta re-delivers webhooks on any non-200/timeout. Skip a
-  // message id we've already recorded so button taps don't create duplicates.
-  if (m?.id) {
-    const { data: seen } = await supabase
-      .from("whatsapp_inbound_messages").select("id").eq("wa_message_id", m.id).limit(1);
-    if (seen && seen.length) return;
-  }
-
+  const t0 = Date.now();
   const receivedAt = m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : new Date().toISOString();
   const contextWamid: string | undefined = m?.context?.id;
-
-  // Resolve to a Horae user by the last 10 digits of their phone number — same
-  // convention store.ts's normalizePhone() uses for login matching. Matched
-  // against the indexed generated column `phone_last10` (exact match, not a
-  // leading-wildcard LIKE) so this stays fast as the users table grows.
   const last10 = fromPhone.replace(/\D/g, "").slice(-10);
-  let userId: string | null = null;
-  let tenantId: string | null = null;
-  if (last10.length === 10) {
-    const { data: matched } = await supabase
-      .from("users").select("id, tenant_id").eq("phone_last10", last10).limit(1);
-    if (matched && matched[0]) { userId = matched[0].id; tenantId = matched[0].tenant_id; }
-  }
 
-  // Log every inbound (also our dedup key above).
+  // Two independent reads fired in parallel — one round-trip instead of two:
+  //  • dedup: Meta re-delivers webhooks on any non-200/timeout, so skip a message
+  //    id we've already recorded (stops button taps double-processing).
+  //  • user match: by the last 10 phone digits (same convention as store.ts's
+  //    normalizePhone), against the indexed generated column `phone_last10` —
+  //    exact match, not a leading-wildcard LIKE, so it stays fast as users grow.
+  const [seenRes, matchRes] = await Promise.all([
+    m?.id
+      ? supabase.from("whatsapp_inbound_messages").select("id").eq("wa_message_id", m.id).limit(1)
+      : Promise.resolve({ data: null as any }),
+    last10.length === 10
+      ? supabase.from("users").select("id, tenant_id").eq("phone_last10", last10).limit(1)
+      : Promise.resolve({ data: null as any }),
+  ]);
+  if (seenRes.data && (seenRes.data as any[]).length) return;
+
+  const matched = matchRes.data as Array<{ id: string; tenant_id: string | null }> | null;
+  const userId: string | null = matched?.[0]?.id ?? null;
+  const tenantId: string | null = matched?.[0]?.tenant_id ?? null;
+
+  // Log every inbound (also our dedup key). Deferred to the background so it never
+  // sits in the reply's critical path; it still commits within milliseconds, well
+  // before any Meta re-delivery (retries are seconds apart) can race the dedup read.
   const bodyText: string = m?.text?.body ?? (m?.type ? `[${m.type}]` : "");
-  await supabase.from("whatsapp_inbound_messages").insert([{
+  bg(supabase.from("whatsapp_inbound_messages").insert([{
     wa_message_id: m?.id, from_phone: fromPhone, user_id: userId, tenant_id: tenantId,
     body: bodyText, context_wa_message_id: contextWamid, received_at: receivedAt,
-  }]);
+  }]));
 
   // Only registered staff can drive the capture flows.
   if (!userId) return;
 
+  // Route, then log the end-to-end handle time (lookups → fetch → Meta send) so we
+  // can see where latency actually lives instead of guessing.
+  try {
+    await dispatchInbound(m, fromPhone, userId, tenantId);
+  } finally {
+    console.log(`[whatsapp-webhook] handled type=${m?.type} in ${Date.now() - t0}ms`);
+  }
+}
+
+/** Route an inbound message from a known staff user to the right handler. */
+async function dispatchInbound(m: any, fromPhone: string, userId: string, tenantId: string | null) {
   // ── Route by message type ───────────────────────────────────────────────────
   // Interactive replies: main-menu list selections + capture-menu button taps.
   if (m.type === "interactive") {
