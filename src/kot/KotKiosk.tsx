@@ -38,7 +38,11 @@ function clearSession() {
 }
 
 export default function KotKiosk() {
-  const clientId = new URLSearchParams(window.location.search).get("c") || "";
+  const params = new URLSearchParams(window.location.search);
+  const clientId = params.get("c") || "";
+  // Optional outlet hint from a per-outlet QR (…/kot?c=<client>&t=<tenant>) — it
+  // just pre-selects the picker; the access code is still required.
+  const tenantHint = params.get("t") || "";
 
   const [checking, setChecking] = useState(true);
   const [session, setSession] = useState<StoredSession | null>(null);
@@ -72,8 +76,11 @@ export default function KotKiosk() {
   }, [clientId]);
 
   useEffect(() => {
-    if (!tenantId && outlets.length) setTenantId(outlets[0].id);
-  }, [outlets, tenantId]);
+    if (!tenantId && outlets.length) {
+      const hinted = tenantHint && outlets.some((o) => o.id === tenantHint) ? tenantHint : outlets[0].id;
+      setTenantId(hinted);
+    }
+  }, [outlets, tenantId, tenantHint]);
 
   async function signIn() {
     if (!tenantId) { setError("Choose an outlet."); return; }

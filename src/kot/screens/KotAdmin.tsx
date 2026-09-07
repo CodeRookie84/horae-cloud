@@ -215,6 +215,7 @@ function StationsPanel(
   { clientId: string; outlets: KotOutlet[]; stations: Array<KotStation & { tenantName?: string }>; onChange: () => void },
 ) {
   const [adding, setAdding] = useState(false);
+  const [qrFor, setQrFor] = useState<(KotStation & { tenantName?: string }) | null>(null);
 
   async function rotate(s: KotStation) {
     const code = window.prompt(`New access code for "${s.label || s.tenantId}":`);
@@ -243,7 +244,8 @@ function StationsPanel(
               <p className="truncate text-xs text-slate-500">{s.tenantName || s.tenantId}</p>
             </div>
             <div className="flex items-center gap-3">
-              <button className="text-sm font-semibold text-rose-600" onClick={() => rotate(s)}>Rotate code</button>
+              <button className="text-sm font-semibold text-rose-600" onClick={() => setQrFor(s)}>Show QR</button>
+              <button className="text-sm font-semibold text-slate-600" onClick={() => rotate(s)}>Rotate code</button>
               <button className="text-sm text-slate-500" onClick={async () => { await setStationActive(s.id, !s.active); onChange(); }}>
                 {s.active ? "Disable" : "Enable"}
               </button>
@@ -255,7 +257,42 @@ function StationsPanel(
       {adding && (
         <StationEditor clientId={clientId} outlets={outlets} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); onChange(); }} />
       )}
+
+      {qrFor && <StationQr clientId={clientId} station={qrFor} onClose={() => setQrFor(null)} />}
     </div>
+  );
+}
+
+/** Printable QR for a station. The QR encodes the public kiosk URL (client +
+ *  outlet only — the access code is entered separately, never in the QR). Staff
+ *  scan it → the outlet is pre-selected → they enter the code once per device. */
+function StationQr(
+  { clientId, station, onClose }:
+  { clientId: string; station: KotStation & { tenantName?: string }; onClose: () => void },
+) {
+  const kioskUrl = `${window.location.origin}/kot?c=${encodeURIComponent(clientId)}&t=${encodeURIComponent(station.tenantId)}`;
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=12&data=${encodeURIComponent(kioskUrl)}`;
+  const title = `${station.tenantName || "Outlet"}${station.label ? ` — ${station.label}` : ""}`;
+
+  return (
+    <Modal title="Station QR" onClose={onClose}>
+      <div className="text-center">
+        <p className="mb-2 text-sm font-semibold text-slate-800">{title}</p>
+        <img
+          src={qrSrc}
+          alt={`QR for ${title}`}
+          className="mx-auto rounded-xl border border-slate-200 bg-white p-2"
+          width={280}
+          height={280}
+        />
+        <p className="mt-3 break-all rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">{kioskUrl}</p>
+        <p className="mt-2 text-xs text-slate-500">Print this for the counter. Staff scan it, then enter the outlet’s access code once per tablet.</p>
+        <div className="mt-4 flex justify-center gap-2">
+          <KotButton variant="secondary" onClick={() => window.open(qrSrc, "_blank", "noopener")}>Open image to print</KotButton>
+          <KotButton onClick={onClose}>Done</KotButton>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
