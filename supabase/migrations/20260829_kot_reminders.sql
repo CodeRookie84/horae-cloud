@@ -12,4 +12,5 @@ CREATE TABLE IF NOT EXISTS kot_reminder_log (
 );
 
 ALTER TABLE kot_reminder_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all kot_reminder_log" ON kot_reminder_log;
 CREATE POLICY "Allow all kot_reminder_log" ON kot_reminder_log FOR ALL USING (true) WITH CHECK (true);
