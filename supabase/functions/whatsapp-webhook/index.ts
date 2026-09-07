@@ -1376,19 +1376,23 @@ async function sendHelp(fromPhone: string, userId: string) {
   await sendText(
     fromPhone,
     `👋 Hi ${first}! Here's how to use *Horae* on WhatsApp:\n\n` +
-    `*1) TAP THE MENU*\n` +
-    `Send *Hi* or *menu* → view & update tasks, create a task, checklists, training, reminders, meetings, complaints.\n\n` +
-    `*2) TYPE A KEYWORD*\n` +
-    `• *task* _fix the freezer by tonight_\n` +
-    `• *tasks to me* · *tasks by me* · *tasks today*\n` +
-    `• *rem* _call the vendor at 3pm tomorrow_\n` +
-    `• *meet* _supplier call on 3 Sep 11am_\n` +
+    `*OPTION 1 — TAP THE MENU*\n` +
+    `Send *Hi* or *menu*, then pick what you need from the list that appears.\n\n` +
+    `*OPTION 2 — TYPE A KEYWORD*\n` +
+    `Use the keywords *task*, *rem* or *meet* to create and view your tasks, reminders and meetings.\n\n` +
+    `For example (put *#* before the time & date):\n` +
+    `• *task* _fix the freezer_ *#* _tonight_\n` +
+    `• *rem* _call the vendor_ *#* _3pm tomorrow_\n` +
+    `• *meet* _supplier review_ *#* _3 Sep 11am_\n\n` +
+    `To view tasks: type *task* / *task to me* / *task by me*\n` +
+    `To view reminders: type *rem* / *rem today* / *rem this week*\n` +
+    `To view meetings: type *meet* / *meet today* / *meet this week*\n` +
     `• *done 1* _clear item 1 from the last list_\n` +
     `• *cal 1* _add item 1 to your calendar_\n\n` +
-    `*3) SEND A VOICE NOTE* — just say it, starting with the keyword:\n` +
-    `• *task* _"paint the signboard before Friday"_\n` +
-    `• *remind* _"call the vendor at 3pm tomorrow"_\n` +
-    `• *meeting* _"supplier review on 3 Sep 11am"_\n\n` +
+    `*OPTION 3 — SEND A VOICE NOTE* — just say it naturally:\n` +
+    `• For a task: say the task itself — _"paint the signboard before Friday"_\n` +
+    `• For a reminder: _"Remind me to call the vendor at 3pm tomorrow"_ (use *at* / *on* before the time & date)\n` +
+    `• For a meeting: _"Meeting with the supplier on 3 Sep 11am"_\n\n` +
     `👉 ${APP_BASE_URL}`,
   );
 }

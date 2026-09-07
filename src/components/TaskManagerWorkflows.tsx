@@ -319,6 +319,9 @@ export default function TaskManagerWorkflows({
     };
   }, [mobileView]);
   const [activeFilter, setActiveFilter] = useState<string>("All");
+  // Scope (To Me / By Me) is a SEPARATE axis from the status filter so the two
+  // stack instead of overwriting each other. "All" = no scope restriction.
+  const [scopeFilter, setScopeFilter] = useState<"All" | "To Me" | "By Me">("All");
   const [selectedTenantId, setSelectedTenantId] = useState<string>("ALL");
   const [employeeSearchQuery, setEmployeeSearchQuery] = useState<string>("");
   const [isPerformanceBoardOpen, setIsPerformanceBoardOpen] = useState<boolean>(false);
@@ -820,17 +823,21 @@ export default function TaskManagerWorkflows({
     }
 
     if (selectedTenantId !== "ALL" && t.tenantId !== selectedTenantId) return false;
+
+    // Scope axis (To Me / By Me) — stacks with the status filter below.
+    if (scopeFilter === "To Me") {
+      const mine = (t.assignedUserIds && t.assignedUserIds.includes(activeUser.id)) || t.assignedUserId === activeUser.id;
+      if (!mine) return false;
+    } else if (scopeFilter === "By Me") {
+      if (t.createdByUserId !== activeUser.id) return false;
+    }
+
+    // Status/attribute axis.
     if (activeFilter === "All") return true;
     if (activeFilter === "Overdue") return isTaskOverdue(t);
     const localToday = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split("T")[0];
     if (activeFilter === "Due Today") return t.dueDate === localToday;
     if (activeFilter === "Critical") return t.priority === "Critical";
-    if (activeFilter === "Assigned To Me") {
-      return (t.assignedUserIds && t.assignedUserIds.includes(activeUser.id)) || t.assignedUserId === activeUser.id;
-    }
-    if (activeFilter === "Assigned By Me") {
-      return t.createdByUserId === activeUser.id;
-    }
     return t.status === activeFilter;
   };
 
@@ -1499,18 +1506,15 @@ export default function TaskManagerWorkflows({
           <button
             type="button"
             onClick={() => {
-              if (activeFilter === "Assigned To Me" && !showClosedOnly) {
-                setActiveFilter("All");
-              } else {
-                setActiveFilter("Assigned To Me");
-                setShowClosedOnly(false);
-              }
+              // Toggle the scope axis only — the status filter (and Closed archive)
+              // stay put so the two stack together.
+              setScopeFilter(prev => prev === "To Me" ? "All" : "To Me");
               // Staff filter persists across To-me / By-me switches (removed via its ✕ chip).
             }}
             className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-sm sm:text-base font-semibold tracking-tight transition-all select-none cursor-pointer border flex-1 sm:flex-none text-center ${
-              activeFilter === "Assigned To Me" && !showClosedOnly
+              scopeFilter === "To Me"
                 ? "bg-slate-900 text-white border-slate-900 shadow-sm opacity-100 scale-102"
-                : activeFilter === "Assigned By Me" && !showClosedOnly
+                : scopeFilter === "By Me"
                 ? "bg-[#F1F5F9] text-slate-400 border-slate-200 opacity-40 hover:opacity-75"
                 : "bg-[#F1F5F9] text-slate-700 border-slate-300 hover:bg-slate-200 opacity-100"
             }`}
@@ -1520,18 +1524,15 @@ export default function TaskManagerWorkflows({
           <button
             type="button"
             onClick={() => {
-              if (activeFilter === "Assigned By Me" && !showClosedOnly) {
-                setActiveFilter("All");
-              } else {
-                setActiveFilter("Assigned By Me");
-                setShowClosedOnly(false);
-              }
+              // Toggle the scope axis only — the status filter (and Closed archive)
+              // stay put so the two stack together.
+              setScopeFilter(prev => prev === "By Me" ? "All" : "By Me");
               // Staff filter persists across To-me / By-me switches (removed via its ✕ chip).
             }}
             className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-sm sm:text-base font-semibold tracking-tight transition-all select-none cursor-pointer border flex-1 sm:flex-none text-center ${
-              activeFilter === "Assigned By Me" && !showClosedOnly
+              scopeFilter === "By Me"
                 ? "bg-slate-900 text-white border-slate-900 shadow-sm opacity-100 scale-102"
-                : activeFilter === "Assigned To Me" && !showClosedOnly
+                : scopeFilter === "To Me"
                 ? "bg-[#F1F5F9] text-slate-400 border-slate-200 opacity-40 hover:opacity-75"
                 : "bg-[#F1F5F9] text-slate-700 border-slate-300 hover:bg-slate-200 opacity-100"
             }`}
