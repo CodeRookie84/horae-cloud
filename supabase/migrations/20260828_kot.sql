@@ -168,6 +168,15 @@ ALTER TABLE kot_order_items         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE kot_order_assignees     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE kot_status_events       ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Allow all kot_clients"             ON kot_clients;
+DROP POLICY IF EXISTS "Allow all kot_participants"        ON kot_participants;
+DROP POLICY IF EXISTS "Allow all kot_participant_outlets" ON kot_participant_outlets;
+DROP POLICY IF EXISTS "Allow all kot_stations"            ON kot_stations;
+DROP POLICY IF EXISTS "Allow all kot_orders"              ON kot_orders;
+DROP POLICY IF EXISTS "Allow all kot_order_items"         ON kot_order_items;
+DROP POLICY IF EXISTS "Allow all kot_order_assignees"     ON kot_order_assignees;
+DROP POLICY IF EXISTS "Allow all kot_status_events"       ON kot_status_events;
+
 CREATE POLICY "Allow all kot_clients"             ON kot_clients             FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all kot_participants"        ON kot_participants        FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all kot_participant_outlets" ON kot_participant_outlets FOR ALL USING (true) WITH CHECK (true);

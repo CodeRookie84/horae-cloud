@@ -20,9 +20,11 @@
  *   { type: "order_created", orderId }
  *   { type: "reminder", orderId, kind: "day_before" | "soon" }
  *
- * Required Meta templates (approve in the sending number's WABA), en language:
- *   kot_new_order  body: "🎂 New cake order — {{1}}. Delivery: {{2}}. {{3}}"
- *   kot_reminder   body: "⏰ Cake order reminder — {{1}}. {{2}}. {{3}}"
+ * Required Meta templates (approve in the sending number's WABA), en language.
+ * Meta rejects a variable at the very start/end or with too little surrounding
+ * text, so the bodies are padded with static wording (variable CONTENT unchanged):
+ *   kot_new_order  body: "🎂 New cake order received on Horae KOT. Order: {{1}}. Delivery: {{2}}. Details: {{3}}. Please open the KOT app to review and update the status."
+ *   kot_reminder   body: "⏰ Cake order reminder from Horae KOT. Order: {{1}}. {{2}}. {{3}}. Please open the KOT app to review and update the status."
  * Each has 3 body params, no newlines/tabs (Meta template rule).
  */
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
