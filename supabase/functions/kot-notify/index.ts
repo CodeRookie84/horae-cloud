@@ -22,9 +22,11 @@
  *
  * Required Meta templates (approve in the sending number's WABA), en language.
  * Meta rejects a variable at the very start/end or with too little surrounding
- * text, so the bodies are padded with static wording (variable CONTENT unchanged):
- *   kot_new_order  body: "🎂 New cake order received on Horae KOT. Order: {{1}}. Delivery: {{2}}. Details: {{3}}. Please open the KOT app to review and update the status."
- *   kot_reminder   body: "⏰ Cake order reminder from Horae KOT. Order: {{1}}. {{2}}. {{3}}. Please open the KOT app to review and update the status."
+ * text, so the bodies are padded with static wording (variable CONTENT unchanged).
+ * The static tail nudges "Reply KOT" — replying opens the 24-hr window and the
+ * whatsapp-webhook answers with the interactive view menu (see kot.ts):
+ *   kot_new_order  body: "🎂 New cake order on Horae KOT. Order: {{1}}. Delivery: {{2}}. {{3}}. Reply KOT to view your orders."
+ *   kot_reminder   body: "⏰ Cake order reminder on Horae KOT. Order: {{1}}. {{2}}. {{3}}. Reply KOT to view your orders."
  * Each has 3 body params, no newlines/tabs (Meta template rule).
  */
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
@@ -90,7 +92,9 @@ async function handleOrderCreated(orderId: string) {
 
   const template = {
     name: "kot_new_order",
-    params: [ `${order.customer_name || "Customer"} (${summary})`, when, `${tail} · Open KOT ${link}` ],
+    // {{3}} = pickup/delivery. The "Reply KOT to view your orders" CTA lives in the
+    // template's static tail; `link` still feeds the web-push deep link below.
+    params: [ `${order.customer_name || "Customer"} (${summary})`, when, tail ],
   };
   const pushTitle = `🎂 New cake order: ${order.customer_name || "Customer"}`;
   const pushBody = `${summary} · ${when}`;

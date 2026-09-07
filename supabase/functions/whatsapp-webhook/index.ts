@@ -24,6 +24,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as chrono from "https://esm.sh/chrono-node@2.7.7";
 import { transcribeAudio } from "../_shared/ai.ts";
+import { routeKotText, routeKotList } from "./kot.ts"; // [KOT] view-only cake-order flow
 
 const SUPABASE_URL      = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -155,6 +156,17 @@ async function handleInboundMessage(m: any, contact: any) {
     wa_message_id: m?.id, from_phone: fromPhone, user_id: userId, tenant_id: tenantId,
     body: bodyText, context_wa_message_id: contextWamid, received_at: receivedAt,
   }]));
+
+  // [KOT] KOT participants are identified by phone (People Directory), independent
+  // of a Horae login, so the cake-order VIEW flow is handled here — before the
+  // "registered staff only" gate below — and only for actual participants. Both
+  // routes cheaply return false for non-KOT ids/text, so this is invisible to
+  // everyone else. Remove KOT = delete this block + kot.ts + the import.
+  if (m.type === "interactive" && m.interactive?.list_reply?.id) {
+    if (await routeKotList(m.interactive.list_reply.id, fromPhone)) return;
+  } else if (m.type === "text") {
+    if (await routeKotText((m.text?.body || "").trim(), fromPhone)) return;
+  }
 
   // Only registered staff can drive the capture flows.
   if (!userId) return;
