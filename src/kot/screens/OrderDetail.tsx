@@ -147,8 +147,8 @@ export default function OrderDetail(
             <StatusTimeline events={events} onPhoto={setLightbox} />
           </div>
 
-          {/* Danger zone — managers/admins only. Hard delete, no undo. */}
-          {viewer.canManage && (
+          {/* Danger zone — admins + managers (canDelete). Hard delete, no undo. */}
+          {viewer.canDelete && (
             <div className="border-t border-slate-100 pt-4">
               {!confirmDel ? (
                 <button

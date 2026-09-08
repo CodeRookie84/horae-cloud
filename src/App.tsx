@@ -1422,6 +1422,7 @@ function AppInner() {
                         tenantId: activeUser.tenantId,
                         tenantLabel: activeTenant?.name || "Cake KOT",
                         canManage: [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role),
+                        canDelete: [Role.ADMIN, Role.SUPER_ADMIN, Role.MANAGER].includes(activeUser.role as Role),
                         actor: { userId: activeUser.id, name: activeUser.name, phone: (activeUser as any).phoneNumber },
                       }}
                     />

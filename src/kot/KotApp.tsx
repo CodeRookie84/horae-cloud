@@ -20,8 +20,10 @@ export interface KotViewer {
   mode: "kiosk" | "manager";
   tenantId: string;        // active outlet
   tenantLabel: string;
-  /** Managers/admins get the "Manage" (People + Stations) entry point. */
+  /** Admins get the "Manage" (People + Stations) entry point. */
   canManage?: boolean;
+  /** Admins + managers may delete an order (separate from People/Station admin). */
+  canDelete?: boolean;
   actor: { stationId?: string; userId?: string; participantId?: string; name?: string; phone?: string };
 }
 
