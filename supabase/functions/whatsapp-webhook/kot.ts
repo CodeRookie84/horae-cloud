@@ -39,7 +39,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 const statusLabel = (s: string) => STATUS_LABEL[s] ?? s;
 
-interface KotWho { participantId: string; clientId: string; name: string; outletIds: string[]; }
+interface KotWho { participantId: string; clientId: string; clientName: string; name: string; outletIds: string[]; }
 
 // ── Public entry points (the only two things index.ts calls) ───────────────────
 
@@ -89,10 +89,13 @@ async function resolveKotParticipant(fromPhone: string): Promise<KotWho | null> 
   const p = candidates.find((c: any) => enabledSet.has(c.client_id));
   if (!p) return null;
 
-  const { data: links } = await supabase
-    .from("kot_participant_outlets").select("tenant_id").eq("participant_id", p.id);
+  const [{ data: links }, { data: client }] = await Promise.all([
+    supabase.from("kot_participant_outlets").select("tenant_id").eq("participant_id", p.id),
+    supabase.from("clients").select("name").eq("id", p.client_id).limit(1).maybeSingle(),
+  ]);
   const outletIds = (links || []).map((l: any) => l.tenant_id);
-  return { participantId: p.id, clientId: p.client_id, name: p.name ?? "", outletIds };
+  const clientName = ((client?.name as string) || "Cake").trim();
+  return { participantId: p.id, clientId: p.client_id, clientName, name: p.name ?? "", outletIds };
 }
 
 // ── Screens ────────────────────────────────────────────────────────────────────
@@ -101,7 +104,7 @@ async function sendKotMenu(fromPhone: string, who: KotWho) {
   const first = (who.name || "there").split(" ")[0];
   await sendList(
     fromPhone,
-    `🎂 *Cake KOT* — hi ${first}.\nPick what you'd like to view.`,
+    `🎂 *${who.clientName} KOT* — hi ${first}.\nPick what you'd like to view.`,
     "View orders",
     [
       { id: "kotlist~today",    title: "📋 Today's orders",  description: "Delivery/pickup due today" },

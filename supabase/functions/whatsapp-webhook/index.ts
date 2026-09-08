@@ -1232,7 +1232,8 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
     for (const r of overdue) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 was ${verb} ${fmtWhen(r.remind_at)}`); }
   }
   if (todayItems.length) {
-    parts.push(`\n📅 *Today*\n`);
+    // Boxed green banner so TODAY is unmistakable right after the Overdue block.
+    parts.push(`\n━━━━━━━━━━━━\n🟢 *TODAY* 🟢\n━━━━━━━━━━━━\n`);
     for (const r of todayItems) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 ${r.remind_at ? fmtWhen(r.remind_at) : "no time set"}`); }
   }
   if (upcoming.length) {
@@ -1418,9 +1419,9 @@ async function sendHelp(fromPhone: string, userId: string) {
     `Send *Hi* or *menu*, then pick what you need from the list that appears.\n\n` +
     `*OPTION 2 — TYPE A KEYWORD*\n` +
     `Use the keywords *task*, *rem* or *meet* to create and view your tasks, reminders and meetings.\n\n` +
-    `For example (put *#* before the time & date):\n` +
-    `• *task* _fix the freezer_ *#* _tonight_\n` +
-    `• *rem* _call the vendor_ *#* _3pm tomorrow_\n` +
+    `For example:\n` +
+    `• *task* _fix the freezer_\n` +
+    `• *rem* _call the vendor_ *#* _3pm tomorrow_  (put *#* before the time & date)\n` +
     `• *meet* _supplier review_ *#* _3 Sep 11am_\n\n` +
     `To view tasks: type *task* / *task to me* / *task by me*\n` +
     `To view reminders: type *rem* / *rem today* / *rem this week*\n` +
