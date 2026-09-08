@@ -182,6 +182,16 @@ async function sendKotDetail(fromPhone: string, who: KotWho, orderId: string) {
 
   // One message: the detail as the button body + an "Open in KOT app" button.
   await sendCtaUrl(fromPhone, lines.join("\n"), "Open in KOT app", kotAppLink(who.clientId));
+
+  // Then the photos as WhatsApp image messages — they render as inline thumbnails
+  // that expand on tap. The slip carries the handwritten notes; any cake drawings
+  // attached to the notes follow. Public kot-photos URLs, fetched by Meta.
+  const photos: Array<{ url: string; caption: string }> = [];
+  if ((order.kot_photo_url || "").trim()) photos.push({ url: order.kot_photo_url, caption: `📄 KOT slip — ${order.customer_name || "order"}` });
+  for (const i of items || []) {
+    if ((i.drawing_photo_url || "").trim()) photos.push({ url: i.drawing_photo_url, caption: "🎨 Cake drawing" });
+  }
+  for (const p of photos.slice(0, 4)) await sendImage(fromPhone, p.url, p.caption);
 }
 
 // ── Data ───────────────────────────────────────────────────────────────────────
@@ -284,6 +294,10 @@ async function sendList(to: string, body: string, buttonLabel: string, rows: Lis
     to: to.replace(/\D/g, ""),
     interactive: { type: "list", body: { text: body }, action: { button: buttonLabel.slice(0, 20), sections: [section] } },
   });
+}
+
+async function sendImage(to: string, link: string, caption: string): Promise<void> {
+  await waSend({ type: "image", to: to.replace(/\D/g, ""), image: { link, caption: caption.slice(0, 1024) } });
 }
 
 async function sendCtaUrl(to: string, body: string, buttonText: string, url: string): Promise<void> {
