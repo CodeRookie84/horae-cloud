@@ -111,6 +111,31 @@ export async function listStationOutlets(clientId: string): Promise<KotOutlet[]>
   return [...seen.values()];
 }
 
+/** Outlets a signed-in manager/participant may view. Admins get every outlet;
+ *  a participant gets the outlets their People-directory record covers (falling
+ *  back to all if they have none set, e.g. management). Runs in the authed app,
+ *  so it can read `tenants` for names. */
+export async function accessibleOutlets(
+  clientId: string, userId: string | undefined, phone: string | undefined, isAdmin: boolean,
+): Promise<KotOutlet[]> {
+  const all = await listOutlets(clientId);
+  if (isAdmin) return all;
+
+  const digits = (phone || "").replace(/\D/g, "");
+  const { data } = await supabase.from("kot_participants")
+    .select("id, phone, linked_user_id").eq("client_id", clientId).eq("active", true);
+  const me = (data || []).find((p: any) =>
+    (userId && p.linked_user_id === userId) ||
+    (digits && String(p.phone || "").replace(/\D/g, "").endsWith(digits.slice(-10))));
+  if (!me) return [];
+
+  const { data: links } = await supabase
+    .from("kot_participant_outlets").select("tenant_id").eq("participant_id", me.id);
+  const ids = new Set((links || []).map((l: any) => l.tenant_id));
+  const mine = all.filter((o) => ids.has(o.id));
+  return mine.length ? mine : all; // no explicit outlets → management-style, see all
+}
+
 // ── Station access codes ──────────────────────────────────────────────────────
 
 async function sha256Hex(s: string): Promise<string> {
@@ -294,6 +319,16 @@ export async function getOrder(id: string): Promise<KotOrder | null> {
   if (!data) return null;
   const [order] = await hydrateOrders([data]);
   return order || null;
+}
+
+/** Hard-delete an order and everything hanging off it. Manager/admin only — the
+ *  UI gates this on viewer.canManage; there's no undo. */
+export async function deleteOrder(id: string): Promise<void> {
+  await supabase.from("kot_status_events").delete().eq("order_id", id);
+  await supabase.from("kot_order_assignees").delete().eq("order_id", id);
+  await supabase.from("kot_order_items").delete().eq("order_id", id);
+  const { error } = await supabase.from("kot_orders").delete().eq("id", id);
+  if (error) throw error;
 }
 
 export interface CreateOrderInput {

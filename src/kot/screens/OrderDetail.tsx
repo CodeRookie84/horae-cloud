@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import type { KotViewer } from "../KotApp";
 import type { KotOrder, KotStatusEvent } from "../types";
-import { listStatusEvents, recordStatus, uploadKotPhoto, getOrder } from "../services/kotStore";
+import { listStatusEvents, recordStatus, uploadKotPhoto, getOrder, deleteOrder } from "../services/kotStore";
 import { statusDef, nextStatus, statusLabel, isFinal, type KotStatus } from "../status";
 import { KotButton, KotCard, KotStatusBadge, KotStatusRail, cn } from "../ui/primitives";
 import { CameraCapture } from "../ui/CameraCapture";
@@ -23,12 +23,14 @@ function eventTime(iso: string): string {
 }
 
 export default function OrderDetail(
-  { order: initial, viewer, onClose, onChanged }:
-  { order: KotOrder; viewer: KotViewer; onClose: () => void; onChanged: () => void },
+  { order: initial, viewer, onClose, onChanged, onDeleted }:
+  { order: KotOrder; viewer: KotViewer; onClose: () => void; onChanged: () => void; onDeleted?: () => void },
 ) {
   const [order, setOrder] = useState<KotOrder>(initial);
   const [events, setEvents] = useState<KotStatusEvent[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   async function refresh() {
     const [o, ev] = await Promise.all([getOrder(order.id), listStatusEvents(order.id)]);
@@ -139,11 +141,43 @@ export default function OrderDetail(
             </div>
           )}
 
-          {/* Timeline */}
+          {/* Timeline — who moved each step and when (actor + timestamp). */}
           <div>
             <h3 className="mb-2 text-sm font-bold text-slate-800">Timeline</h3>
             <StatusTimeline events={events} onPhoto={setLightbox} />
           </div>
+
+          {/* Danger zone — managers/admins only. Hard delete, no undo. */}
+          {viewer.canManage && (
+            <div className="border-t border-slate-100 pt-4">
+              {!confirmDel ? (
+                <button
+                  onClick={() => setConfirmDel(true)}
+                  className="w-full rounded-xl border border-red-200 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50"
+                >
+                  🗑️ Delete this order
+                </button>
+              ) : (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3">
+                  <p className="mb-2 text-sm font-semibold text-red-700">Delete this order permanently? This can't be undone.</p>
+                  <div className="flex gap-2">
+                    <KotButton variant="secondary" disabled={deleting} className="flex-1" onClick={() => setConfirmDel(false)}>Cancel</KotButton>
+                    <button
+                      disabled={deleting}
+                      onClick={async () => {
+                        setDeleting(true);
+                        try { await deleteOrder(order.id); (onDeleted || onClose)(); }
+                        catch (e: any) { alert("Delete failed — " + String(e?.message || e)); setDeleting(false); }
+                      }}
+                      className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-semibold text-white disabled:opacity-70"
+                    >
+                      {deleting ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

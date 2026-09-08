@@ -59,10 +59,22 @@ export async function routeKotList(listId: string, fromPhone: string): Promise<b
   if (!listId.startsWith("kot")) return false;
   const who = await resolveKotParticipant(fromPhone);
   if (!who) return false;
-  if (listId === "kotapp")                await sendKotApp(fromPhone, who);
-  else if (listId.startsWith("kotlist~")) await sendKotList(fromPhone, who, listId.slice(8));
-  else if (listId.startsWith("kotv~"))    await sendKotDetail(fromPhone, who, listId.slice(5));
-  else                                     await sendKotMenu(fromPhone, who);
+  if (listId === "kotapp") { await sendKotApp(fromPhone, who); return true; }
+  if (listId.startsWith("kotlist~")) {
+    const mode = listId.slice(8);
+    // Multi-outlet staff pick an outlet first; single-outlet staff go straight in.
+    const outs = await outletsForPicker(who);
+    if (outs.length > 1) await sendOutletPicker(fromPhone, outs, mode);
+    else await sendKotList(fromPhone, who, mode, outs[0]?.id);
+    return true;
+  }
+  if (listId.startsWith("kotout~")) {
+    const [, tenantId, mode] = listId.split("~");
+    await sendKotList(fromPhone, who, mode || "open", tenantId);
+    return true;
+  }
+  if (listId.startsWith("kotv~")) { await sendKotDetail(fromPhone, who, listId.slice(5)); return true; }
+  await sendKotMenu(fromPhone, who);
   return true;
 }
 
@@ -119,11 +131,34 @@ async function sendKotApp(fromPhone: string, who: KotWho) {
   await sendCtaUrl(fromPhone, "Open the full KOT app to capture slips and update status:", "Open KOT app", kotAppLink(who.clientId));
 }
 
-async function sendKotList(fromPhone: string, who: KotWho, mode: string) {
+/** Outlets to offer a multi-outlet user (names via service role, so `tenants` is
+ *  readable). Falls back to all of the client's outlets when the participant has
+ *  no explicit coverage. */
+async function outletsForPicker(who: KotWho): Promise<Array<{ id: string; name: string }>> {
+  let q = supabase.from("tenants").select("id, name").eq("client_id", who.clientId);
+  if (who.outletIds.length) q = q.in("id", who.outletIds);
+  const { data } = await q.order("name");
+  return (data || []).map((t: any) => ({ id: t.id, name: t.name || t.id }));
+}
+
+async function sendOutletPicker(fromPhone: string, outlets: Array<{ id: string; name: string }>, mode: string) {
+  const label = mode === "today" ? "today's" : mode === "upcoming" ? "upcoming" : "open";
+  await sendList(
+    fromPhone,
+    `You cover more than one outlet.\nWhich outlet's *${label}* orders?`,
+    "Choose outlet",
+    outlets.slice(0, 10).map((o) => ({ id: `kotout~${o.id}~${mode}`, title: o.name })),
+  );
+}
+
+async function sendKotList(fromPhone: string, who: KotWho, mode: string, tenantId?: string) {
   const label = mode === "today" ? "Today's" : mode === "upcoming" ? "Upcoming" : "Open";
-  const rows = await fetchOrders(who, mode);
+  const rows = await fetchOrders(who, mode, tenantId);
+  const outletName = tenantId ? await outletName_(tenantId) : "";
+  const scope = outletName ? ` · ${outletName}` : "";
+
   if (!rows.length) {
-    await sendCtaUrl(fromPhone, `No ${label.toLowerCase()} cake orders right now.`, "Open KOT app", kotAppLink(who.clientId));
+    await sendCtaUrl(fromPhone, `No ${label.toLowerCase()} cake orders right now${outletName ? ` at ${outletName}` : ""}.`, "Open KOT app", kotAppLink(who.clientId));
     return;
   }
 
@@ -138,7 +173,7 @@ async function sendKotList(fromPhone: string, who: KotWho, mode: string) {
   const more = rows.length > 10 ? " (showing 10 — open the app for the rest)" : "";
   await sendList(
     fromPhone,
-    `🎂 *${label} cake orders* (${rows.length}${more})\nTap one to see full details.`,
+    `🎂 *${label} cake orders${scope}* (${rows.length}${more})\nTap one to see full details.`,
     "See an order",
     listRows,
   );
@@ -196,9 +231,10 @@ async function sendKotDetail(fromPhone: string, who: KotWho, orderId: string) {
 
 // ── Data ───────────────────────────────────────────────────────────────────────
 
-async function fetchOrders(who: KotWho, mode: string): Promise<any[]> {
+async function fetchOrders(who: KotWho, mode: string, tenantId?: string): Promise<any[]> {
   let q = supabase.from("kot_orders").select("*").eq("client_id", who.clientId);
-  if (who.outletIds.length) q = q.in("tenant_id", who.outletIds);
+  if (tenantId) q = q.eq("tenant_id", tenantId);
+  else if (who.outletIds.length) q = q.in("tenant_id", who.outletIds);
 
   const todayStart    = istDayStart(0).toISOString();
   const tomorrowStart = istDayStart(1).toISOString();
