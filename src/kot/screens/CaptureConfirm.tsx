@@ -94,9 +94,11 @@ export default function CaptureConfirm(
     setItems((x.items || []).map((it) => ({
       id: uid(), name: it.name || "", qty: String(it.qty ?? ""), rate: String(it.rate ?? ""), amount: String(it.amount ?? ""),
     })));
-    setExtras((x.extraRemarks || []).map((r) => ({
-      id: uid(), text: r.text || "", drawingFile: null, drawingPreview: null,
-    })));
+    // Merge every handwritten note into ONE field (one line each) so the kitchen
+    // reads them together, with a single cake-drawing photo slot. The user can
+    // still "+ Add" more note blocks if a slip genuinely needs separate drawings.
+    const combinedNotes = (x.extraRemarks || []).map((r) => (r.text || "").trim()).filter(Boolean).join("\n");
+    setExtras(combinedNotes ? [{ id: uid(), text: combinedNotes, drawingFile: null, drawingPreview: null }] : []);
     setLowConf(new Set(x.lowConfidenceFields || []));
   }
 
@@ -271,16 +273,22 @@ export default function CaptureConfirm(
       <SectionHeading title="Items" onAdd={() => setItems((r) => [...r, { id: uid(), name: "", qty: "", rate: "", amount: "" }])} />
       <div className="flex flex-col gap-2">
         {items.map((it) => (
-          <div key={it.id} className="grid grid-cols-[1fr_3rem_4rem_4.5rem_1.5rem] items-center gap-2">
-            <input className={inpSm} placeholder="Cake / item" value={it.name}
-              onChange={(e) => setItems((r) => r.map((x) => x.id === it.id ? { ...x, name: e.target.value } : x))} />
-            <input className={inpSm} placeholder="Qty" value={it.qty}
-              onChange={(e) => setItems((r) => r.map((x) => x.id === it.id ? { ...x, qty: e.target.value } : x))} />
-            <input className={inpSm} placeholder="Rate" value={it.rate}
-              onChange={(e) => setItems((r) => r.map((x) => x.id === it.id ? { ...x, rate: e.target.value } : x))} />
-            <input className={inpSm} placeholder="Amount" value={it.amount}
-              onChange={(e) => setItems((r) => r.map((x) => x.id === it.id ? { ...x, amount: e.target.value } : x))} />
-            <button className="text-slate-400 hover:text-red-500" onClick={() => setItems((r) => r.filter((x) => x.id !== it.id))}>✕</button>
+          <div key={it.id} className="rounded-lg border border-slate-200 p-2">
+            {/* Full-width name row so long cake names aren't truncated. */}
+            <div className="flex items-center gap-2">
+              <input className={cn(inpSm, "flex-1")} placeholder="Cake / item name" value={it.name}
+                onChange={(e) => setItems((r) => r.map((x) => x.id === it.id ? { ...x, name: e.target.value } : x))} />
+              <button className="shrink-0 px-1 text-slate-400 hover:text-red-500" onClick={() => setItems((r) => r.filter((x) => x.id !== it.id))}>✕</button>
+            </div>
+            {/* Qty / Rate / Amount below. */}
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <input className={inpSm} inputMode="decimal" placeholder="Qty" value={it.qty}
+                onChange={(e) => setItems((r) => r.map((x) => x.id === it.id ? { ...x, qty: e.target.value } : x))} />
+              <input className={inpSm} inputMode="decimal" placeholder="Rate" value={it.rate}
+                onChange={(e) => setItems((r) => r.map((x) => x.id === it.id ? { ...x, rate: e.target.value } : x))} />
+              <input className={inpSm} inputMode="decimal" placeholder="Amount" value={it.amount}
+                onChange={(e) => setItems((r) => r.map((x) => x.id === it.id ? { ...x, amount: e.target.value } : x))} />
+            </div>
           </div>
         ))}
         {items.length === 0 && <p className="text-xs text-slate-400">No items — add the cakes from the slip.</p>}
@@ -301,7 +309,7 @@ export default function CaptureConfirm(
             <div className="flex items-start gap-2">
               <textarea
                 className={cn(inp, "flex-1")}
-                rows={2}
+                rows={4}
                 placeholder="e.g. 'Happy Birthday Naresh — cake base full white'"
                 value={ex.text}
                 onChange={(e) => setExtras((r) => r.map((x) => x.id === ex.id ? { ...x, text: e.target.value } : x))}
