@@ -26,7 +26,7 @@ const PROVIDER = (Deno.env.get("KOT_EXTRACT_PROVIDER") || "gemini").toLowerCase(
 const ANTHROPIC_API_KEY  = Deno.env.get("ANTHROPIC_API_KEY") || "";
 const ANTHROPIC_MODEL    = Deno.env.get("KOT_EXTRACT_MODEL") || "claude-opus-5";
 const GEMINI_API_KEY     = Deno.env.get("GEMINI_API_KEY") || "";
-const GEMINI_MODEL       = Deno.env.get("KOT_EXTRACT_GEMINI_MODEL") || "gemini-2.5-flash-lite";
+const GEMINI_MODEL       = Deno.env.get("KOT_EXTRACT_GEMINI_MODEL") || "gemini-3.5-flash-lite";
 
 const USER_INSTRUCTION = "Extract this KOT into the JSON schema. Pay special attention to any handwritten notes.";
 
