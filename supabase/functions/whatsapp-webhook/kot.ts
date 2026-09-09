@@ -98,16 +98,24 @@ async function resolveKotParticipant(fromPhone: string): Promise<KotWho | null> 
   const { data: enabled } = await supabase
     .from("kot_clients").select("client_id").in("client_id", clientIds);
   const enabledSet = new Set((enabled || []).map((c: any) => c.client_id));
-  const p = candidates.find((c: any) => enabledSet.has(c.client_id));
-  if (!p) return null;
+  const enabledCandidates = candidates.filter((c: any) => enabledSet.has(c.client_id));
+  if (!enabledCandidates.length) return null;
+
+  // A phone may map to MORE THAN ONE participant row of the same client — e.g. the
+  // admin added the person once per outlet instead of once with several outlets.
+  // Resolve to the first enabled client, then UNION the outlets across every one
+  // of that person's rows for that client, so no covered outlet is missed.
+  const clientId = enabledCandidates[0].client_id;
+  const mine = enabledCandidates.filter((c: any) => c.client_id === clientId);
+  const partIds = mine.map((c: any) => c.id);
 
   const [{ data: links }, { data: client }] = await Promise.all([
-    supabase.from("kot_participant_outlets").select("tenant_id").eq("participant_id", p.id),
-    supabase.from("clients").select("name").eq("id", p.client_id).limit(1).maybeSingle(),
+    supabase.from("kot_participant_outlets").select("tenant_id").in("participant_id", partIds),
+    supabase.from("clients").select("name").eq("id", clientId).limit(1).maybeSingle(),
   ]);
-  const outletIds = (links || []).map((l: any) => l.tenant_id);
+  const outletIds = [...new Set((links || []).map((l: any) => l.tenant_id))];
   const clientName = ((client?.name as string) || "Cake").trim();
-  return { participantId: p.id, clientId: p.client_id, clientName, name: p.name ?? "", outletIds };
+  return { participantId: mine[0].id, clientId, clientName, name: mine[0].name ?? "", outletIds };
 }
 
 // ── Screens ────────────────────────────────────────────────────────────────────
