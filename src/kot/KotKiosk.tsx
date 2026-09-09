@@ -88,6 +88,15 @@ export default function KotKiosk() {
       const next = { outlets: outletsOk, manager };
       setState(next);
       saveState(next);
+      // If this QR points at a specific outlet the device hasn't unlocked yet,
+      // open the add-outlet sign-in for THAT outlet — instead of silently showing
+      // an already-unlocked one. (Managers already see every outlet, so skip.)
+      if (
+        tenantHint && !manager && next.outlets.length > 0 &&
+        !next.outlets.some((o) => o.tenantId === tenantHint)
+      ) {
+        setSigningIn(true);
+      }
       setChecking(false);
     })();
   }, []);
