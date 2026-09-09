@@ -8,13 +8,14 @@
  */
 
 export type KotStatus =
-  | "order_received"       // Outlet  — KOT scanned & confirmed
-  | "indent_created"       // Kitchen — kitchen raises its indent
-  | "in_progress"          // Kitchen — cake being made
-  | "ready"                // Kitchen — done (PHOTO required)
-  | "handed_over"          // Kitchen — handed to outlet/rider
-  | "collected"            // Outlet  — received back at outlet (PHOTO required)
-  | "completed";           // Outlet  — delivered/picked up, closed
+  | "order_received"       // Outlet     — KOT scanned & confirmed
+  | "indent_created"       // Kitchen    — kitchen raises its indent
+  | "in_progress"          // Kitchen    — cake being made
+  | "ready"                // Kitchen    — done (PHOTO required)
+  | "handed_over"          // Kitchen    — handed to outlet/rider
+  | "collected"            // Outlet     — received back at outlet (PHOTO required)
+  | "completed"            // Outlet     — delivered/picked up
+  | "closed";              // Management — completion verified & archived
 
 export type KotTeam = "Outlet" | "Kitchen" | "Management";
 
@@ -36,8 +37,9 @@ export const KOT_PIPELINE: KotStatusDef[] = [
   { id: "in_progress",    label: "Order in progress",      owner: "Kitchen", requiresPhoto: false, step: 2 },
   { id: "ready",          label: "Ready marked by kitchen", owner: "Kitchen", requiresPhoto: true,  step: 3 },
   { id: "handed_over",    label: "Handed over by kitchen", owner: "Kitchen", requiresPhoto: false, step: 4 },
-  { id: "collected",      label: "Collected by outlet",    owner: "Outlet",  requiresPhoto: true,  step: 5 },
-  { id: "completed",      label: "Order completed",        owner: "Outlet",  requiresPhoto: false, step: 6 },
+  { id: "collected",      label: "Collected by outlet",    owner: "Outlet",     requiresPhoto: true,  step: 5 },
+  { id: "completed",      label: "Order completed",        owner: "Outlet",     requiresPhoto: false, step: 6 },
+  { id: "closed",         label: "Closed / verified",      owner: "Management", requiresPhoto: false, step: 7 },
 ];
 
 const BY_ID: Record<KotStatus, KotStatusDef> =
@@ -59,7 +61,7 @@ export function nextStatus(id: KotStatus): KotStatus | null {
 }
 
 export function isFinal(id: KotStatus): boolean {
-  return id === "completed";
+  return id === "closed";
 }
 
 /** Whether advancing INTO `id` needs a photo (ready, collected). */

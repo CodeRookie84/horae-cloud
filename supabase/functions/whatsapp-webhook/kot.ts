@@ -36,6 +36,7 @@ const STATUS_LABEL: Record<string, string> = {
   handed_over:    "Handed over by kitchen",
   collected:      "Collected by outlet",
   completed:      "Order completed",
+  closed:         "Closed / verified",
 };
 const statusLabel = (s: string) => STATUS_LABEL[s] ?? s;
 
@@ -252,9 +253,9 @@ async function fetchOrders(who: KotWho, mode: string, tenantId?: string): Promis
   } else if (mode === "tomorrow") {
     q = q.gte("delivery_at", tomorrowStart).lt("delivery_at", dayAfterStart);
   } else if (mode === "upcoming") {
-    q = q.gte("delivery_at", tomorrowStart).neq("status", "completed");
+    q = q.gte("delivery_at", tomorrowStart).not("status", "in", "(completed,closed)");
   } else { // "open" and any fallback
-    q = q.neq("status", "completed");
+    q = q.not("status", "in", "(completed,closed)");
   }
   // 11 so we can tell the user there are "more" beyond the 10-row WhatsApp cap.
   const { data } = await q.order("delivery_at", { ascending: true, nullsFirst: false }).limit(11);

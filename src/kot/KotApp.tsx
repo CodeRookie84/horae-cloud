@@ -134,7 +134,7 @@ export default function KotApp(
 
   const visible = orders.filter((o) => {
     if (filter === "all") return true;
-    if (filter === "active") return o.status !== "completed";
+    if (filter === "active") return o.status !== "completed" && o.status !== "closed";
     if (filter === "kitchen") return KITCHEN_STATUSES.has(o.status);
     if (filter === "outlet") return OUTLET_STATUSES.has(o.status);
     return true;

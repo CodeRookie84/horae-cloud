@@ -70,6 +70,7 @@ const STATUS_TONE: Record<KotStatus, string> = {
   handed_over: "bg-indigo-100 text-indigo-700",
   collected: "bg-teal-100 text-teal-700",
   completed: "bg-green-100 text-green-700",
+  closed: "bg-slate-800 text-white",
 };
 
 export function KotStatusBadge({ status }: { status: KotStatus }) {

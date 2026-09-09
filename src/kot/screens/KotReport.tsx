@@ -47,7 +47,7 @@ function matchesDateFilter(o: KotOrder, filter: DateFilter, onDate: string): boo
 
   if (filter === "today") return dateKey(d) === todayKey;
   if (filter === "tomorrow") return dateKey(d) === dateKey(tomorrow);
-  if (filter === "overdue") return d.getTime() < now.getTime() && o.status !== "completed";
+  if (filter === "overdue") return d.getTime() < now.getTime() && o.status !== "completed" && o.status !== "closed";
   if (filter === "on") return onDate ? dateKey(d) === onDate : true;
   if (filter === "week") {
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -93,14 +93,14 @@ export default function KotReport(
     for (const o of orders) c[o.status] = (c[o.status] || 0) + 1;
     return c;
   }, [orders]);
-  const openCount = orders.filter((o) => o.status !== "completed").length;
+  const openCount = orders.filter((o) => o.status !== "completed" && o.status !== "closed").length;
 
   const rows = useMemo(() => {
     return orders
       .filter((o) => outletFilter === "all" || o.tenantId === outletFilter)
       .filter((o) => {
         if (statusFilter === "all") return true;
-        if (statusFilter === "open") return o.status !== "completed";
+        if (statusFilter === "open") return o.status !== "completed" && o.status !== "closed";
         return o.status === statusFilter;
       })
       .filter((o) => matchesDateFilter(o, dateFilter, onDate))
@@ -130,7 +130,7 @@ export default function KotReport(
           ) : (
             <>
               {/* Status count tiles — also act as quick filters. */}
-              <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+              <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-9">
                 <CountTile label="Open" count={openCount} active={statusFilter === "open"} onClick={() => setStatusFilter("open")} tone="rose" />
                 {KOT_PIPELINE.map((s) => (
                   <CountTile

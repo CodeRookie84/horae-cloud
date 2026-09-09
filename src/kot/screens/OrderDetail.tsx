@@ -201,10 +201,20 @@ function AdvancePanel(
   const [err, setErr] = useState<string | null>(null);
 
   if (isFinal(order.status)) {
-    return <p className="mt-4 rounded-xl bg-green-50 px-3 py-2 text-center text-sm font-semibold text-green-700">Order completed ✓</p>;
+    return <p className="mt-4 rounded-xl bg-slate-800 px-3 py-2 text-center text-sm font-semibold text-white">Order closed ✓ Verified</p>;
   }
   const to = nextStatus(order.status)!;
   const def = statusDef(to);
+
+  // The final hop (Completed → Closed) is a manager-only verification. Floor
+  // staff see the order as done and awaiting a manager's sign-off.
+  if (to === "closed" && !viewer.canManage) {
+    return (
+      <p className="mt-4 rounded-xl bg-green-50 px-3 py-2 text-center text-sm font-semibold text-green-700">
+        Order completed ✓ — awaiting manager verification
+      </p>
+    );
+  }
 
   async function go(photoUrl: string | null) {
     setBusy(true);
@@ -237,7 +247,9 @@ function AdvancePanel(
       <div className="mb-2 flex items-center gap-2 text-xs">
         <span className="text-slate-400">Next:</span>
         <span className={cn("rounded-full px-2 py-0.5 font-semibold",
-          def.owner === "Kitchen" ? "bg-blue-100 text-blue-700" : "bg-teal-100 text-teal-700")}>
+          def.owner === "Kitchen" ? "bg-blue-100 text-blue-700"
+          : def.owner === "Management" ? "bg-slate-800 text-white"
+          : "bg-teal-100 text-teal-700")}>
           {def.owner} action
         </span>
       </div>
