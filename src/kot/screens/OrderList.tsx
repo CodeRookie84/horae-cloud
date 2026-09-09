@@ -51,11 +51,13 @@ function OrderCard(
           )}
         </div>
 
-        <div className="mt-3 flex items-center justify-between gap-3">
+        {/* Status rail on its own row, then urgency + delivery time on one line
+            so the date never wraps into a tall column on narrow cards. */}
+        <div className="mt-3 space-y-2">
           <KotStatusRail status={order.status} />
-          <div className="flex items-center gap-2 text-xs">
-            <span className={cn("rounded-full px-2 py-0.5 font-semibold", urgTone)}>{urg.label}</span>
-            <span className="text-slate-500">{formatDeliveryAt(order.deliveryAt)}</span>
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className={cn("shrink-0 rounded-full px-2 py-0.5 font-semibold", urgTone)}>{urg.label}</span>
+            <span className="whitespace-nowrap text-right text-slate-500">{formatDeliveryAt(order.deliveryAt)}</span>
           </div>
         </div>
 

@@ -13,7 +13,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { KotViewer } from "../KotApp";
 import type { KotOrder, KotParticipant, KotFulfilment } from "../types";
 import {
-  uploadKotPhoto, extractKot, outletParticipants, createOrder, type KotExtraction,
+  uploadKotPhoto, extractKot, outletParticipants, createOrder,
+  type KotExtraction, type KotOutlet,
 } from "../services/kotStore";
 import { KotButton, KotCard, KotSpinner, cn } from "../ui/primitives";
 import { CameraCapture } from "../ui/CameraCapture";
@@ -39,11 +40,18 @@ const localToIso = (local: string): string | null =>
   local ? new Date(local).toISOString() : null;
 
 export default function CaptureConfirm(
-  { viewer, onDone, onCancel }: { viewer: KotViewer; onDone: (o: KotOrder) => void; onCancel: () => void },
+  { viewer, outlets, onDone, onCancel }:
+  { viewer: KotViewer; outlets?: KotOutlet[]; onDone: (o: KotOrder) => void; onCancel: () => void },
 ) {
   const [step, setStep] = useState<Step>("capture");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Which outlet this order belongs to. Fixed to the viewer's outlet on a
+  // single-outlet station; a multi-outlet viewer (manager / kiosk with several
+  // outlets) picks it here since the "All Outlets" board has no active outlet.
+  const [tenantId, setTenantId] = useState(viewer.tenantId);
+  const showOutletPicker = !!outlets && outlets.length > 1;
 
   const [slipUrl, setSlipUrl] = useState<string | null>(null);
   const [lowConf, setLowConf] = useState<Set<string>>(new Set());
@@ -67,11 +75,11 @@ export default function CaptureConfirm(
   const [assignees, setAssignees] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    outletParticipants(viewer.clientId, viewer.tenantId).then((ps) => {
+    outletParticipants(viewer.clientId, tenantId).then((ps) => {
       setParticipants(ps);
       setAssignees(new Set(ps.map((p) => p.id)));
     });
-  }, [viewer.clientId, viewer.tenantId]);
+  }, [viewer.clientId, tenantId]);
 
   // Keep balance in step with bill − advance until the user edits it directly.
   const [balanceTouched, setBalanceTouched] = useState(false);
@@ -106,7 +114,7 @@ export default function CaptureConfirm(
     setError(null);
     setStep("extracting");
     try {
-      const url = await uploadKotPhoto(file, `slips/${viewer.tenantId}`);
+      const url = await uploadKotPhoto(file, `slips/${tenantId}`);
       setSlipUrl(url);
       try {
         const x = await extractKot(url);
@@ -131,7 +139,7 @@ export default function CaptureConfirm(
       // Upload any cake-drawing photos first.
       const extraItems = await Promise.all(extras.map(async (ex, i) => {
         let drawingUrl: string | null = null;
-        if (ex.drawingFile) drawingUrl = await uploadKotPhoto(ex.drawingFile, `drawings/${viewer.tenantId}`);
+        if (ex.drawingFile) drawingUrl = await uploadKotPhoto(ex.drawingFile, `drawings/${tenantId}`);
         return {
           name: "Custom note", qty: 0, rate: 0, amount: 0,
           isExtraRemark: true, remarkText: ex.text, drawingPhotoUrl: drawingUrl, sortOrder: 1000 + i,
@@ -145,7 +153,7 @@ export default function CaptureConfirm(
 
       const order = await createOrder({
         clientId: viewer.clientId,
-        tenantId: viewer.tenantId,
+        tenantId,
         invoiceNo,
         orderDate,
         customerName,
@@ -160,7 +168,13 @@ export default function CaptureConfirm(
         extracted: { lowConfidenceFields: Array.from(lowConf) },
         items: [...printedItems, ...extraItems],
         assigneeIds: Array.from(assignees),
-        actor: { stationId: viewer.actor.stationId, userId: viewer.actor.userId, participantId: viewer.actor.participantId, name: viewer.actor.name },
+        actor: {
+          // Attribute to the picked outlet's station when the device has several.
+          stationId: viewer.stationByTenant?.[tenantId] ?? viewer.actor.stationId,
+          userId: viewer.actor.userId,
+          participantId: viewer.actor.participantId,
+          name: viewer.actor.name,
+        },
       });
       onDone(order);
     } catch (e: any) {
@@ -208,6 +222,16 @@ export default function CaptureConfirm(
         <p className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
           Fields highlighted amber were hard to read — please double-check them.
         </p>
+      )}
+
+      {showOutletPicker && (
+        <div className="mb-3">
+          <Field label="Outlet — which outlet is this order for?">
+            <select className={inp} value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+              {outlets!.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          </Field>
+        </div>
       )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -147,9 +147,10 @@ export default function KotApp(
     { id: "all", label: "All" },
   ];
 
-  // "+ New KOT" needs a single outlet. In the combined view with several outlets
-  // it's ambiguous, so we hide it and ask the user to pick an outlet first.
-  const canCapture = !showingAll || outlets.length <= 1;
+  // "+ New KOT" always shows. When the combined view is active and the viewer
+  // covers several outlets, the capture form itself asks which outlet the order
+  // belongs to (there's no single active outlet to assume).
+  const captureOutlets = outlets.length > 1 ? outlets : undefined;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-4">
@@ -175,63 +176,54 @@ export default function KotApp(
           {viewer.canManage && (
             <KotButton variant="secondary" className="flex-1 sm:flex-none" onClick={() => setManaging(true)}>Manage</KotButton>
           )}
-          {canCapture && (
-            <KotButton className="flex-1 sm:flex-none" onClick={() => setCapturing(true)}>+ New KOT</KotButton>
-          )}
+          <KotButton className="flex-1 sm:flex-none" onClick={() => setCapturing(true)}>+ New KOT</KotButton>
         </div>
       </div>
 
-      {/* Outlet switcher — collapsed to a single button by default (saves space
-          on mobile); tapping it expands All Outlets + one pill per outlet. Only
-          shown when the viewer covers more than one outlet. */}
+      {/* Outlet switcher — a compact dropdown so a multi-outlet viewer can pick
+          "All Outlets" or one specific outlet from a list without a row of
+          buttons crowding the mobile view. */}
       {outlets.length > 1 && (
-        <div className="mb-4">
-          {!switcherOpen ? (
-            <button
-              onClick={() => setSwitcherOpen(true)}
-              className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700"
-            >
-              <span>{showingAll ? "🗂️ All Outlets" : `🏪 ${nameById(scope)}`}</span>
-              <span className="text-rose-400">▾</span>
-            </button>
-          ) : (
-            <div className="flex flex-wrap gap-2">
+        <div className="relative mb-4 inline-block">
+          <button
+            onClick={() => setSwitcherOpen((v) => !v)}
+            className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700"
+          >
+            <span>{showingAll ? "🗂️ All Outlets" : `🏪 ${nameById(scope)}`}</span>
+            <span className={cn("text-rose-400 transition-transform", switcherOpen && "rotate-180")}>▾</span>
+          </button>
+
+          {switcherOpen && (
+            <>
+              {/* Click-away backdrop. */}
               <button
-                onClick={() => { setScope(ALL); setSwitcherOpen(false); }}
-                className={cn(
-                  "rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
-                  showingAll ? "border-rose-500 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600 hover:bg-slate-50",
-                )}
-              >
-                🗂️ All Outlets
-              </button>
-              {outlets.map((o) => (
-                <button
-                  key={o.id}
-                  onClick={() => { setScope(o.id); setSwitcherOpen(false); }}
-                  className={cn(
-                    "rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
-                    o.id === scope ? "border-rose-500 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600 hover:bg-slate-50",
-                  )}
-                >
-                  🏪 {o.name}
-                </button>
-              ))}
-              {onAddOutlet && (
-                <button
-                  onClick={onAddOutlet}
-                  className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50"
-                >
-                  + Add outlet
-                </button>
-              )}
-              <button
+                aria-hidden
                 onClick={() => setSwitcherOpen(false)}
-                className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-400 hover:bg-slate-50"
-              >
-                ▴ Collapse
-              </button>
-            </div>
+                className="fixed inset-0 z-10 cursor-default"
+              />
+              <div className="absolute left-0 z-20 mt-1 w-60 max-w-[80vw] overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                <SwitcherItem active={showingAll} onClick={() => { setScope(ALL); setSwitcherOpen(false); }}>
+                  🗂️ All Outlets
+                </SwitcherItem>
+                <div className="my-1 border-t border-slate-100" />
+                {outlets.map((o) => (
+                  <SwitcherItem key={o.id} active={o.id === scope} onClick={() => { setScope(o.id); setSwitcherOpen(false); }}>
+                    🏪 {o.name}
+                  </SwitcherItem>
+                ))}
+                {onAddOutlet && (
+                  <>
+                    <div className="my-1 border-t border-slate-100" />
+                    <button
+                      onClick={() => { setSwitcherOpen(false); onAddOutlet(); }}
+                      className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-500 hover:bg-slate-50"
+                    >
+                      + Add outlet
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -295,6 +287,7 @@ export default function KotApp(
       {capturing && (
         <CaptureConfirm
           viewer={activeViewer}
+          outlets={captureOutlets}
           onCancel={() => setCapturing(false)}
           onDone={() => { setCapturing(false); load(); }}
         />
@@ -310,5 +303,24 @@ export default function KotApp(
         ))}
       </div>
     </div>
+  );
+}
+
+/** One row in the outlet-switcher dropdown. */
+function SwitcherItem(
+  { active, onClick, children }:
+  { active: boolean; onClick: () => void; children: React.ReactNode },
+) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center justify-between px-3 py-2 text-left text-sm font-semibold",
+        active ? "bg-rose-50 text-rose-700" : "text-slate-700 hover:bg-slate-50",
+      )}
+    >
+      <span className="truncate">{children}</span>
+      {active && <span className="ml-2 shrink-0 text-rose-500">✓</span>}
+    </button>
   );
 }
