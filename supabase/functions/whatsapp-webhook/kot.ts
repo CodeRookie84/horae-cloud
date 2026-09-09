@@ -127,10 +127,10 @@ async function sendKotMenu(fromPhone: string, who: KotWho) {
     `🎂 *${who.clientName} KOT* — hi ${first}.\nPick what you'd like to view.`,
     "View orders",
     [
-      { id: "kotlist~today",    title: "📋 Today's orders",  description: "Delivery/pickup due today" },
-      { id: "kotlist~upcoming", title: "📅 Upcoming orders", description: "Due after today, still open" },
-      { id: "kotlist~open",     title: "🔧 Open orders",     description: "Anything not yet completed" },
-      { id: "kotapp",           title: "🔗 Open KOT app",    description: "Capture & update in the app" },
+      { id: "kotlist~today",    title: "📋 Today's orders",    description: "Delivery/pickup due today" },
+      { id: "kotlist~tomorrow", title: "📅 Tomorrow's orders", description: "Delivery/pickup due tomorrow" },
+      { id: "kotlist~open",     title: "🔧 All open orders",   description: "Anything not yet completed" },
+      { id: "kotapp",           title: "🔗 Open KOT app",      description: "Capture & update in the app" },
     ],
   );
 }
@@ -150,7 +150,7 @@ async function outletsForPicker(who: KotWho): Promise<Array<{ id: string; name: 
 }
 
 async function sendOutletPicker(fromPhone: string, outlets: Array<{ id: string; name: string }>, mode: string) {
-  const label = mode === "today" ? "today's" : mode === "upcoming" ? "upcoming" : "open";
+  const label = mode === "today" ? "today's" : mode === "tomorrow" ? "tomorrow's" : mode === "upcoming" ? "upcoming" : "open";
   await sendList(
     fromPhone,
     `You cover more than one outlet.\nWhich outlet's *${label}* orders?`,
@@ -160,7 +160,7 @@ async function sendOutletPicker(fromPhone: string, outlets: Array<{ id: string; 
 }
 
 async function sendKotList(fromPhone: string, who: KotWho, mode: string, tenantId?: string) {
-  const label = mode === "today" ? "Today's" : mode === "upcoming" ? "Upcoming" : "Open";
+  const label = mode === "today" ? "Today's" : mode === "tomorrow" ? "Tomorrow's" : mode === "upcoming" ? "Upcoming" : "Open";
   const rows = await fetchOrders(who, mode, tenantId);
   const outletName = tenantId ? await outletName_(tenantId) : "";
   const scope = outletName ? ` · ${outletName}` : "";
@@ -246,8 +246,11 @@ async function fetchOrders(who: KotWho, mode: string, tenantId?: string): Promis
 
   const todayStart    = istDayStart(0).toISOString();
   const tomorrowStart = istDayStart(1).toISOString();
+  const dayAfterStart = istDayStart(2).toISOString();
   if (mode === "today") {
     q = q.gte("delivery_at", todayStart).lt("delivery_at", tomorrowStart);
+  } else if (mode === "tomorrow") {
+    q = q.gte("delivery_at", tomorrowStart).lt("delivery_at", dayAfterStart);
   } else if (mode === "upcoming") {
     q = q.gte("delivery_at", tomorrowStart).neq("status", "completed");
   } else { // "open" and any fallback

@@ -24,6 +24,39 @@ function updatedTime(iso: string): string {
   });
 }
 
+const selCls = "rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-rose-400";
+
+type DateFilter = "all" | "today" | "tomorrow" | "week" | "overdue" | "on";
+
+/** Local (device-time) YYYY-MM-DD key for a date. */
+function dateKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Whether an order's DELIVERY date passes the chosen date filter. Orders with no
+ *  delivery date are excluded from every date filter except "all". */
+function matchesDateFilter(o: KotOrder, filter: DateFilter, onDate: string): boolean {
+  if (filter === "all") return true;
+  if (!o.deliveryAt) return false;
+  const d = new Date(o.deliveryAt);
+  if (isNaN(d.getTime())) return false;
+
+  const now = new Date();
+  const todayKey = dateKey(now);
+  const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+
+  if (filter === "today") return dateKey(d) === todayKey;
+  if (filter === "tomorrow") return dateKey(d) === dateKey(tomorrow);
+  if (filter === "overdue") return d.getTime() < now.getTime() && o.status !== "completed";
+  if (filter === "on") return onDate ? dateKey(d) === onDate : true;
+  if (filter === "week") {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 59);
+    return d >= start && d <= end;
+  }
+  return true;
+}
+
 export default function KotReport(
   { clientId, outletName, viewer, onClose, onChanged }:
   {
@@ -38,6 +71,8 @@ export default function KotReport(
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<KotStatus | "all" | "open">("open");
   const [outletFilter, setOutletFilter] = useState<string>("all");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [onDate, setOnDate] = useState<string>(""); // YYYY-MM-DD for the "on a date" option
   const [open, setOpen] = useState<KotOrder | null>(null);
 
   async function load() {
@@ -68,13 +103,14 @@ export default function KotReport(
         if (statusFilter === "open") return o.status !== "completed";
         return o.status === statusFilter;
       })
+      .filter((o) => matchesDateFilter(o, dateFilter, onDate))
       // Most-urgent delivery first; orders with no delivery time sink to the end.
       .sort((a, b) => {
         const ta = a.deliveryAt ? new Date(a.deliveryAt).getTime() : Infinity;
         const tb = b.deliveryAt ? new Date(b.deliveryAt).getTime() : Infinity;
         return ta - tb;
       });
-  }, [orders, outletFilter, statusFilter]);
+  }, [orders, outletFilter, statusFilter, dateFilter, onDate]);
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-slate-50">
@@ -107,25 +143,32 @@ export default function KotReport(
                 ))}
               </div>
 
-              {/* Outlet filter + an "All statuses" escape hatch. */}
+              {/* Status + date + outlet filters. The count tiles above and this
+                  status dropdown stay in sync (both drive statusFilter). */}
               <div className="mb-3 flex flex-wrap items-center gap-2">
-                <select
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-rose-400"
-                  value={outletFilter}
-                  onChange={(e) => setOutletFilter(e.target.value)}
-                >
+                <select className={selCls} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as KotStatus | "all" | "open")}>
+                  <option value="all">All statuses</option>
+                  <option value="open">Open (not completed)</option>
+                  {KOT_PIPELINE.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+
+                <select className={selCls} value={dateFilter} onChange={(e) => setDateFilter(e.target.value as DateFilter)}>
+                  <option value="all">All dates</option>
+                  <option value="today">Delivery today</option>
+                  <option value="tomorrow">Delivery tomorrow</option>
+                  <option value="week">Next 7 days</option>
+                  <option value="overdue">Overdue</option>
+                  <option value="on">On a date…</option>
+                </select>
+                {dateFilter === "on" && (
+                  <input type="date" className={selCls} value={onDate} onChange={(e) => setOnDate(e.target.value)} />
+                )}
+
+                <select className={selCls} value={outletFilter} onChange={(e) => setOutletFilter(e.target.value)}>
                   <option value="all">All outlets</option>
                   {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
                 </select>
-                <button
-                  onClick={() => setStatusFilter("all")}
-                  className={cn(
-                    "rounded-full px-3 py-1.5 text-sm font-medium transition-colors",
-                    statusFilter === "all" ? "bg-rose-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50",
-                  )}
-                >
-                  All statuses
-                </button>
+
                 <span className="text-sm text-slate-500">{rows.length} shown</span>
               </div>
 
