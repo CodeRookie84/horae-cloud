@@ -1084,6 +1084,7 @@ function AppInner() {
         allTenants={allTenants}
         loggedInEmail={loggedInEmail}
         onLogout={handleLogout}
+        showKot={kotAccess} /* [KOT] sidebar link */
       />
 
       {/* MAIN VIEWPORT CARRIER */}
@@ -1423,6 +1424,8 @@ function AppInner() {
                         tenantLabel: activeTenant?.name || "Cake KOT",
                         canManage: [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role),
                         canDelete: [Role.ADMIN, Role.SUPER_ADMIN, Role.MANAGER].includes(activeUser.role as Role),
+                        canReport: [Role.ADMIN, Role.SUPER_ADMIN, Role.MANAGER].includes(activeUser.role as Role),
+                        seesAllClient: [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role),
                         actor: { userId: activeUser.id, name: activeUser.name, phone: (activeUser as any).phoneNumber },
                       }}
                     />

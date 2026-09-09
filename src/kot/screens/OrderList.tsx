@@ -3,7 +3,10 @@ import type { KotOrder } from "../types";
 import { KotCard, KotStatusBadge, KotStatusRail, cn } from "../ui/primitives";
 import { formatMoney, formatDeliveryAt, deliveryUrgency } from "../lib/format";
 
-function OrderCard({ order, onOpen }: { order: KotOrder; onOpen: (o: KotOrder) => void }) {
+function OrderCard(
+  { order, onOpen, outletName }:
+  { order: KotOrder; onOpen: (o: KotOrder) => void; outletName?: (id: string) => string },
+) {
   const urg = deliveryUrgency(order.deliveryAt);
   const extras = order.items.filter((i) => i.isExtraRemark);
   const cakes = order.items.filter((i) => !i.isExtraRemark);
@@ -15,6 +18,11 @@ function OrderCard({ order, onOpen }: { order: KotOrder; onOpen: (o: KotOrder) =
   return (
     <button onClick={() => onOpen(order)} className="w-full text-left">
       <KotCard className="p-4 transition-shadow hover:shadow-md">
+        {outletName && (
+          <p className="mb-1.5 inline-block rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+            🏪 {outletName(order.tenantId)}
+          </p>
+        )}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-bold text-slate-800">
@@ -62,11 +70,12 @@ function OrderCard({ order, onOpen }: { order: KotOrder; onOpen: (o: KotOrder) =
 }
 
 export default function OrderList(
-  { orders, onOpen }: { orders: KotOrder[]; onOpen: (o: KotOrder) => void },
+  { orders, onOpen, outletName }:
+  { orders: KotOrder[]; onOpen: (o: KotOrder) => void; outletName?: (id: string) => string },
 ) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {orders.map((o) => <OrderCard key={o.id} order={o} onOpen={onOpen} />)}
+      {orders.map((o) => <OrderCard key={o.id} order={o} onOpen={onOpen} outletName={outletName} />)}
     </div>
   );
 }

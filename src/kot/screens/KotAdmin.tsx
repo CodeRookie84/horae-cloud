@@ -11,6 +11,7 @@ import {
   listParticipants, listOutlets, listStations,
   createParticipant, updateParticipant, deleteParticipant,
   createStation, rotateStationCode, setStationActive,
+  hasManagerCode, setManagerCode,
   type KotOutlet,
 } from "../services/kotStore";
 import { KotButton, KotCard, KotSpinner, cn } from "../ui/primitives";
@@ -226,6 +227,11 @@ function StationsPanel(
 
   return (
     <div>
+      {/* Manager passcode — cross-outlet access to the order Report + manage,
+          without a Horae login. Rotating it revokes every remembered manager
+          device. This is the Cakewala "Manager" role. */}
+      <ManagerCodeCard clientId={clientId} />
+
       <p className="mb-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
         Each station is a shared tablet login for one outlet. Print its QR at the counter; staff enter the access code once per device. Rotate the code to revoke access.
       </p>
@@ -260,6 +266,74 @@ function StationsPanel(
 
       {qrFor && <StationQr clientId={clientId} station={qrFor} onClose={() => setQrFor(null)} />}
     </div>
+  );
+}
+
+/** The client-level Manager passcode. A person who enters it on any kiosk tablet
+ *  gets cross-outlet access + the order Report + manage — the Cakewala "Manager"
+ *  role, kept entirely inside KOT (no Horae account, separate from staff). */
+function ManagerCodeCard({ clientId }: { clientId: string }) {
+  const [isSet, setIsSet] = useState<boolean | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { hasManagerCode(clientId).then(setIsSet).catch(() => setIsSet(false)); }, [clientId]);
+
+  async function save() {
+    if (code.trim().length < 4) { setErr("Use a passcode of at least 4 characters."); return; }
+    setBusy(true); setErr(null);
+    try {
+      await setManagerCode(clientId, code.trim());
+      setIsSet(true); setEditing(false); setCode(""); setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e: any) { setErr("Save failed — " + String(e?.message || e)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <KotCard className="mb-4 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-800">Manager passcode</p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Cross-outlet access + order Report, via the kiosk “Manager passcode” sign-in. No Horae login needed.
+          </p>
+          <p className="mt-1 text-[11px] font-medium">
+            {isSet === null ? <span className="text-slate-400">Checking…</span>
+              : isSet ? <span className="text-emerald-600">● Passcode set</span>
+              : <span className="text-amber-600">● Not set yet</span>}
+            {saved && <span className="ml-2 text-emerald-600">Saved ✓</span>}
+          </p>
+        </div>
+        {!editing && (
+          <button className="shrink-0 text-sm font-semibold text-rose-600" onClick={() => { setEditing(true); setErr(null); }}>
+            {isSet ? "Rotate" : "Set"}
+          </button>
+        )}
+      </div>
+
+      {editing && (
+        <div className="mt-3">
+          {err && <p className="mb-2 rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-600">{err}</p>}
+          <input
+            className={inp}
+            type="password"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="New manager passcode (min 4 chars)"
+            autoFocus
+          />
+          <p className="mt-1 text-[11px] text-slate-400">Rotating the passcode signs out every remembered manager device.</p>
+          <div className="mt-2 flex justify-end gap-2">
+            <button className="text-sm text-slate-500" onClick={() => { setEditing(false); setCode(""); setErr(null); }}>Cancel</button>
+            <KotButton onClick={save} disabled={busy}>{busy ? "Saving…" : "Save passcode"}</KotButton>
+          </div>
+        </div>
+      )}
+    </KotCard>
   );
 }
 

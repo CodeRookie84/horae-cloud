@@ -193,6 +193,44 @@ export async function revalidateStation(stationId: string, codeHash: string): Pr
   return !!r && !!r.active && r.code_hash === codeHash;
 }
 
+// ── Manager passcode (client-level, cross-outlet) ─────────────────────────────
+// One passcode per KOT client, stored hashed on kot_clients.manager_code_hash.
+// Entering it on the kiosk signs in as a manager: all outlets + Report + manage.
+
+/** Validate a client's manager passcode. Returns the hash (for remember-device)
+ *  on success, or null when wrong / not set. */
+export async function authenticateManager(clientId: string, code: string): Promise<string | null> {
+  if (!code.trim()) return null;
+  const codeHash = await sha256Hex(code.trim());
+  const { data } = await supabase
+    .from("kot_clients").select("manager_code_hash").eq("client_id", clientId).limit(1);
+  const stored = data?.[0]?.manager_code_hash;
+  return stored && stored === codeHash ? codeHash : null;
+}
+
+/** Re-check a remembered manager device: passcode still set and not rotated. */
+export async function revalidateManager(clientId: string, codeHash: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("kot_clients").select("manager_code_hash").eq("client_id", clientId).limit(1);
+  const stored = data?.[0]?.manager_code_hash;
+  return !!stored && stored === codeHash;
+}
+
+/** Set / rotate the client manager passcode. Rotating revokes remembered devices. */
+export async function setManagerCode(clientId: string, code: string): Promise<void> {
+  const { error } = await supabase.from("kot_clients")
+    .update({ manager_code_hash: await sha256Hex(code.trim()) })
+    .eq("client_id", clientId);
+  if (error) throw error;
+}
+
+/** Whether this client has a manager passcode configured (for the admin UI). */
+export async function hasManagerCode(clientId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("kot_clients").select("manager_code_hash").eq("client_id", clientId).limit(1);
+  return !!data?.[0]?.manager_code_hash;
+}
+
 // ── Participant admin (People Directory) ──────────────────────────────────────
 
 export async function createParticipant(input: {
@@ -307,9 +345,15 @@ async function hydrateOrders(rows: any[]): Promise<KotOrder[]> {
   return rows.map((r) => mapOrder(r, itemsByOrder.get(r.id) || [], assigneesByOrder.get(r.id) || []));
 }
 
-export async function listOrders(opts: { clientId: string; tenantId?: string }): Promise<KotOrder[]> {
+export async function listOrders(
+  opts: { clientId: string; tenantId?: string; tenantIds?: string[] },
+): Promise<KotOrder[]> {
   let q = supabase.from("kot_orders").select("*").eq("client_id", opts.clientId);
+  // A single outlet, or an explicit set of outlets (the kiosk's unlocked list,
+  // for the "All Outlets" view). Omit both → every outlet of the client
+  // (manager/admin "All Outlets").
   if (opts.tenantId) q = q.eq("tenant_id", opts.tenantId);
+  else if (opts.tenantIds?.length) q = q.in("tenant_id", opts.tenantIds);
   const { data } = await q.order("created_at", { ascending: false });
   return hydrateOrders(data || []);
 }
@@ -464,4 +508,26 @@ export function subscribeOrders(tenantId: string, onChange: () => void): () => v
     .on("postgres_changes", { event: "*", schema: "public", table: "kot_status_events", filter: `tenant_id=eq.${tenantId}` }, onChange)
     .subscribe();
   return () => { supabase.removeChannel(channel); };
+}
+
+/** Subscribe to order changes across many outlets (the "All Outlets" board).
+ *  `clientId` scopes the client-wide case (empty `tenantIds` = all outlets of the
+ *  client); a non-empty `tenantIds` watches just those outlets (kiosk unlocked
+ *  set). Filtering the reload happens in listOrders, so here we only need a wake. */
+export function subscribeOrdersMulti(
+  opts: { clientId: string; tenantIds?: string[] },
+  onChange: () => void,
+): () => void {
+  const ch = supabase.channel(`kot_orders_multi_${opts.clientId}_${(opts.tenantIds || []).join("-") || "all"}`);
+  if (opts.tenantIds?.length) {
+    for (const t of opts.tenantIds) {
+      ch.on("postgres_changes", { event: "*", schema: "public", table: "kot_orders", filter: `tenant_id=eq.${t}` }, onChange)
+        .on("postgres_changes", { event: "*", schema: "public", table: "kot_status_events", filter: `tenant_id=eq.${t}` }, onChange);
+    }
+  } else {
+    ch.on("postgres_changes", { event: "*", schema: "public", table: "kot_orders", filter: `client_id=eq.${opts.clientId}` }, onChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "kot_status_events" }, onChange);
+  }
+  ch.subscribe();
+  return () => { supabase.removeChannel(ch); };
 }

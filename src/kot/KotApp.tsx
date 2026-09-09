@@ -3,27 +3,47 @@
  * Horae, added later):
  *   • kiosk  — the shared floor tablet reached via the QR + code route
  *   • manager — an icon inside Horae for linked managers/management
- * Both render the same screens; `viewer` says who is acting and which outlet.
+ * Both render the same screens; `viewer` says who is acting and which outlet(s).
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { KotOrder } from "./types";
-import { listOrders, subscribeOrders, accessibleOutlets, type KotOutlet } from "./services/kotStore";
+import {
+  listOrders, subscribeOrders, subscribeOrdersMulti,
+  accessibleOutlets, type KotOutlet,
+} from "./services/kotStore";
 import { KOT_PIPELINE, type KotStatus } from "./status";
 import { KotButton, KotSpinner, KotEmpty, cn } from "./ui/primitives";
 import OrderList from "./screens/OrderList";
 import CaptureConfirm from "./screens/CaptureConfirm";
 import OrderDetail from "./screens/OrderDetail";
 import KotAdmin from "./screens/KotAdmin";
+import KotReport from "./screens/KotReport";
+
+/** Sentinel for the combined "All Outlets" board. */
+const ALL = "__all__";
 
 export interface KotViewer {
   clientId: string;
   mode: "kiosk" | "manager";
-  tenantId: string;        // active outlet
+  tenantId: string;        // the "home" / default outlet (for + New KOT)
   tenantLabel: string;
-  /** Admins get the "Manage" (People + Stations) entry point. */
+  /** Admins/managers get the "Manage" (People + Stations) entry point. */
   canManage?: boolean;
   /** Admins + managers may delete an order (separate from People/Station admin). */
   canDelete?: boolean;
+  /** Admins/managers get the cross-outlet order Report. */
+  canReport?: boolean;
+  /** The outlets this viewer may switch between. When omitted (Horae manager
+   *  login) we derive them from the People directory. The kiosk passes its
+   *  unlocked set; a manager passcode passes every station outlet. */
+  coveredOutlets?: KotOutlet[];
+  /** When true, "All Outlets" spans every order of the client (manager/admin),
+   *  not just the covered set. */
+  seesAllClient?: boolean;
+  /** Kiosk only: the station id unlocked for each outlet, so a status action is
+   *  attributed to the right station when several outlets are unlocked on one
+   *  device. Absent for Horae-login / manager viewers. */
+  stationByTenant?: Record<string, string>;
   actor: { stationId?: string; userId?: string; participantId?: string; name?: string; phone?: string };
 }
 
@@ -32,46 +52,82 @@ type Filter = "active" | "all" | "kitchen" | "outlet";
 const KITCHEN_STATUSES = new Set<KotStatus>(["indent_created", "in_progress", "ready", "handed_over"]);
 const OUTLET_STATUSES = new Set<KotStatus>(["order_received", "collected", "completed"]);
 
-export default function KotApp({ viewer, onExit }: { viewer: KotViewer; onExit?: () => void }) {
+export default function KotApp(
+  { viewer, onExit, onAddOutlet }:
+  { viewer: KotViewer; onExit?: () => void; onAddOutlet?: () => void },
+) {
   const [orders, setOrders] = useState<KotOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("active");
   const [capturing, setCapturing] = useState(false);
   const [openOrder, setOpenOrder] = useState<KotOrder | null>(null);
   const [managing, setManaging] = useState(false);
+  const [reporting, setReporting] = useState(false);
 
-  // Cross-outlet: a signed-in manager/participant may cover several outlets. We
-  // load the ones they can see and let them switch the active board. Kiosk mode
-  // is bound to its station's single outlet, so it never switches.
-  const [outlets, setOutlets] = useState<KotOutlet[]>([]);
-  const [activeTenant, setActiveTenant] = useState(viewer.tenantId);
+  // The outlets this viewer can switch between. Kiosk/manager-passcode pass them
+  // in; a Horae-login manager has them derived from the People directory.
+  const [outlets, setOutlets] = useState<KotOutlet[]>(viewer.coveredOutlets || []);
+  // Which board is showing: ALL (combined) or a single outlet id.
+  const [scope, setScope] = useState<string>(ALL);
 
   useEffect(() => {
+    if (viewer.coveredOutlets) { setOutlets(viewer.coveredOutlets); return; }
     if (viewer.mode !== "manager") return;
     accessibleOutlets(viewer.clientId, viewer.actor.userId, viewer.actor.phone, !!viewer.canManage)
-      .then((os) => {
-        setOutlets(os);
-        setActiveTenant((cur) => (os.some((o) => o.id === cur) ? cur : os[0]?.id || cur));
-      })
+      .then(setOutlets)
       .catch(() => { /* fall back to the single viewer.tenantId */ });
-  }, [viewer.clientId, viewer.actor.userId, viewer.actor.phone, viewer.canManage, viewer.mode]);
+  }, [viewer.coveredOutlets, viewer.clientId, viewer.actor.userId, viewer.actor.phone, viewer.canManage, viewer.mode]);
+
+  // Default board: combined when the viewer covers more than one outlet,
+  // otherwise the single outlet they have.
+  useEffect(() => {
+    if (outlets.length <= 1) setScope(outlets[0]?.id || viewer.tenantId);
+    else setScope(ALL);
+  }, [outlets, viewer.tenantId]);
+
+  const outletIds = useMemo(() => outlets.map((o) => o.id), [outlets]);
+  const nameById = useMemo(() => {
+    const m = new Map(outlets.map((o) => [o.id, o.name]));
+    return (id: string) => m.get(id) || id;
+  }, [outlets]);
 
   const load = useCallback(async () => {
-    const rows = await listOrders({ clientId: viewer.clientId, tenantId: activeTenant });
-    setOrders(rows);
+    if (scope === ALL) {
+      const rows = viewer.seesAllClient
+        ? await listOrders({ clientId: viewer.clientId })
+        : await listOrders({ clientId: viewer.clientId, tenantIds: outletIds });
+      setOrders(rows);
+    } else {
+      setOrders(await listOrders({ clientId: viewer.clientId, tenantId: scope }));
+    }
     setLoading(false);
-  }, [viewer.clientId, activeTenant]);
+  }, [viewer.clientId, viewer.seesAllClient, scope, outletIds]);
 
   useEffect(() => {
     setLoading(true);
     load();
-    const unsub = subscribeOrders(activeTenant, load);
+    const unsub = scope === ALL
+      ? subscribeOrdersMulti({ clientId: viewer.clientId, tenantIds: viewer.seesAllClient ? undefined : outletIds }, load)
+      : subscribeOrders(scope, load);
     return unsub;
-  }, [load, activeTenant]);
+  }, [load, scope, viewer.clientId, viewer.seesAllClient, outletIds]);
 
-  // Children act on the currently-selected outlet, not the login's home outlet.
-  const activeLabel = outlets.find((o) => o.id === activeTenant)?.name || viewer.tenantLabel;
-  const activeViewer: KotViewer = { ...viewer, tenantId: activeTenant, tenantLabel: activeLabel };
+  const showingAll = scope === ALL;
+  const activeLabel = showingAll ? "All Outlets" : (nameById(scope) || viewer.tenantLabel);
+  // Children act on the currently-selected outlet. In the combined view there is
+  // no single outlet, so capture (which needs one) falls back to the home outlet.
+  const activeOutletId = showingAll ? viewer.tenantId : scope;
+  const captureLabel = showingAll ? viewer.tenantLabel : (nameById(scope) || viewer.tenantLabel);
+  // On a multi-outlet kiosk each outlet has its own station — attribute the
+  // action (and the actor name) to whichever outlet is currently selected.
+  const actorStationId = viewer.stationByTenant?.[activeOutletId] ?? viewer.actor.stationId;
+  const actorName = viewer.stationByTenant ? (nameById(activeOutletId) || viewer.actor.name) : viewer.actor.name;
+  const activeViewer: KotViewer = {
+    ...viewer,
+    tenantId: activeOutletId,
+    tenantLabel: captureLabel,
+    actor: { ...viewer.actor, stationId: actorStationId, name: actorName },
+  };
 
   const visible = orders.filter((o) => {
     if (filter === "all") return true;
@@ -88,6 +144,10 @@ export default function KotApp({ viewer, onExit }: { viewer: KotViewer; onExit?:
     { id: "all", label: "All" },
   ];
 
+  // "+ New KOT" needs a single outlet. In the combined view with several outlets
+  // it's ambiguous, so we hide it and ask the user to pick an outlet first.
+  const canCapture = !showingAll || outlets.length <= 1;
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-4">
       {/* Header */}
@@ -100,28 +160,51 @@ export default function KotApp({ viewer, onExit }: { viewer: KotViewer; onExit?:
           {onExit && (
             <button onClick={onExit} title="Lock / switch outlet" className="rounded-lg px-2 py-2 text-slate-400 hover:bg-slate-100">🔒</button>
           )}
+          {viewer.canReport && (
+            <KotButton variant="secondary" onClick={() => setReporting(true)}>Report</KotButton>
+          )}
           {viewer.canManage && (
             <KotButton variant="secondary" onClick={() => setManaging(true)}>Manage</KotButton>
           )}
-          <KotButton onClick={() => setCapturing(true)}>+ New KOT</KotButton>
+          {canCapture && (
+            <KotButton onClick={() => setCapturing(true)}>+ New KOT</KotButton>
+          )}
         </div>
       </div>
 
-      {/* Outlet switcher — only when the user covers more than one outlet. */}
+      {/* Outlet switcher — All Outlets + one pill per covered outlet. Only when
+          the viewer covers more than one outlet. */}
       {outlets.length > 1 && (
         <div className="mb-4 flex flex-wrap gap-2">
+          <button
+            onClick={() => setScope(ALL)}
+            className={cn(
+              "rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
+              showingAll ? "border-rose-500 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600 hover:bg-slate-50",
+            )}
+          >
+            🗂️ All Outlets
+          </button>
           {outlets.map((o) => (
             <button
               key={o.id}
-              onClick={() => setActiveTenant(o.id)}
+              onClick={() => setScope(o.id)}
               className={cn(
                 "rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
-                o.id === activeTenant ? "border-rose-500 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600 hover:bg-slate-50",
+                o.id === scope ? "border-rose-500 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600 hover:bg-slate-50",
               )}
             >
               🏪 {o.name}
             </button>
           ))}
+          {onAddOutlet && (
+            <button
+              onClick={onAddOutlet}
+              className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50"
+            >
+              + Add outlet
+            </button>
+          )}
         </div>
       )}
 
@@ -150,7 +233,7 @@ export default function KotApp({ viewer, onExit }: { viewer: KotViewer; onExit?:
           hint="Scan a KOT slip with “+ New KOT” to start tracking a cake order."
         />
       ) : (
-        <OrderList orders={visible} onOpen={setOpenOrder} />
+        <OrderList orders={visible} onOpen={setOpenOrder} outletName={showingAll ? nameById : undefined} />
       )}
 
       {/* Order detail + status handoff */}
@@ -167,6 +250,17 @@ export default function KotApp({ viewer, onExit }: { viewer: KotViewer; onExit?:
       {/* People Directory + station setup (managers only) */}
       {managing && (
         <KotAdmin clientId={viewer.clientId} onClose={() => setManaging(false)} />
+      )}
+
+      {/* Cross-outlet order report (managers/admins only) */}
+      {reporting && (
+        <KotReport
+          clientId={viewer.clientId}
+          outletName={nameById}
+          viewer={activeViewer}
+          onClose={() => setReporting(false)}
+          onChanged={load}
+        />
       )}
 
       {/* Capture → AI auto-fill → confirm. On save, refresh the list. */}

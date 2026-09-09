@@ -1,0 +1,11 @@
+-- ── KOT: client-level Manager passcode ───────────────────────────────────────
+-- A single cross-outlet "Manager" access code per KOT client. Entering it on the
+-- shared kiosk signs the device in as a MANAGER (no Horae login needed): it sees
+-- every outlet, the order Report, and gets manage/delete. It is the Cakewala-only
+-- role, independent of the Horae staff directory — it lives on the KOT entitlement
+-- row, hashed (SHA-256, never clear), compared client-side like the station codes.
+--
+-- Re-runnable: ADD COLUMN IF NOT EXISTS. RLS on kot_clients is already permissive
+-- (see 20260828_kot.sql), so the anon kiosk can read the hash to compare. Rotate
+-- the code in KOT setup to revoke every remembered manager device at once.
+ALTER TABLE kot_clients ADD COLUMN IF NOT EXISTS manager_code_hash TEXT;
