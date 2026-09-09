@@ -63,6 +63,9 @@ export default function KotApp(
   const [openOrder, setOpenOrder] = useState<KotOrder | null>(null);
   const [managing, setManaging] = useState(false);
   const [reporting, setReporting] = useState(false);
+  // The outlet switcher is collapsed by default (one button) to save space on
+  // mobile; tapping it expands the individual outlet options.
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   // The outlets this viewer can switch between. Kiosk/manager-passcode pass them
   // in; a Horae-login manager has them derived from the People directory.
@@ -172,38 +175,57 @@ export default function KotApp(
         </div>
       </div>
 
-      {/* Outlet switcher — All Outlets + one pill per covered outlet. Only when
-          the viewer covers more than one outlet. */}
+      {/* Outlet switcher — collapsed to a single button by default (saves space
+          on mobile); tapping it expands All Outlets + one pill per outlet. Only
+          shown when the viewer covers more than one outlet. */}
       {outlets.length > 1 && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          <button
-            onClick={() => setScope(ALL)}
-            className={cn(
-              "rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
-              showingAll ? "border-rose-500 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600 hover:bg-slate-50",
-            )}
-          >
-            🗂️ All Outlets
-          </button>
-          {outlets.map((o) => (
+        <div className="mb-4">
+          {!switcherOpen ? (
             <button
-              key={o.id}
-              onClick={() => setScope(o.id)}
-              className={cn(
-                "rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
-                o.id === scope ? "border-rose-500 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600 hover:bg-slate-50",
+              onClick={() => setSwitcherOpen(true)}
+              className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700"
+            >
+              <span>{showingAll ? "🗂️ All Outlets" : `🏪 ${nameById(scope)}`}</span>
+              <span className="text-rose-400">▾</span>
+            </button>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => { setScope(ALL); setSwitcherOpen(false); }}
+                className={cn(
+                  "rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
+                  showingAll ? "border-rose-500 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600 hover:bg-slate-50",
+                )}
+              >
+                🗂️ All Outlets
+              </button>
+              {outlets.map((o) => (
+                <button
+                  key={o.id}
+                  onClick={() => { setScope(o.id); setSwitcherOpen(false); }}
+                  className={cn(
+                    "rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
+                    o.id === scope ? "border-rose-500 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600 hover:bg-slate-50",
+                  )}
+                >
+                  🏪 {o.name}
+                </button>
+              ))}
+              {onAddOutlet && (
+                <button
+                  onClick={onAddOutlet}
+                  className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50"
+                >
+                  + Add outlet
+                </button>
               )}
-            >
-              🏪 {o.name}
-            </button>
-          ))}
-          {onAddOutlet && (
-            <button
-              onClick={onAddOutlet}
-              className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50"
-            >
-              + Add outlet
-            </button>
+              <button
+                onClick={() => setSwitcherOpen(false)}
+                className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-400 hover:bg-slate-50"
+              >
+                ▴ Collapse
+              </button>
+            </div>
           )}
         </div>
       )}

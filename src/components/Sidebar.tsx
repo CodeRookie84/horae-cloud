@@ -25,7 +25,6 @@ import {
   Wrench,
   GraduationCap,
   LayoutGrid, // Home / app hub
-  Cake, // [KOT] Cake order tracking
 } from "lucide-react";
 import { Client, Tenant, User as AppUser, Role, Department } from "../types";
 import { store } from "../services/store";
@@ -55,8 +54,6 @@ interface SidebarProps {
 
   loggedInEmail: string | null;
   onLogout: () => void;
-  /** [KOT] Show the Cake KOT link (admins / linked participants of a KOT client). */
-  showKot?: boolean;
 }
 
 export default function Sidebar({
@@ -78,7 +75,6 @@ export default function Sidebar({
   allTenants,
   loggedInEmail,
   onLogout,
-  showKot = false,
 }: SidebarProps) {
   const [pushBusy, setPushBusy] = useState(false);
   const [showChangePwd, setShowChangePwd] = useState(false);
@@ -456,25 +452,6 @@ export default function Sidebar({
                   <div className="flex items-center gap-2">
                     <BookOpen className="w-3.5 h-3.5 text-[#C5A880]" />
                     <span>SOPs</span>
-                  </div>
-                </button>
-              )}
-
-              {/* [KOT] Cake order tracking — gated on showKot (KOT client +
-                  admin/linked participant). Own rose accent to read as its own app. */}
-              {showKot && (
-                <button
-                  id="btn-kot"
-                  onClick={() => handleTabClick("kot")}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.8 rounded-md text-sm font-medium transition-all cursor-pointer ${
-                    activeTab === "kot"
-                      ? "bg-rose-50 text-rose-700 font-semibold rounded-xl"
-                      : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Cake className="w-3.5 h-3.5 text-rose-500" />
-                    <span>Cake KOT</span>
                   </div>
                 </button>
               )}

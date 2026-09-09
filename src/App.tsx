@@ -1084,7 +1084,6 @@ function AppInner() {
         allTenants={allTenants}
         loggedInEmail={loggedInEmail}
         onLogout={handleLogout}
-        showKot={kotAccess} /* [KOT] sidebar link */
       />
 
       {/* MAIN VIEWPORT CARRIER */}
