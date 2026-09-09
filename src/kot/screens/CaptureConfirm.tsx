@@ -13,8 +13,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { KotViewer } from "../KotApp";
 import type { KotOrder, KotParticipant, KotFulfilment } from "../types";
 import {
-  uploadKotPhoto, extractKot, outletParticipants, createOrder, type KotExtraction,
+  uploadKotPhoto, extractKot, outletParticipants, createOrder, findOrderByInvoice,
+  type KotExtraction,
 } from "../services/kotStore";
+import { statusLabel } from "../status";
 import { KotButton, KotCard, KotSpinner, cn } from "../ui/primitives";
 import { CameraCapture } from "../ui/CameraCapture";
 import { formatMoney } from "../lib/format";
@@ -47,6 +49,9 @@ export default function CaptureConfirm(
 
   const [slipUrl, setSlipUrl] = useState<string | null>(null);
   const [lowConf, setLowConf] = useState<Set<string>>(new Set());
+  // Duplicate-invoice warning, surfaced as soon as the scan reads an invoice
+  // number (and re-checked when the invoice field is edited).
+  const [dupWarn, setDupWarn] = useState<string | null>(null);
 
   // Form fields
   const [invoiceNo, setInvoiceNo] = useState("");
@@ -111,6 +116,7 @@ export default function CaptureConfirm(
       try {
         const x = await extractKot(url);
         applyExtraction(x);
+        checkDuplicate(x.invoiceNo || ""); // flag a duplicate before any manual work
       } catch (e) {
         // Extraction failed — still let them fill the form by hand over the photo.
         setError("Auto-fill couldn't read the slip. Please enter the details manually.");
@@ -123,6 +129,16 @@ export default function CaptureConfirm(
   }
 
   const flagged = (field: string) => lowConf.has(field);
+
+  /** Check whether this invoice already exists for the client, and warn early. */
+  async function checkDuplicate(invoice: string) {
+    try {
+      const hit = await findOrderByInvoice(viewer.clientId, invoice);
+      setDupWarn(hit
+        ? `Invoice #${invoice.trim()} already has an order${hit.customerName ? ` for ${hit.customerName}` : ""} (${statusLabel(hit.status as any)}). This looks like a duplicate scan — saving will be rejected.`
+        : null);
+    } catch { /* best-effort; the DB constraint still guards on save */ }
+  }
 
   async function save() {
     setSaving(true);
@@ -204,6 +220,11 @@ export default function CaptureConfirm(
   return (
     <Shell title="Confirm the order" onCancel={onCancel}>
       {error && <ErrorNote>{error}</ErrorNote>}
+      {dupWarn && (
+        <p className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+          ⚠️ {dupWarn}
+        </p>
+      )}
       {lowConf.size > 0 && (
         <p className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
           Fields highlighted amber were hard to read — please double-check them.
@@ -212,7 +233,12 @@ export default function CaptureConfirm(
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Invoice #" flag={flagged("invoiceNo")}>
-          <input className={inp} value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
+          <input
+            className={inp}
+            value={invoiceNo}
+            onChange={(e) => setInvoiceNo(e.target.value)}
+            onBlur={(e) => checkDuplicate(e.target.value)}
+          />
         </Field>
         <Field label="Order date" flag={flagged("orderDate")}>
           <input className={inp} value={orderDate} onChange={(e) => setOrderDate(e.target.value)} />

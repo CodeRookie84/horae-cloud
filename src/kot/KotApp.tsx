@@ -134,7 +134,9 @@ export default function KotApp(
 
   const visible = orders.filter((o) => {
     if (filter === "all") return true;
-    if (filter === "active") return o.status !== "completed" && o.status !== "closed";
+    // Only a verified/archived (closed) order leaves the Active board; a
+    // completed-but-unverified order stays so a manager can spot and close it.
+    if (filter === "active") return o.status !== "closed";
     if (filter === "kitchen") return KITCHEN_STATUSES.has(o.status);
     if (filter === "outlet") return OUTLET_STATUSES.has(o.status);
     return true;

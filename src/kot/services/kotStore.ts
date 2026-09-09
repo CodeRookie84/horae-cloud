@@ -358,6 +358,21 @@ export async function listOrders(
   return hydrateOrders(data || []);
 }
 
+/** Does an order with this invoice already exist for the client? Used to warn of
+ *  a duplicate scan early (the DB also enforces UNIQUE(client_id, invoice_no)).
+ *  Returns the existing order's customer/status for a helpful message, or null. */
+export async function findOrderByInvoice(
+  clientId: string, invoiceNo: string,
+): Promise<{ id: string; customerName: string; status: string } | null> {
+  const inv = invoiceNo.trim();
+  if (!inv) return null;
+  const { data } = await supabase.from("kot_orders")
+    .select("id, customer_name, status")
+    .eq("client_id", clientId).eq("invoice_no", inv).limit(1);
+  const r = data?.[0];
+  return r ? { id: r.id, customerName: r.customer_name ?? "", status: r.status } : null;
+}
+
 export async function getOrder(id: string): Promise<KotOrder | null> {
   const { data } = await supabase.from("kot_orders").select("*").eq("id", id).single();
   if (!data) return null;
