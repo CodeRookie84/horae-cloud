@@ -69,9 +69,12 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
     const body = await req.json();
-    if (body.type === "order_created") await handleOrderCreated(body.orderId);
-    else if (body.type === "reminder") await handleReminder(body.orderId, body.kind);
-    return json({ ok: true });
+    let sent: WaResult[] | undefined;
+    if (body.type === "order_created") sent = await handleOrderCreated(body.orderId);
+    else if (body.type === "reminder") sent = await handleReminder(body.orderId, body.kind);
+    // `sent` lists each WhatsApp attempt + Meta's result — handy for debugging a
+    // "no message arrived" report by invoking this function directly.
+    return json({ ok: true, sent: sent || [] });
   } catch (err) {
     console.error("[kot-notify]", err);
     return json({ error: String(err) }, 500);
@@ -99,14 +102,14 @@ async function handleOrderCreated(orderId: string) {
   const pushTitle = `🎂 New cake order: ${order.customer_name || "Customer"}`;
   const pushBody = `${summary} · ${when}`;
 
-  await fanOut(participants, template, pushTitle, pushBody, `kot-order-${orderId}`, link);
+  return fanOut(participants, template, pushTitle, pushBody, `kot-order-${orderId}`, link);
 }
 
 async function handleReminder(orderId: string, kind: "day_before" | "soon") {
   const ctx = await loadOrderContext(orderId);
   if (!ctx) return;
   const { order, participants } = ctx;
-  if (order.status === "completed") return;
+  if (order.status === "completed" || order.status === "closed") return;
 
   const when = formatDelivery(order.delivery_at);
   const summary = itemsSummary(ctx.items);
@@ -120,25 +123,48 @@ async function handleReminder(orderId: string, kind: "day_before" | "soon") {
   const pushTitle = `⏰ ${whenLabel}: ${order.customer_name || "Cake order"}`;
   const pushBody = `${summary} · ${STATUS_LABELS[order.status] || order.status}`;
 
-  await fanOut(participants, template, pushTitle, pushBody, `kot-reminder-${orderId}-${kind}`, link);
+  return fanOut(participants, template, pushTitle, pushBody, `kot-reminder-${orderId}-${kind}`, link);
 }
 
 // ── Fan-out to the two channels ────────────────────────────────────────────────
+
+type WaResult = { name?: string; phone: string; ok: boolean; error?: string };
+
+/** WhatsApp needs a full international number. Participant phones are often stored
+ *  as a bare local number, so add the country code when it's a 10-digit Indian
+ *  mobile (Cakewala is India); a leading trunk "0" is dropped. Numbers that
+ *  already carry a country code (11+ digits) pass through unchanged. */
+function toWaNumber(raw: string): string {
+  let d = String(raw || "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.length === 10) d = "91" + d;
+  else if (d.length === 11 && d.startsWith("0")) d = "91" + d.slice(1);
+  return d;
+}
 
 async function fanOut(
   participants: any[],
   template: { name: string; params: string[] },
   pushTitle: string, pushBody: string, tag: string, url: string,
-) {
+): Promise<WaResult[]> {
   const jobs: Promise<unknown>[] = [];
+  const results: WaResult[] = [];
   const seenPhones = new Set<string>();
 
   for (const p of participants) {
-    // WhatsApp to the participant's phone.
-    const phone = String(p.phone || "").replace(/\D/g, "");
+    // WhatsApp to the participant's phone (normalised to international format).
+    const phone = toWaNumber(p.phone);
     if (phone && !seenPhones.has(phone) && !DISABLE_WA) {
       seenPhones.add(phone);
-      jobs.push(sendWhatsApp(phone, template).catch((e) => console.error("[kot-notify] wa fail", phone, String(e))));
+      jobs.push(
+        sendWhatsApp(phone, template)
+          .then(() => { results.push({ name: p.name, phone, ok: true }); })
+          .catch((e) => {
+            const error = String(e?.message || e);
+            console.error("[kot-notify] wa fail", phone, error);
+            results.push({ name: p.name, phone, ok: false, error });
+          }),
+      );
     }
     // Best-effort push to a LINKED Horae user (managers).
     if (p.linked_user_id && VAPID_PUBLIC_KEY) {
@@ -146,6 +172,7 @@ async function fanOut(
     }
   }
   await Promise.allSettled(jobs);
+  return results;
 }
 
 async function sendWhatsApp(phone: string, template: { name: string; params: string[] }) {
