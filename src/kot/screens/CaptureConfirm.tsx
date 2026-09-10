@@ -111,7 +111,9 @@ export default function CaptureConfirm(
     setError(null);
     setStep("extracting");
     try {
-      const url = await uploadKotPhoto(file, `slips/${viewer.tenantId}`);
+      // Keep the slip a bit larger/sharper than status photos so the vision model
+      // can still read handwriting, while staying far smaller than the raw capture.
+      const url = await uploadKotPhoto(file, `slips/${viewer.tenantId}`, { maxDim: 2200, quality: 0.82 });
       setSlipUrl(url);
       try {
         const x = await extractKot(url);

@@ -4,6 +4,7 @@
  * thing that talks to the kot_* tables + the kot-photos bucket.
  */
 import { supabase } from "../lib/supabase";
+import { compressImage, type CompressOpts } from "../lib/image";
 import type {
   KotOrder, KotOrderItem, KotParticipant, KotStatusEvent, KotStation, KotFulfilment,
 } from "../types";
@@ -70,14 +71,25 @@ function mapParticipant(r: any, outletIds: string[]): KotParticipant {
 
 // ── Photos ────────────────────────────────────────────────────────────────────
 
-/** Upload a captured photo to kot-photos and return its public URL. */
-export async function uploadKotPhoto(file: Blob, folder: string): Promise<string> {
-  const ext = (file as File).name?.split(".").pop() || "jpg";
+/** Upload a captured photo to kot-photos and return its public URL.
+ *  Downscales/compresses first (see lib/image) so a multi-MB camera photo becomes
+ *  a few hundred KB — the single biggest speed-up for capture + status steps. A
+ *  timeout converts a stalled network into a retryable error instead of a hang. */
+export async function uploadKotPhoto(
+  file: Blob, folder: string, opts?: CompressOpts,
+): Promise<string> {
+  const blob = await compressImage(file, opts);
+  const type = blob.type || "image/jpeg";
+  const ext = type.split("/")[1]?.split("+")[0] || "jpg";
   const path = `${folder}/${crypto.randomUUID()}.${ext}`;
-  const { error } = await supabase.storage.from("kot-photos").upload(path, file, {
-    upsert: false,
-    contentType: (file as File).type || "image/jpeg",
+
+  const upload = supabase.storage.from("kot-photos").upload(path, blob, {
+    upsert: false, contentType: type, cacheControl: "3600",
   });
+  const timeout = new Promise<never>((_, rej) =>
+    setTimeout(() => rej(new Error("Upload timed out — check the connection and retry.")), 60_000));
+
+  const { error } = await Promise.race([upload, timeout]) as Awaited<typeof upload>;
   if (error) throw error;
   return supabase.storage.from("kot-photos").getPublicUrl(path).data.publicUrl;
 }
