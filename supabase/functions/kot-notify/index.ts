@@ -20,7 +20,7 @@
  *   { type: "order_created", orderId }
  *   { type: "reminder", orderId, kind: "day_before" | "soon" }
  *
- * Required Meta templates (approve in the sending number's WABA), en language.
+ * Required Meta templates (approve in the sending number's WABA), en_US language.
  * Meta rejects a variable at the very start/end or with too little surrounding
  * text, so the bodies are padded with static wording (variable CONTENT unchanged).
  * The static tail nudges "Reply KOT" — replying opens the 24-hr window and the
@@ -185,7 +185,9 @@ async function sendWhatsApp(phone: string, template: { name: string; params: str
       type: "template",
       template: {
         name: template.name,
-        language: { code: "en" },
+        // Must match the language the templates were APPROVED in on Meta. They
+        // were approved as English (US) = en_US, not plain en.
+        language: { code: "en_US" },
         components: [{ type: "body", parameters: template.params.map((text) => ({ type: "text", text })) }],
       },
     }),
