@@ -37,6 +37,7 @@ import NotificationPermissionBanner from "./components/NotificationPermissionBan
 import { getAppModules } from "./services/appModules";
 import * as trainingSvc from "./services/trainingService";
 import { checkKotAccess } from "./kot/access"; // [KOT] launcher-icon gate
+import { checkMsgAccess } from "./msg/access"; // [MSG] translation launcher-icon gate
 
 // Lazy-loaded: everything below is one large admin/workflow module that's only
 // ever needed once a signed-in user actually opens that specific tab. Statically
@@ -58,6 +59,9 @@ const Reminders = lazy(() => import("./components/Reminders"));
 // KotApp = the manager-facing tab. Lazy so neither costs anything until opened.
 const KotKiosk = lazy(() => import("./kot/KotKiosk"));
 const KotApp = lazy(() => import("./kot/KotApp"));
+// [MSG] Isolated WhatsApp-translation module — only its backend admin surface has
+// an in-app screen (the translation itself is WhatsApp-only). Lazy, like KOT.
+const MsgAdmin = lazy(() => import("./msg/MsgAdmin"));
 
 
 /** Single row in the notifications dropdown — swipe left/right to dismiss, tap to open + mark read. */
@@ -311,6 +315,19 @@ function AppInner() {
     return () => { cancelled = true; };
   }, [activeClient?.id, activeTenant?.clientId, activeUser?.id]);
 
+  // [MSG] Whether to show the "Translate" launcher icon (admins of a msg-enabled
+  // client). Async gate; defaults hidden until known.
+  const [msgAccess, setMsgAccess] = useState<boolean>(false);
+  useEffect(() => {
+    const cid = activeClient?.id || activeTenant?.clientId;
+    if (!cid || !activeUser) { setMsgAccess(false); return; }
+    let cancelled = false;
+    checkMsgAccess(cid, activeUser.id, (activeUser as any).phoneNumber, [Role.ADMIN, Role.SUPER_ADMIN].includes(activeUser.role as Role))
+      .then(v => { if (!cancelled) setMsgAccess(v); })
+      .catch(() => { if (!cancelled) setMsgAccess(false); });
+    return () => { cancelled = true; };
+  }, [activeClient?.id, activeTenant?.clientId, activeUser?.id]);
+
   // Modules the current user can open — shared source of truth for the launcher
   // home grid (same plan/role gating as the sidebar).
   const launcherModules = getAppModules({
@@ -318,6 +335,7 @@ function AppInner() {
     role: activeUser?.role ?? '',
     clitAccess: !!activeUser?.clitAccess,
     kotAccess, // [KOT]
+    msgAccess, // [MSG]
     dashboardMeaningful,
   });
 
@@ -1428,6 +1446,11 @@ function AppInner() {
                         actor: { userId: activeUser.id, name: activeUser.name, phone: (activeUser as any).phoneNumber },
                       }}
                     />
+                  )}
+
+                  {/* [MSG] WhatsApp translation — backend management surface. */}
+                  {activeTab === "msg" && msgAccess && (
+                    <MsgAdmin clientId={activeClient?.id || activeTenant.clientId} />
                   )}
 
                   {activeTab === "admin-panel" && activeUser.role === Role.ADMIN && (
