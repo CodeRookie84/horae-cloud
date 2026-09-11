@@ -306,6 +306,15 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
       const handled = await handleListCal(fromPhone, userId, +calMatch[1]);
       if (handled) return;
     }
+    // "edit N <changes>" / "change N …" / "reschedule N …" → update item N of the
+    // numbered reminders/meetings list we last showed. Chiefly for an OVERDUE item:
+    // "edit 1 tomorrow 9am" pushes a missed reminder forward. The tail can be a new
+    // time, new text, or both.
+    const editMatch = text.match(/^\s*(?:edit|change|reschedul(?:e)?|resched|update)\s+(\d+)\b(.*)$/is);
+    if (editMatch) {
+      const handled = await handleListEdit(fromPhone, userId, +editMatch[1], editMatch[2] || "");
+      if (handled) return;
+    }
     // Verb commands shared with voice notes: rem/remind, meet/meeting, task, and
     // the standalone fetch keywords. Returns true once it has handled the message.
     if (await routeVerbCommand(fromPhone, userId, tenantId, text)) return;
@@ -1159,7 +1168,8 @@ function istDayRange(dayOffset: number): { from: string; to: string } {
  *  optionally filtered by date. Sent as a PLAIN-TEXT numbered message (not a
  *  WhatsApp interactive list) so item text is never truncated at 24 chars, there
  *  is no "Tap to select an item" footer, and there is no 10-row cap. To remove an
- *  item the user replies "done <n>" — see handleListDone.
+ *  item the user replies "done <n>" — see handleListDone; to reschedule/rewrite
+ *  one (handy for an overdue item) they reply "edit <n> <changes>" — see handleListEdit.
  *  `showHint` adds the add/see instructions — on only for the menu "Remind" tap. */
 async function sendRemindersList(fromPhone: string, userId: string, filter: ReminderFilter = "all", showHint = false, kind: "reminder" | "meeting" = "reminder") {
   const isMeeting = kind === "meeting";
@@ -1230,6 +1240,9 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   if (overdue.length) {
     parts.push(`\n⚠️ *Overdue — ${verb === "due" ? "due date passed" : "date passed"}*\n`);
     for (const r of overdue) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 was ${verb} ${fmtWhen(r.remind_at)}`); }
+    // A missed item usually just needs a new time — surface the edit shortcut right
+    // under the Overdue block (item 1 is always the first overdue row).
+    parts.push(`\n_✏️ Missed one? Reschedule it: *edit 1 tomorrow 9am*_`);
   }
   if (todayItems.length) {
     // Boxed green banner so TODAY is unmistakable right after the Overdue block.
@@ -1242,8 +1255,8 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   }
 
   const removeHint = ids.length === 1
-    ? `\n\n❌ Remove it: *done 1*   ·   🗓️ Turn on Calendar notification: *cal 1*`
-    : `\n\n❌ Remove: *done 1* (or *done 1 3*…)   ·   🗓️ Turn on Calendar notification: *cal 1* or *cal 2*…`;
+    ? `\n\n❌ Remove it: *done 1*   ·   ✏️ Change it: *edit 1 <new time>*   ·   🗓️ Turn on Calendar notification: *cal 1*`
+    : `\n\n❌ Remove: *done 1* (or *done 1 3*…)   ·   ✏️ Change: *edit 1 <new time>*   ·   🗓️ Turn on Calendar notification: *cal 1* or *cal 2*…`;
   const addHint = showHint
     ? (isMeeting
         ? `\n➕ Add: *meeting <what> at <time>*   ·   🔎 See: *meet*, *meet today*, *meet tomorrow*`
@@ -1344,6 +1357,72 @@ async function handleListCal(fromPhone: string, userId: string, num: number): Pr
   return true;
 }
 
+/** Handle "edit <n> <changes>" against the numbered reminders/meetings list last
+ *  shown — reschedule item N to a new time and/or rewrite its note. Most useful for
+ *  an OVERDUE item: "edit 1 tomorrow 9am" pushes a missed reminder forward. The
+ *  tail is parsed like a fresh reminder body (see splitReminderWhen): a full
+ *  "text + time" wins; a bare time phrase reschedules only (note kept); anything
+ *  else becomes the new note (time kept). Returns true if it acted, false if
+ *  there's no live list (so the caller can fall through to normal handling). */
+async function handleListEdit(fromPhone: string, userId: string, num: number, rest: string): Promise<boolean> {
+  if (!num || num < 1) return false;
+  const { data: convs } = await supabase.from("whatsapp_conversations")
+    .select("payload").eq("user_id", userId).eq("state", "list_shown")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false }).limit(1);
+  const ids: string[] = (convs?.[0]?.payload as any)?.ids || [];
+  const kind: "reminder" | "meeting" = ((convs?.[0]?.payload as any)?.kind === "meeting") ? "meeting" : "reminder";
+  if (!ids.length) return false;
+  const seeCmd = kind === "meeting" ? "meet" : "rem";
+  const noun = kind === "meeting" ? "meeting" : "reminder";
+  const id = ids[num - 1];
+  if (!id) { await sendText(fromPhone, `That number isn't on the list. Reply *${seeCmd}* to see it again.`); return true; }
+
+  const { data: r } = await supabase.from("reminders")
+    .select("id, text, remind_at").eq("id", id).eq("user_id", userId).maybeSingle();
+  if (!r) { await sendText(fromPhone, "That item couldn't be found — it may have been removed."); return true; }
+
+  rest = (rest || "").trim();
+  if (!rest) {
+    await sendText(fromPhone, kind === "meeting"
+      ? `✏️ What should I change for *${num}*? e.g. *edit ${num} tomorrow 3pm* (new time), or *edit ${num} vendor call at 4pm* (new text + time).`
+      : `✏️ What should I change for *${num}*? e.g. *edit ${num} tomorrow 9am* (new time), or *edit ${num} call the vendor at 9am* (new text + time).`);
+    return true;
+  }
+
+  // Decide what changed: a full text+time split, else a bare time (reschedule only,
+  // keep the note), else treat the whole tail as the new note (keep the time).
+  let newText: string | null = null;
+  let newRemindAt: string | null = null;
+  const split = splitReminderWhen(rest);
+  if (split) { newText = split.text; newRemindAt = split.remindAt; }
+  else {
+    const dt = parseReminderWhen(rest, new Date());
+    if (dt && !isNaN(dt.getTime())) newRemindAt = dt.toISOString();
+    else newText = rest;
+  }
+
+  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (newText) update.text = newText.slice(0, 300);
+  if (newRemindAt) update.remind_at = newRemindAt;
+  const { error } = await supabase.from("reminders").update(update).eq("id", id).eq("user_id", userId);
+  if (error) { console.error("[whatsapp-webhook] handleListEdit failed:", error); await sendText(fromPhone, "Sorry, I couldn't update that. Please try again."); return true; }
+
+  const finalText = String(newText ?? r.text ?? noun);
+  const finalWhen = newRemindAt ?? r.remind_at;
+  const verb = kind === "meeting" ? "scheduled" : "due";
+  const whenStr = finalWhen ? ` — now ${verb} *${fmtWhen(finalWhen)}*` : "";
+  const savedLine = `✏️ ${kind === "meeting" ? "Meeting" : "Reminder"} updated${whenStr}:\n"${finalText.slice(0, 200)}"`;
+  // If it now has a time, offer the same one-tap "Add to Calendar" button new
+  // reminders get, so the user's own calendar can own the (re)scheduled reminding.
+  if (newRemindAt) {
+    await sendCtaUrl(fromPhone, `${savedLine}\n\nSend *${seeCmd}* to see your list.\n\nTo turn on notification 👇 (_optional_)`, "Add to Calendar", googleCalUrl(finalText, newRemindAt, kind));
+  } else {
+    await sendText(fromPhone, `${savedLine}\n\nSend *${seeCmd}* to see your list.`);
+  }
+  return true;
+}
+
 /** Mark a reminder done (tapped from a legacy interactive list, if any remain). */
 async function handleReminderDone(id: string, fromPhone: string) {
   const { data: r } = await supabase.from("reminders").select("id, text").eq("id", id).single();
@@ -1427,6 +1506,7 @@ async function sendHelp(fromPhone: string, userId: string) {
     `To view reminders: type *rem* / *rem today* / *rem this week*\n` +
     `To view meetings: type *meet* / *meet today* / *meet this week*\n` +
     `• *done 1* _clear item 1 from the last list_\n` +
+    `• *edit 1* _tomorrow 9am_ _reschedule item 1 (great for an overdue one)_\n` +
     `• *cal 1* _add item 1 to your calendar_\n\n` +
     `*OPTION 3 — SEND A VOICE NOTE* — just say it naturally:\n` +
     `• For a task: say the task itself — _"paint the signboard before Friday"_\n` +
