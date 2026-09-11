@@ -333,21 +333,43 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
 // ── Keyless Google helpers (duplicated for isolation) ────────────────────────
 
 /** Translate `text` into `target`, from `source` (falls back to auto-detect).
- *  Free Google endpoint, no key — the same one _shared/ai.ts and store.ts use.
- *  Returns the original text on any failure. */
+ *  Keyless Google endpoints, no key. The free `client=gtx` bucket is frequently
+ *  rate-limited (HTTP 429) from datacenter IPs like Supabase's — which used to
+ *  silently return the ORIGINAL text (looked like "translation doesn't work") —
+ *  so we try several clients/hosts in order and only give up (returning the
+ *  original) when every one fails. */
 async function translate(text: string, target: string, source?: string): Promise<string> {
   if (!text.trim() || !target) return text;
-  try {
-    const sl = source || "auto";
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(target)}&q=${encodeURIComponent(text)}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`gtx ${res.status}`);
-    const data = await res.json();
-    return (data?.[0] || []).map((item: any) => item?.[0] || "").join("") || text;
-  } catch (e) {
-    console.error("[msg.translate] failed, returning original:", e);
-    return text;
+  const esl = encodeURIComponent(source || "auto");
+  const tl = encodeURIComponent(target);
+  const q = encodeURIComponent(text);
+
+  // 1) translate_a/single — rich shape [[["translated","src",…],…],…]. Two client
+  //    buckets: "at" first (holds up when "gtx" is throttled), then "gtx".
+  for (const client of ["at", "gtx"]) {
+    try {
+      const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=${client}&dt=t&sl=${esl}&tl=${tl}&q=${q}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const out = (data?.[0] || []).map((item: any) => item?.[0] || "").join("");
+      if (out) return out;
+    } catch (_) { /* try the next endpoint */ }
   }
+  // 2) clients5 dict-chrome-ex — different host/quota, returns ["s1","s2",…].
+  //    Often works when translate_a is throttled.
+  try {
+    const res = await fetch(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${esl}&tl=${tl}&q=${q}`);
+    if (res.ok) {
+      const data = await res.json();
+      const out = Array.isArray(data)
+        ? data.map((s: any) => (typeof s === "string" ? s : Array.isArray(s) ? s[0] : "")).join("")
+        : "";
+      if (out) return out;
+    }
+  } catch (e) {
+    console.error("[msg.translate] all endpoints failed, returning original:", e);
+  }
+  return text;
 }
 
 /** Transliterate romanized (Latin) `text` into `lang`'s native script via the
