@@ -117,6 +117,16 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
     return true;
   }
 
+  // Re-pick the 5 languages from anywhere: "msg langs" / "msg reset", or a bare
+  // "langs" / "reset" while a session is open. This is the escape hatch for a user
+  // who saved the wrong 5 — before this, the only route back to the picker was the
+  // "Edit my 5" button, which appears only AFTER a completed translation.
+  const afterKeyword = text.replace(/^\s*[\/?]?msg\b/i, "").trim();
+  if (/^(langs?|languages?|re-?pick|reset)\s*$/i.test(afterKeyword)) {
+    await startLangPick(fromPhone, who, last10);
+    return true;
+  }
+
   // The keyword always (re)starts: pick languages the first time, else the
   // input→outputs prompt (keeping the 5 they already chose).
   if (isKeyword || !session) {
@@ -242,7 +252,7 @@ async function startSelection(fromPhone: string, who: MsgWho, last10: string) {
   await sendText(
     fromPhone,
     `🌐 *Which languages?*\n\n${list}\n\nReply *input > outputs* — the language you'll write/speak in, then the ones you want it translated INTO.\n` +
-    `e.g. *1 > 2 3*  (from ${langLabel(who.languages[0])} into two others)\n\n(_Send *msg* to change your 5 languages._)`,
+    `e.g. *1 > 2 3*  (from ${langLabel(who.languages[0])} into two others)\n\n(_Send *msg langs* to change your 5 languages._)`,
   );
 }
 
