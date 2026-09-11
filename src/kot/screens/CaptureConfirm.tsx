@@ -29,16 +29,34 @@ interface ExtraRow { id: string; text: string; drawingFile: File | null; drawing
 const uid = () => crypto.randomUUID();
 const num = (s: string) => Number(String(s).replace(/[^0-9.]/g, "")) || 0;
 
-/** ISO (any offset) → value for <input type="datetime-local"> in device local time. */
+// Cakewala runs in India; KOT delivery times are always IST. We deliberately do
+// NOT use the device's local timezone here: a <input type="datetime-local"> value
+// carries no offset, so `new Date(value)` would interpret it in whatever timezone
+// the capturing device happens to be set to (a kiosk on UTC, a phone on auto-TZ),
+// silently shifting delivery_at — and every reminder — off by that offset. Pinning
+// to IST (+05:30, no DST) keeps the stored instant in sync with the time entered,
+// on any device. This matches kot-reminders / kot-notify, which are IST too.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** ISO instant → value for <input type="datetime-local">, shown as IST wall-clock. */
 function isoToLocal(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
+  const ist = new Date(d.getTime() + IST_OFFSET_MS); // read fields via getUTC* → IST
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${ist.getUTCFullYear()}-${pad(ist.getUTCMonth() + 1)}-${pad(ist.getUTCDate())}T${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())}`;
 }
-const localToIso = (local: string): string | null =>
-  local ? new Date(local).toISOString() : null;
+
+/** <input type="datetime-local"> value (entered as IST wall-clock) → UTC ISO. */
+function localToIso(local: string): string | null {
+  if (!local) return null;
+  const [date, time] = local.split("T");
+  const [y, mo, d] = date.split("-").map(Number);
+  const [h, mi] = (time || "0:0").split(":").map(Number);
+  if ([y, mo, d, h, mi].some(Number.isNaN)) return null;
+  return new Date(Date.UTC(y, mo - 1, d, h, mi) - IST_OFFSET_MS).toISOString();
+}
 
 export default function CaptureConfirm(
   { viewer, onDone, onCancel }: { viewer: KotViewer; onDone: (o: KotOrder) => void; onCancel: () => void },

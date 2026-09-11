@@ -44,7 +44,10 @@ serve(async (req) => {
   const { data: orders } = await supabase
     .from("kot_orders")
     .select("id, delivery_at, status")
+    // Skip both terminal states — kot-notify also refuses to send for these, so
+    // claiming one would burn the (order, kind) slot with no message ever sent.
     .neq("status", "completed")
+    .neq("status", "closed")
     .not("delivery_at", "is", null)
     .gte("delivery_at", startIso)
     .lt("delivery_at", endIso);
@@ -55,16 +58,32 @@ serve(async (req) => {
     // this reminder already went out, so skip.
     const { error } = await supabase.from("kot_reminder_log").insert([{ order_id: o.id, kind: mode }]);
     if (error) continue;
+
+    // A claim must only stick if someone ACTUALLY received the message. kot-notify
+    // reports how many recipients got it; if zero (transient Meta error, or no
+    // active assignees when the reminder fired), we release the claim so a later
+    // sweep retries — for `soon` that's the next 15-min pass inside the 2h window.
+    let delivered = 0;
     try {
-      await fetch(NOTIFY_URL, {
+      const res = await fetch(NOTIFY_URL, {
         method: "POST",
         headers: { "Authorization": `Bearer ${SUPABASE_SERVICE}`, "Content-Type": "application/json" },
         body: JSON.stringify({ type: "reminder", orderId: o.id, kind: mode }),
       });
-      sent++;
+      const data = await res.json().catch(() => ({}));
+      // `skipped` = order became completed/closed between claim and send; leave the
+      // claim in place (retrying is pointless) but don't count it as sent.
+      if (data?.skipped) continue;
+      if (!res.ok) throw new Error(`kot-notify ${res.status}: ${JSON.stringify(data).slice(0, 200)}`);
+      delivered = Number(data?.delivered ?? 0);
     } catch (e) {
-      console.error("[kot-reminders] notify failed", o.id, String(e));
-      // Roll back the claim so a later sweep retries.
+      console.error("[kot-reminders] notify failed", o.id, mode, String(e));
+    }
+
+    if (delivered > 0) {
+      sent++;
+    } else {
+      console.error("[kot-reminders] 0 delivered — releasing claim to retry", o.id, mode);
       await supabase.from("kot_reminder_log").delete().eq("order_id", o.id).eq("kind", mode);
     }
   }

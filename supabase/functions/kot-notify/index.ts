@@ -69,12 +69,28 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
     const body = await req.json();
-    let sent: WaResult[] | undefined;
-    if (body.type === "order_created") sent = await handleOrderCreated(body.orderId);
-    else if (body.type === "reminder") sent = await handleReminder(body.orderId, body.kind);
-    // `sent` lists each WhatsApp attempt + Meta's result — handy for debugging a
-    // "no message arrived" report by invoking this function directly.
-    return json({ ok: true, sent: sent || [] });
+    const orderId: string = body.orderId;
+    const trigger = body.type === "reminder" ? `reminder:${body.kind}` : String(body.type);
+
+    let results: WaResult[] | undefined;
+    if (body.type === "order_created") results = await handleOrderCreated(orderId);
+    else if (body.type === "reminder") results = await handleReminder(orderId, body.kind);
+    else return json({ error: `unknown type ${body.type}` }, 400);
+
+    // undefined = order not found, or a reminder skipped because the order is
+    // already completed/closed. Nothing was attempted, so it's not a failure.
+    if (results === undefined) {
+      return json({ ok: true, skipped: true, recipients: 0, delivered: 0, failed: 0, results: [] });
+    }
+
+    // Record every attempt so a "no message arrived" report is always diagnosable.
+    await logSends(orderId, trigger, results);
+
+    const delivered = results.filter((r) => r.ok).length;
+    const failed = results.length - delivered;
+    // `delivered` is what the caller (kot-reminders) uses to decide whether to
+    // release its claim and retry: delivered === 0 means nobody actually got it.
+    return json({ ok: true, trigger, orderId, recipients: results.length, delivered, failed, results });
   } catch (err) {
     console.error("[kot-notify]", err);
     return json({ error: String(err) }, 500);
@@ -129,6 +145,18 @@ async function handleReminder(orderId: string, kind: "day_before" | "soon") {
 // ── Fan-out to the two channels ────────────────────────────────────────────────
 
 type WaResult = { name?: string; phone: string; ok: boolean; error?: string };
+
+/** Persist every send attempt so a "no message arrived" report is diagnosable.
+ *  A reminder that fired with no active assignees is logged as a single row with
+ *  a null phone, so that gap is visible too. Best-effort: a log failure must not
+ *  break the actual notification. */
+async function logSends(orderId: string, trigger: string, results: WaResult[]) {
+  const rows = results.length
+    ? results.map((r) => ({ order_id: orderId, trigger, phone: r.phone, ok: r.ok, error: r.error ?? null }))
+    : [{ order_id: orderId, trigger, phone: null, ok: false, error: "no active assignees at fire time" }];
+  const { error } = await supabase.from("kot_notification_log").insert(rows);
+  if (error) console.error("[kot-notify] log insert failed", String(error.message || error));
+}
 
 /** WhatsApp needs a full international number. Participant phones are often stored
  *  as a bare local number, so add the country code when it's a 10-digit Indian
