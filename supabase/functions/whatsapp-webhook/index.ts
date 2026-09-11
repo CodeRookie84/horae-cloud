@@ -25,6 +25,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as chrono from "https://esm.sh/chrono-node@2.7.7";
 import { transcribeAudio } from "../_shared/ai.ts";
 import { routeKotText, routeKotList } from "./kot.ts"; // [KOT] view-only cake-order flow
+import { routeMsgText, routeMsgAudio, routeMsgInteractive } from "./msg.ts"; // [MSG] self-help translation flow
 
 const SUPABASE_URL      = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -166,6 +167,25 @@ async function handleInboundMessage(m: any, contact: any) {
     if (await routeKotList(m.interactive.list_reply.id, fromPhone)) return;
   } else if (m.type === "text") {
     if (await routeKotText((m.text?.body || "").trim(), fromPhone)) return;
+  }
+
+  // [MSG] Self-help TRANSLATION (`/msg`). Two eligible populations, both matched
+  // by phone, so it's handled here BEFORE the "registered staff only" gate:
+  //  • ONBOARDED external phones (msg_participants of a msg-enabled client),
+  //    independent of a Horae login and managed in the Translate admin panel; and
+  //  • STAFF — every registered Horae user gets the translator by default (like
+  //    reminders); we pass `staffCtx` so msg.ts can serve/auto-provision them.
+  // Each route cheaply returns false for the ineligible / non-msg input, so it's
+  // invisible to everyone else. Placed AFTER KOT so the distinct "kot" keyword
+  // keeps priority. Remove MSG = delete this block + msg.ts + the import.
+  const staffCtx = userId ? { userId } : undefined;
+  if (m.type === "interactive" && (m.interactive?.button_reply?.id || m.interactive?.list_reply?.id)) {
+    const mid = m.interactive.button_reply?.id || m.interactive.list_reply?.id;
+    if (await routeMsgInteractive(mid, fromPhone, staffCtx)) return;
+  } else if (m.type === "text") {
+    if (await routeMsgText((m.text?.body || "").trim(), fromPhone, staffCtx)) return;
+  } else if (m.type === "audio" && m.audio?.id) {
+    if (await routeMsgAudio(m.audio.id, fromPhone, staffCtx)) return;
   }
 
   // Only registered staff can drive the capture flows.

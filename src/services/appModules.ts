@@ -12,6 +12,7 @@ import {
   Layers, Megaphone, ClipboardCheck, MessageSquare,
   GraduationCap, BookOpen, FileText, Wrench, ShieldCheck,
   Cake, // [KOT] launcher icon
+  Languages, // [MSG] translation launcher icon
 } from 'lucide-react';
 
 export interface AppModule {
@@ -31,6 +32,8 @@ export interface ModuleGateContext {
   clitAccess: boolean;
   /** [KOT] Whether to surface the Cake KOT icon (managers/linked participants). */
   kotAccess?: boolean;
+  /** [MSG] Whether to surface the Translate icon (admins of msg-enabled clients). */
+  msgAccess?: boolean;
   /** Whether the Dashboard tab surfaces anything for this plan */
   dashboardMeaningful: boolean;
   /** Per-module badge counts keyed by module id (e.g. { 'tasks': 3 }) */
@@ -44,7 +47,7 @@ const isAdmin = (role: string) => role === 'Admin' || role === 'Super Admin';
  * gated by plan features and role. Order matches the sidebar's grouping.
  */
 export function getAppModules(ctx: ModuleGateContext): AppModule[] {
-  const { features, role, clitAccess, kotAccess, dashboardMeaningful, badges = {} } = ctx;
+  const { features, role, clitAccess, kotAccess, msgAccess, dashboardMeaningful, badges = {} } = ctx;
   const has = (k: string) => features.includes(k);
   const mods: AppModule[] = [];
 
@@ -63,6 +66,10 @@ export function getAppModules(ctx: ModuleGateContext): AppModule[] {
   // [KOT] Cake-order tracking — self-contained module, gated by kotAccess only
   // (independent of plan features). Remove this line to drop the KOT icon.
   if (kotAccess) push({ id: 'kot', label: 'Cake KOT', icon: Cake, accent: 'bg-rose-100 text-rose-600' });
+
+  // [MSG] WhatsApp self-help translation — backend management surface, gated by
+  // msgAccess only (admins of msg-enabled clients). Remove this line to drop the icon.
+  if (msgAccess) push({ id: 'msg', label: 'Translate', icon: Languages, accent: 'bg-indigo-100 text-indigo-600' });
 
   if (role === 'Admin') push({ id: 'admin-panel', label: 'Admin Panel', icon: ShieldCheck, accent: 'bg-[#C5A880]/20 text-[#9c7d4e]' });
 
