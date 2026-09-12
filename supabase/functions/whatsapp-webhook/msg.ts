@@ -390,31 +390,39 @@ async function translate(text: string, target: string, source?: string): Promise
   // A real browser UA — datacenter default UAs are the ones Google 429s first.
   const headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36" };
 
-  // 1) translate_a/single — rich shape [[["translated","src",…],…],…]. Two client
-  //    buckets: "at" first (holds up when "gtx" is throttled), then "gtx".
-  for (const client of ["at", "gtx"]) {
-    try {
-      const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=${client}&dt=t&sl=${esl}&tl=${tl}&q=${q}`, { headers });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const out = (data?.[0] || []).map((item: any) => item?.[0] || "").join("");
-      if (out) return out;
-    } catch (_) { /* try the next endpoint */ }
-  }
-  // 2) clients5 dict-chrome-ex — different host/quota, returns ["s1","s2",…].
-  //    Often works when translate_a is throttled.
-  try {
-    const res = await fetch(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${esl}&tl=${tl}&q=${q}`, { headers });
-    if (res.ok) {
-      const data = await res.json();
-      const out = Array.isArray(data)
-        ? data.map((s: any) => (typeof s === "string" ? s : Array.isArray(s) ? s[0] : "")).join("")
-        : "";
-      if (out) return out;
+  // Several keyless endpoints across two hosts / quotas. translate_a/single returns
+  // the rich shape [[["translated",…],…],…]; dict-chrome-ex returns ["s1","s2",…].
+  const singleHosts = ["translate.googleapis.com", "clients5.google.com"];
+  const attempts: Array<() => Promise<string>> = [];
+  for (const client of ["gtx", "at"]) {
+    for (const host of singleHosts) {
+      attempts.push(async () => {
+        const res = await fetch(`https://${host}/translate_a/single?client=${client}&dt=t&sl=${esl}&tl=${tl}&q=${q}`, { headers });
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json();
+        return (data?.[0] || []).map((item: any) => item?.[0] || "").join("");
+      });
     }
-  } catch (e) {
-    console.error("[msg.translate] all endpoints failed:", e);
   }
+  attempts.push(async () => {
+    const res = await fetch(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${esl}&tl=${tl}&q=${q}`, { headers });
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json();
+    return Array.isArray(data) ? data.map((s: any) => (typeof s === "string" ? s : Array.isArray(s) ? s[0] : "")).join("") : "";
+  });
+
+  // Up to 3 passes over every endpoint, with a short backoff between passes — the
+  // free buckets throttle (429) intermittently, so a brief wait + retry usually
+  // gets through. We run in the background (after Meta's 200), so this is safe.
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  let lastErr: unknown = null;
+  for (let pass = 0; pass < 3; pass++) {
+    for (const attempt of attempts) {
+      try { const out = await attempt(); if (out) return out; } catch (e) { lastErr = e; }
+    }
+    if (pass < 2) await sleep(500 * (pass + 1));
+  }
+  console.error("[msg.translate] all endpoints failed after retries:", lastErr);
   return null;
 }
 
