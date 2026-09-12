@@ -273,8 +273,8 @@ async function startSelection(fromPhone: string, who: MsgWho, last10: string) {
   const list = who.languages.map((c, i) => `${i + 1}. ${langLabel(c)}`).join("\n");
   await sendText(
     fromPhone,
-    `🌐 *Which languages?*\n\n${list}\n\nReply *input > outputs* — the language you'll write/speak in, then the ones you want it translated INTO.\n` +
-    `e.g. *1 > 3 4*  (from ${langLabel(who.languages[0])} into languages 3 and 4)\n\n(_Send *msg langs* to change your 5 languages._)`,
+    `🌐 *Which languages?*\n\n${list}\n\nReply *input > outputs*\n` +
+    `e.g. *1 > 3 4*  (from ${langLabel(who.languages[0])} into languages 3 and 4)`,
   );
 }
 
@@ -348,15 +348,12 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
     results.push({ lang: out, text: t });
   }
 
-  // 3. A short header, then ONE standalone message per language — the body is the
-  //    translation ONLY, so a long-press → Copy / Forward grabs exactly the text
-  //    to paste into any WhatsApp group. (WhatsApp has no "copy" button; a clean
-  //    standalone message is the copy/forward unit.)
-  if (results.length) {
-    await sendText(fromPhone, `🌐 Translations (long-press any message to *Copy* or *Forward*):`);
-    for (const r of results) {
-      await sendText(fromPhone, r.text);
-    }
+  // 3. ONE standalone message per language — the body is the translation ONLY, so
+  //    a long-press → Copy / Forward grabs exactly the text to paste into any
+  //    WhatsApp group. (WhatsApp has no "copy" button; a clean standalone message
+  //    is the copy/forward unit.) No header — it would just be noise above them.
+  for (const r of results) {
+    await sendText(fromPhone, r.text);
   }
   if (failed.length) {
     await sendText(
@@ -370,7 +367,6 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
   //    more text/voice to translate again with the SAME languages.
   await sendButtons(fromPhone, "Send more text to translate again, or:", [
     { id: "msg_change", title: "🔁 Change languages" },
-    { id: "msg_relangs", title: "🌐 Edit my 5" },
     { id: "msg_done", title: "✖ Done" },
   ]);
 }

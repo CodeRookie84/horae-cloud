@@ -1328,13 +1328,6 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
     : "";
   await sendText(fromPhone, `${parts.join("\n")}${removeHint}${addHint}`);
 
-  // A one-tap button to open Google Calendar (the calendar itself, not a specific
-  // event) so the user can eyeball what they've already scheduled. `/r/day` with
-  // no date opens the DAY view for the viewer's current day — always "today".
-  // CTA-URL avoids the big preview card.
-  await sendCtaUrl(fromPhone, "🗓️ To check if notification turned on 👇",
-    "Open Calendar", "https://calendar.google.com/calendar/r/day");
-
   // Remember the shown order so a later "done <n>" maps N → the right row. Expire
   // any earlier list first so "done 2" always refers to the most recent listing.
   await supabase.from("whatsapp_conversations")
