@@ -175,7 +175,9 @@ export async function routeMsgAudio(mediaId: string, fromPhone: string, staff?: 
   const who = await resolveMsgParticipant(fromPhone, staff);
   if (!who) return false;
 
-  const transcript = await transcribeVoice(mediaId);
+  // Pin transcription to the language they chose as INPUT, so Whisper doesn't
+  // auto-detect the wrong one (which produced Arabic for a clearly-English note).
+  const transcript = await transcribeVoice(mediaId, session.input_lang);
   if (!transcript) { await sendText(fromPhone, "🎙️ I couldn't read that voice note. Please type the text instead."); return true; }
   await handleContent(fromPhone, who, session, transcript);
   return true;
@@ -446,8 +448,10 @@ function hasNonLatin(text: string): boolean {
   return /[^ -ɏ]/.test(text);
 }
 
-/** Download a WhatsApp voice note and transcribe it (Groq Whisper, shared helper). */
-async function transcribeVoice(mediaId: string): Promise<string> {
+/** Download a WhatsApp voice note and transcribe it (Groq Whisper, shared helper).
+ *  `language` (the session's input language) pins Whisper so it doesn't auto-detect
+ *  the wrong one. */
+async function transcribeVoice(mediaId: string, language?: string | null): Promise<string> {
   try {
     const metaRes = await fetch(`https://graph.facebook.com/v19.0/${mediaId}`, { headers: { "Authorization": `Bearer ${META_WA_TOKEN}` } });
     if (!metaRes.ok) return "";
@@ -458,7 +462,7 @@ async function transcribeVoice(mediaId: string): Promise<string> {
     const fileRes = await fetch(mediaUrl, { headers: { "Authorization": `Bearer ${META_WA_TOKEN}` } });
     if (!fileRes.ok) return "";
     const bytes = new Uint8Array(await fileRes.arrayBuffer());
-    return await transcribeAudio(bytes, mime.split(";")[0], "voice.ogg");
+    return await transcribeAudio(bytes, mime.split(";")[0], "voice.ogg", language);
   } catch (e) {
     console.error("[msg.transcribeVoice] error:", e);
     return "";
