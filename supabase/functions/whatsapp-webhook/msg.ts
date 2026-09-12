@@ -274,8 +274,7 @@ async function startSelection(fromPhone: string, who: MsgWho, last10: string) {
   await sendText(
     fromPhone,
     `🌐 *Which languages?*\n\n${list}\n\nReply *input > outputs* — the language you'll write/speak in, then the ones you want it translated INTO.\n` +
-    `e.g. *1 > 3 4*  (from ${langLabel(who.languages[0])} into languages 3 and 4)\n` +
-    `Also fine: *1 > 3,4*  ·  *1 to 3 4*  ·  *1to3,4*  (spaces optional)\n\n(_Send *msg langs* to change your 5 languages._)`,
+    `e.g. *1 > 3 4*  (from ${langLabel(who.languages[0])} into languages 3 and 4)\n\n(_Send *msg langs* to change your 5 languages._)`,
   );
 }
 
@@ -305,7 +304,7 @@ async function handleSelection(fromPhone: string, who: MsgWho, last10: string, t
   const valid = (x: number) => Number.isInteger(x) && x >= 1 && x <= n;
   outIdxs = [...new Set(outIdxs.filter(valid))];
   if (!valid(inputIdx) || outIdxs.length === 0) {
-    await sendText(fromPhone, `Reply like *1 > 3 4* (or *1 > 3,4* / *1 to 3 4*) — one input number (1–${n}), then one or more output numbers.`);
+    await sendText(fromPhone, `Reply like *1 > 3 4* — one input number (1–${n}), then one or more output numbers.`);
     return;
   }
   const inputLang = who.languages[inputIdx - 1];

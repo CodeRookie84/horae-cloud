@@ -273,7 +273,12 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
       await sendMainMenu(fromPhone, userId, tenantId);
       return;
     }
-    if (cmd !== null && /^(help|\?)/i.test(cmd)) { await sendHelp(fromPhone, userId); return; }
+    const helpA = cmd !== null ? cmd.match(/^(?:help|\?)\s*(.*)$/i) : null;
+    if (helpA) {
+      const topic = helpTopicFromWord(helpA[1]);
+      if (topic) await sendHelpTopic(fromPhone, topic); else await sendHelp(fromPhone, userId);
+      return;
+    }
   }
 
   // If the user just chose "Create a task"/"Raise a complaint" from the menu,
@@ -337,9 +342,11 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
       await sendMainMenu(fromPhone, userId, tenantId);
       return;
     }
-    // "/help" / "/?" → the plain-text guide.
-    if (/^(help|\?)/i.test(cmd)) {
-      await sendHelp(fromPhone, userId);
+    // "/help" → the topic picker; "/help tasks" (etc.) → that topic directly.
+    const helpM = cmd.match(/^(?:help|\?)\s*(.*)$/i);
+    if (helpM) {
+      const topic = helpTopicFromWord(helpM[1]);
+      if (topic) await sendHelpTopic(fromPhone, topic); else await sendHelp(fromPhone, userId);
       return;
     }
     // "/done N" / "/remove N" → mark item N (from the numbered list we last showed
@@ -599,6 +606,10 @@ async function handleMenuSelection(id: string, fromPhone: string, userId: string
     case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
     case "menu_training":      await sendTrainingList(fromPhone, userId, tenantId); break;
     case "menu_help":          await sendHelp(fromPhone, userId); break;
+    case "help_tasks":         await sendHelpTopic(fromPhone, "tasks"); break;
+    case "help_reminders":     await sendHelpTopic(fromPhone, "reminders"); break;
+    case "help_meetings":      await sendHelpTopic(fromPhone, "meetings"); break;
+    case "help_translate":     await sendHelpTopic(fromPhone, "translate"); break;
     case "menu_go_app":        await sendText(fromPhone, `👉 *Go to Horae app*:\n${APP_BASE_URL}/dashboard`); break;
     default:                   await sendMainMenu(fromPhone, userId, tenantId);
   }
@@ -1537,39 +1548,94 @@ async function sendTrainingList(fromPhone: string, userId: string, tenantId: str
   await sendText(fromPhone, `📚 *Your training*\n\n${lines.join("\n")}\n\n👉 Take them in Horae:\n${APP_BASE_URL}/training`);
 }
 
-/** Guide a staff member on what they can do over WhatsApp. */
-async function sendHelp(fromPhone: string, userId: string) {
-  const { data: u } = await supabase.from("users").select("name").eq("id", userId).limit(1);
-  const first = ((u?.[0]?.name as string) || "there").split(" ")[0];
-  // Three segments — tap the menu, type a keyword, or send a voice note. Examples
-  // only (no <syntax>); the fixed KEYWORD is bold and the example message italic so
-  // staff can tell the two apart at a glance.
-  await sendText(
+type HelpTopic = "tasks" | "reminders" | "meetings" | "translate";
+
+/** Map a word typed after "help" (e.g. "/help reminders") to a topic, or null so
+ *  a bare "/help" shows the topic picker. */
+function helpTopicFromWord(s: string): HelpTopic | null {
+  const t = (s || "").trim().toLowerCase();
+  if (/^tasks?$/.test(t)) return "tasks";
+  if (/^(rem|reminders?|notes?)$/.test(t)) return "reminders";
+  if (/^(meet|meetings?)$/.test(t)) return "meetings";
+  if (/^(translate|translation|msg|language|languages)$/.test(t)) return "translate";
+  return null;
+}
+
+/** "/help" (bare, or menu → Help) → a topic PICKER. The detailed guidance lives
+ *  in per-topic messages (sendHelpTopic) so no single screen is a wall of text. */
+async function sendHelp(fromPhone: string, _userId?: string) {
+  await sendList(
     fromPhone,
-    `👋 Hi ${first}! Here's how to use *Horae* on WhatsApp:\n\n` +
-    `*OPTION 1 — TAP THE MENU*\n` +
-    `Send *hi* or */menu*, then pick what you need from the list that appears.\n\n` +
-    `*OPTION 2 — TYPE A KEYWORD (start it with a / )*\n` +
-    `Every typed command begins with a slash */* — that's how Horae knows it's a command and not just a message. Use */task*, */rem* or */meet* to create and view your tasks, reminders and meetings.\n\n` +
-    `⚡ *Quick examples — copy, edit the words, send:*\n` +
-    `• */task* _fix the freezer_\n` +
-    `• */rem* _call the vendor_ *#* _3pm tomorrow_  (put *#* before the time & date)\n` +
-    `• */rem* _submit GST return_ *#* _5 Oct_  (a date works too — no clock time needed)\n` +
-    `• */meet* _supplier review_ *#* _3 Sep 11am_\n` +
-    `• */rem* — on its own, lists your reminders\n\n` +
-    `To view tasks: type */task* / */task to me* / */task by me*\n` +
-    `To view reminders: type */rem* / */rem today* / */rem this week*\n` +
-    `To view meetings: type */meet* / */meet today* / */meet this week*\n` +
-    `• */done 1* _clear item 1 from the last list_\n` +
-    `• */edit 1* _tomorrow 9am_ _reschedule item 1 (great for an overdue one)_\n` +
-    `• */cal 1* _add item 1 to your calendar_\n\n` +
-    `_(No slash? Whatever you send is saved as a task to capture — so a forwarded message just becomes a task.)_\n\n` +
-    `*OPTION 3 — SEND A VOICE NOTE* — no slash needed, just say it naturally:\n` +
-    `• For a task: say the task itself — _"paint the signboard before Friday"_\n` +
-    `• For a reminder: _"Remind me to call the vendor at 3pm tomorrow"_ (use *at* / *on* before the time & date)\n` +
-    `• For a meeting: _"Meeting with the supplier on 3 Sep 11am"_\n\n` +
-    `👉 ${APP_BASE_URL}`,
+    `❓ *Horae help*\n\nEvery typed command starts with a slash */* — e.g. */rem call the vendor*. (Send *hi* any time for the menu; send a voice note to talk instead of type.)\n\nWhich would you like help with?`,
+    "Pick a topic",
+    [
+      { id: "help_tasks",     title: "📋 Tasks",     description: "Create, view & update tasks" },
+      { id: "help_reminders", title: "⏰ Reminders", description: "Add, list & reschedule reminders" },
+      { id: "help_meetings",  title: "📅 Meetings",  description: "Add & list meetings" },
+      { id: "help_translate", title: "🌍 Translate", description: "Translate text or voice (/msg)" },
+    ],
   );
+}
+
+/** The detailed help for one topic — sent when a topic is picked from the list,
+ *  or typed directly as "/help tasks", "/help reminders", … */
+async function sendHelpTopic(fromPhone: string, topic: HelpTopic) {
+  let text = "";
+  switch (topic) {
+    case "tasks":
+      text =
+        `📋 *Tasks — help*\n\n` +
+        `*Create:*\n` +
+        `• */task* _fix the freezer_\n` +
+        `Or forward any message (no slash) and I'll offer to turn it into a task.\n\n` +
+        `*View & update:*\n` +
+        `• */task* — then pick *to me* or *by me*\n` +
+        `• */task to me*  ·  */task by me*\n` +
+        `• */task today*  ·  */task overdue*  ·  */task week*\n\n` +
+        `Open a task to update its *status*, add a *comment*, or add a *photo* — just tap the buttons under it.\n\n` +
+        `🎙️ Voice works too: say the task, e.g. _"paint the signboard before Friday"_.`;
+      break;
+    case "reminders":
+      text =
+        `⏰ *Reminders — help*\n\n` +
+        `*Add one* (put *#* before the time/date):\n` +
+        `• */rem* _call the vendor_ *#* _3pm tomorrow_\n` +
+        `• */rem* _submit GST return_ *#* _5 Oct_  (a date alone is fine)\n` +
+        `• */rem* _buy stock_  (no time — just a note)\n\n` +
+        `*See your list:*\n` +
+        `• */rem*  ·  */rem today*  ·  */rem this week*\n\n` +
+        `*Manage a listed item (by its number):*\n` +
+        `• */done 1* — clear it   (*/done 1 3* for several)\n` +
+        `• */edit 1 tomorrow 9am* — reschedule or rewrite\n` +
+        `• */cal 1* — add it to your Google Calendar\n\n` +
+        `🎙️ Voice: _"Remind me to call the vendor at 3pm tomorrow"_.`;
+      break;
+    case "meetings":
+      text =
+        `📅 *Meetings — help*\n\n` +
+        `*Add one* (put *#* before the time/date):\n` +
+        `• */meet* _supplier review_ *#* _3 Sep 11am_\n\n` +
+        `*See your list:*\n` +
+        `• */meet*  ·  */meet today*  ·  */meet this week*\n\n` +
+        `*Manage a listed item (by its number):*\n` +
+        `• */done 1*  ·  */edit 1 <new time>*  ·  */cal 1*  (same as reminders)\n\n` +
+        `🎙️ Voice: _"Meeting with the supplier on 3 Sep 11am"_.`;
+      break;
+    case "translate":
+      text =
+        `🌍 *Translate — help*\n\n` +
+        `Start by sending */msg* (or *msg*). Then:\n\n` +
+        `1️⃣ First time only: pick your *5 languages* — reply with 5 numbers, e.g. *2 3 4 6 20*.\n\n` +
+        `2️⃣ Choose *input > outputs* — the language you'll write in, then the ones to translate INTO:\n` +
+        `• *1 > 3 4*  (from language 1 into 3 and 4)\n` +
+        `• Also fine: *1 > 3,4*  ·  *1 to 3 4*  ·  *1to3,4*  (commas or spaces, both optional)\n\n` +
+        `3️⃣ Send the *text* — or a *voice note*. You can type in English letters (romanised) and I'll read it in your language.\n\n` +
+        `Each translation comes back as its *own* message — long-press to *Copy* or *Forward*.\n\n` +
+        `• *msg langs* — change your 5 languages\n` +
+        `• *cancel* — close the translator`;
+      break;
+  }
+  await sendText(fromPhone, `${text}\n\n👉 ${APP_BASE_URL}`);
 }
 
 /** #1 step 1 — store the forwarded text and offer tappable action buttons. */
