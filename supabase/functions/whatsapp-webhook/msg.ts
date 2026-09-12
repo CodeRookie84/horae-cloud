@@ -274,21 +274,30 @@ async function startSelection(fromPhone: string, who: MsgWho, last10: string) {
   await sendText(
     fromPhone,
     `🌐 *Which languages?*\n\n${list}\n\nReply *input > outputs* — the language you'll write/speak in, then the ones you want it translated INTO.\n` +
-    `e.g. *1 > 2 3*  (from ${langLabel(who.languages[0])} into two others)\n\n(_Send *msg langs* to change your 5 languages._)`,
+    `e.g. *1 > 3 4*  (from ${langLabel(who.languages[0])} into languages 3 and 4)\n` +
+    `Also fine: *1 > 3,4*  ·  *1 to 3 4*  ·  *1to3,4*  (spaces optional)\n\n(_Send *msg langs* to change your 5 languages._)`,
   );
 }
 
-/** Parse "1 > 2 3", validate, store input_lang + output_langs, ask for content. */
+/** Parse the "input > outputs" selection, validate, store input_lang +
+ *  output_langs, ask for content. Accepts every shape below (spaces optional,
+ *  commas or spaces between the output numbers):
+ *    1 > 3 4   ·   1 > 3,4   ·   1>3,4   ·   1 to 3 4   ·   1 to 3,4   ·   1to3,4
+ *  and the arrow "1 → 3 4". Numbers left of the separator = input; right = outputs. */
 async function handleSelection(fromPhone: string, who: MsgWho, last10: string, text: string) {
   const n = who.languages.length;
-  // Accept "1 > 2 3", "1>2,3", "1 to 2 3". Left of the separator = input; right = outputs.
-  const norm = text.replace(/\bto\b/i, ">");
+  // Normalise any separator — ">", "→", or the word "to" (even with no spaces,
+  // e.g. "1to3") — to a single ">". Digits never contain letters, so replacing
+  // every "to" is safe. parseNumbers then ignores the commas/spaces around the
+  // numbers.
+  const norm = text.replace(/→/g, ">").replace(/to/gi, ">");
   let inputIdx: number; let outIdxs: number[];
   if (norm.includes(">")) {
-    const [l, r] = norm.split(">");
-    inputIdx = parseNumbers(l)[0];
-    outIdxs = parseNumbers(r);
+    const parts = norm.split(">");
+    inputIdx = parseNumbers(parts[0])[0];               // first number before the 1st ">"
+    outIdxs = parseNumbers(parts.slice(1).join(" "));   // everything after it
   } else {
+    // No separator (e.g. "1 3 4") → first number is the input, the rest outputs.
     const all = parseNumbers(norm);
     inputIdx = all[0];
     outIdxs = all.slice(1);
@@ -296,7 +305,7 @@ async function handleSelection(fromPhone: string, who: MsgWho, last10: string, t
   const valid = (x: number) => Number.isInteger(x) && x >= 1 && x <= n;
   outIdxs = [...new Set(outIdxs.filter(valid))];
   if (!valid(inputIdx) || outIdxs.length === 0) {
-    await sendText(fromPhone, `Reply like *1 > 2 3* — one input number (1–${n}), then one or more output numbers.`);
+    await sendText(fromPhone, `Reply like *1 > 3 4* (or *1 > 3,4* / *1 to 3 4*) — one input number (1–${n}), then one or more output numbers.`);
     return;
   }
   const inputLang = who.languages[inputIdx - 1];
