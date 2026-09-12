@@ -86,11 +86,12 @@ const TRANSLIT_SUPPORTED = new Set([
   "hi", "kn", "ta", "te", "ml", "mr", "bn", "gu", "pa", "or", "ur", "ar", "ne", "si", "fa", "el", "ru",
 ]);
 
-// Any backslash-prefixed message is a Horae command (\rem, \task, \menu, …). If
-// one arrives while a translation session is open, we hand it straight back to
-// index.ts for normal routing instead of translating it — so `\rem` lists your
-// reminders. Plain text (no backslash) is still translated as before.
-const HORAE_COMMAND = /^\s*\\/;
+// Any slash-prefixed message is a Horae command (/rem, /task, /menu, …). If one
+// arrives while a translation session is open, we hand it straight back to
+// index.ts for normal routing instead of translating it — so `/rem` lists your
+// reminders. A leading backslash is accepted too (an earlier build taught `\`).
+// Plain text (no slash) is still translated as before.
+const HORAE_COMMAND = /^\s*[\/\\]/;
 
 interface MsgWho { participantId: string; clientId: string | null; name: string; languages: string[]; }
 interface MsgSession { phone_last10: string; state: string; input_lang: string | null; output_langs: string[]; }
@@ -116,25 +117,25 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
   const who = await resolveMsgParticipant(fromPhone, staff);
   if (!who) return false; // neither an onboarded phone nor staff → let Horae handle it
 
-  // A backslash-prefixed Horae command (\rem, \task, \menu, …) ALWAYS breaks out
-  // of an open translation session, so the user can jump straight to reminders /
-  // tasks / the menu without first closing the translator. (Bug: after translating,
-  // typing plain *rem* was swallowed as text to translate — transliterated to
-  // gibberish — instead of listing reminders; a command now needs the \ prefix.)
-  // Only when a session is already open (the *msg* / *\msg* keyword is handled
-  // below); we close the session first, then return false so index.ts routes the
-  // message through normal Horae handling.
+  // A slash-prefixed Horae command (/rem, /task, /menu, …) ALWAYS breaks out of an
+  // open translation session, so the user can jump straight to reminders / tasks /
+  // the menu without first closing the translator. (Bug: after translating, typing
+  // plain *rem* was swallowed as text to translate — transliterated to gibberish —
+  // instead of listing reminders; a command now needs the / prefix.) Only when a
+  // session is already open (the *msg* / *\msg* keyword is handled below); we close
+  // the session first, then return false so index.ts routes the message through
+  // normal Horae handling.
   if (session && !isKeyword && HORAE_COMMAND.test(text)) {
     await clearSession(last10);
     return false;
   }
 
-  // A bare cancel/close verb ends the session cleanly, at any point. (\menu /
-  // \cancel and any other \command already handed off above; the ✖ Done button
+  // A bare cancel/close verb ends the session cleanly, at any point. (/menu /
+  // /cancel and any other /command already handed off above; the ✖ Done button
   // closes too. "done"/"menu" are left out here so they're translated normally.)
   if (/^\s*(cancel|stop|back|exit)\b/i.test(text)) {
     await clearSession(last10);
-    await sendText(fromPhone, "✅ Translation closed. Send *\\menu* for options, or *msg* to translate again.");
+    await sendText(fromPhone, "✅ Translation closed. Send */menu* for options, or *msg* to translate again.");
     return true;
   }
 

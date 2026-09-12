@@ -200,19 +200,21 @@ async function handleInboundMessage(m: any, contact: any) {
   }
 }
 
-/** Typed Horae commands must start with a backslash: `\rem`, `\task`, `\menu`, …
- *  This makes a command unambiguous — anything WITHOUT a backslash is treated as
+/** Typed Horae commands must start with a slash: `/rem`, `/task`, `/menu`, …
+ *  This makes a command unambiguous — anything WITHOUT the slash is treated as
  *  plain content (a message to capture as a task), never accidentally as a keyword.
- *  Returns the command text with the leading backslash (and any following space)
- *  stripped, or null when the message isn't a command.
+ *  Returns the command text with the leading slash (and any following space)
+ *  stripped, or null when the message isn't a command. A leading backslash is
+ *  also accepted (an earlier build taught `\`), so nobody's muscle memory breaks.
  *
  *  Exceptions, by design:
- *   • Voice notes are exempt — you can't speak a backslash — so spoken "remind
- *     me…" / "meeting…" still route naturally (see the audio branch below).
- *   • bare `cancel` / `back` / `stop` still escape a stuck input flow (safety
- *     valve), so a half-finished task capture is never a trap. */
+ *   • Voice notes are exempt — you can't speak a slash — so spoken "remind me…" /
+ *     "meeting…" still route naturally (see the audio branch below).
+ *   • bare greetings (hi/hello/menu) and bare `cancel`/`back`/`stop` still work
+ *     without a slash — the friendly entry point and the escape valve out of a
+ *     stuck input flow, so the bot is never a trap. */
 function asCommand(text: string): string | null {
-  const m = /^\s*\\\s*(.*)$/s.exec(text || "");
+  const m = /^\s*[\/\\]\s*(.*)$/s.exec(text || "");
   return m ? m[1].trim() : null;
 }
 
@@ -259,9 +261,10 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
   if (m.type === "text") {
     const t = (m.text?.body || "").trim();
     const cmd = asCommand(t);
-    // Greeting / menu now needs the backslash (\hi, \menu). cancel/back/stop stay
-    // usable bare too — the safety valve out of a stuck "awaiting input" flow.
-    const greetOrMenu = cmd !== null && /^(hi|hai|hey|hello|menu|start)\b/i.test(cmd);
+    // A short bare greeting (hi/hello/menu) still opens the menu — the friendly
+    // entry point — as does the slash form (/menu). cancel/back/stop stay usable
+    // bare too, the safety valve out of a stuck "awaiting input" flow.
+    const greetOrMenu = (t.length <= 12 && /^(hi|hai|hey|hello|menu|start)\b/i.test(t)) || (cmd !== null && /^(hi|hai|hey|hello|menu|start)\b/i.test(cmd));
     const cancel = /^(cancel|back|stop)\b/i.test(t) || (cmd !== null && /^(cancel|back|stop)\b/i.test(cmd));
     if (greetOrMenu || cancel) {
       await supabase.from("whatsapp_conversations")
@@ -280,7 +283,7 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
     if (pending) {
       const rawText = m.type === "text" ? (m.text?.body || "").trim() : "";
       const rawCmd = asCommand(rawText);
-      // Bare cancel/back/stop always escapes; \menu / \cancel etc. escape too.
+      // Bare cancel/back/stop always escapes; /menu / /cancel etc. escape too.
       if (/^(cancel|back|stop)\b/i.test(rawText) || (rawCmd !== null && /^(cancel|menu|back|stop)\b/i.test(rawCmd))) { await sendMainMenu(fromPhone, userId, tenantId); return; }
       let content = rawText;
       if (m.type === "audio" && m.audio?.id) {
@@ -316,38 +319,38 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
   if (m.type === "text") {
     const text = (m.text?.body || "").trim();
     if (!text) return;
-    // Typed commands MUST start with a backslash (\rem, \task, \menu, …). Anything
+    // Typed commands MUST start with a slash (/rem, /task, /menu, …). Anything
     // without one is plain content → offer to capture it as a task. (Voice notes
-    // are exempt — handled above — since you can't speak a backslash.)
+    // are exempt — handled above — since you can't speak a slash.)
     const cmd = asCommand(text);
     if (cmd === null) { await offerCaptureMenu(fromPhone, userId, tenantId, text); return; }
 
-    // "\new task ..." (or "\newtask ...") → straight to a prefilled capture link.
+    // "/new task ..." (or "/newtask ...") → straight to a prefilled capture link.
     const newTask = cmd.match(/^new\s*task\b[:\-\s]*(.*)$/is);
     if (newTask) {
       const content = (newTask[1] || "").trim();
       await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_newtask", content);
       return;
     }
-    // "\hi" / "\menu" → show the tappable main menu (also caught earlier; kept for safety).
+    // "/hi" / "/menu" → show the tappable main menu (also caught earlier; kept for safety).
     if (/^(hi|hai|hey|hello|menu|start)\b/i.test(cmd)) {
       await sendMainMenu(fromPhone, userId, tenantId);
       return;
     }
-    // "\help" / "\?" → the plain-text guide.
+    // "/help" / "/?" → the plain-text guide.
     if (/^(help|\?)/i.test(cmd)) {
       await sendHelp(fromPhone, userId);
       return;
     }
-    // "\done N" / "\remove N" → mark item N (from the numbered list we last showed
-    // this user) done. Also accepts several numbers, e.g. "\done 1 3".
+    // "/done N" / "/remove N" → mark item N (from the numbered list we last showed
+    // this user) done. Also accepts several numbers, e.g. "/done 1 3".
     const doneMatch = cmd.match(/^(?:done|remove|del|delete|complete|did|finish(?:ed)?)\s+([\d,\s]+)$/i);
     if (doneMatch) {
       const handled = await handleListDone(fromPhone, userId, doneMatch[1]);
       if (handled) return;
       // Not a valid "done N" against any recent list → fall through to normal handling.
     }
-    // "\cal N" / "\calendar N" → get a Google Calendar link for item N of the
+    // "/cal N" / "/calendar N" → get a Google Calendar link for item N of the
     // numbered reminders/meetings list we last showed. Zero cost — the link just
     // opens the user's own calendar prefilled; their calendar owns the reminding.
     const calMatch = cmd.match(/^(?:cal|calendar|remind)\s+(\d+)$/i);
@@ -355,9 +358,9 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
       const handled = await handleListCal(fromPhone, userId, +calMatch[1]);
       if (handled) return;
     }
-    // "\edit N <changes>" / "\change N …" / "\reschedule N …" → update item N of the
+    // "/edit N <changes>" / "/change N …" / "/reschedule N …" → update item N of the
     // numbered reminders/meetings list we last showed. Chiefly for an OVERDUE item:
-    // "\edit 1 tomorrow 9am" pushes a missed reminder forward. The tail can be a new
+    // "/edit 1 tomorrow 9am" pushes a missed reminder forward. The tail can be a new
     // time, new text, or both.
     const editMatch = cmd.match(/^(?:edit|change|reschedul(?:e)?|resched|update)\s+(\d+)\b(.*)$/is);
     if (editMatch) {
@@ -365,11 +368,11 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
       if (handled) return;
     }
     // Verb commands shared with voice notes: rem/remind, meet/meeting, task, and
-    // the standalone fetch keywords. `cmd` already has the backslash stripped, so
-    // the same matcher serves typed (\rem) and spoken ("remind…") input.
+    // the standalone fetch keywords. `cmd` already has the slash stripped, so the
+    // same matcher serves typed (/rem) and spoken ("remind…") input.
     if (await routeVerbCommand(fromPhone, userId, tenantId, cmd)) return;
-    // A backslash command we don't recognise → guide, don't silently capture it.
-    await sendText(fromPhone, "🤔 I didn't recognise that command. Reply *\\menu* for options, or *\\help* for the full list.");
+    // A slash command we don't recognise → guide, don't silently capture it.
+    await sendText(fromPhone, "🤔 I didn't recognise that command. Reply */menu* for options, or */help* for the full list.");
     return;
   }
 
@@ -389,7 +392,7 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
         return;
       }
     }
-    await sendText(fromPhone, "📎 I can't turn attachments into tasks yet. Send the details as *text*, or *\"\\new task …\"*.\n\n(To add a photo to a task: reply *\\menu* → *📷 Add a photo*.)");
+    await sendText(fromPhone, "📎 I can't turn attachments into tasks yet. Send the details as *text*, or *\"/new task …\"*.\n\n(To add a photo to a task: reply */menu* → *📷 Add a photo*.)");
     return;
   }
   // Everything else (reactions, location, contacts, …) is logged, no reply.
@@ -860,8 +863,8 @@ async function startCommentForTask(fromPhone: string, userId: string, tenantId: 
 /** Save a WhatsApp-captured comment into the task chat (task_messages). */
 async function addTaskComment(fromPhone: string, userId: string, taskId: string | undefined, content: string) {
   const text = (content || "").trim();
-  if (!taskId) { await sendText(fromPhone, "Hmm, I lost track of which task that was for. Reply *\\menu* and pick it again."); return; }
-  if (!text)   { await sendText(fromPhone, "That comment looked empty — reply *\\menu* to try again."); return; }
+  if (!taskId) { await sendText(fromPhone, "Hmm, I lost track of which task that was for. Reply */menu* and pick it again."); return; }
+  if (!text)   { await sendText(fromPhone, "That comment looked empty — reply */menu* to try again."); return; }
 
   const { data: task } = await supabase.from("tasks").select("id, title").eq("id", taskId).single();
   if (!task) { await sendText(fromPhone, "That task couldn't be found — it may have been removed."); return; }
@@ -884,12 +887,12 @@ async function startPhotoForTask(fromPhone: string, userId: string, tenantId: st
     user_id: userId, tenant_id: tenantId, from_phone: fromPhone,
     state: "awaiting_input", intent: "photo", payload: { taskId },
   }]);
-  await sendText(fromPhone, `📷 Send the photo now for *${task.title}*.\n(Send one image; reply *\\menu* → *Add a photo* to add more, up to 3.)`);
+  await sendText(fromPhone, `📷 Send the photo now for *${task.title}*.\n(Send one image; reply */menu* → *Add a photo* to add more, up to 3.)`);
 }
 
 /** Download the WhatsApp image and append it to the task's photos (base64, max 3). */
 async function attachPhotoToTask(fromPhone: string, userId: string, taskId: string | undefined, mediaId: string) {
-  if (!taskId) { await sendText(fromPhone, "Hmm, I lost track of which task that was for. Reply *\\menu* → *Add a photo* to try again."); return; }
+  if (!taskId) { await sendText(fromPhone, "Hmm, I lost track of which task that was for. Reply */menu* → *Add a photo* to try again."); return; }
   const { data: task } = await supabase.from("tasks").select("id, title, description").eq("id", taskId).single();
   if (!task) { await sendText(fromPhone, "That task couldn't be found — it may have been removed."); return; }
 
@@ -914,7 +917,7 @@ async function attachPhotoToTask(fromPhone: string, userId: string, taskId: stri
     sender_name: u?.[0]?.name || "Staff", sender_role: u?.[0]?.role || "",
     message: "📷 Added a photo via WhatsApp", timestamp: new Date().toISOString(),
   }]);
-  await sendText(fromPhone, `📷 Photo added to *${task.title}* (${photos.length}/3).${photos.length < 3 ? "\nReply *\\menu* → *Add a photo* to add another." : ""}`);
+  await sendText(fromPhone, `📷 Photo added to *${task.title}* (${photos.length}/3).${photos.length < 3 ? "\nReply */menu* → *Add a photo* to add another." : ""}`);
 }
 
 /** Fetch a WhatsApp media id and return it as a base64 `data:` URI (two-step). */
@@ -1149,8 +1152,8 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
   noteText = noteText.trim();
   if (!noteText) {
     await sendText(fromPhone, isMeeting
-      ? "📅 What meeting? e.g. *\\meet vendor call # tomorrow 3pm*"
-      : "📝 What should I note? e.g. *\\rem call the vendor # 3pm*");
+      ? "📅 What meeting? e.g. */meet vendor call # tomorrow 3pm*"
+      : "📝 What should I note? e.g. */rem call the vendor # 3pm*");
     return;
   }
 
@@ -1162,7 +1165,7 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
   if (error) { console.error("[whatsapp-webhook] createReminder failed:", error); await sendText(fromPhone, "Sorry, I couldn't save that. Please try again."); return; }
 
   const whenStr = remindAt ? ` for *${fmtWhen(remindAt)}*` : "";
-  const seeHint = isMeeting ? "Send *\\meet* any time to see your meetings." : "Send *\\rem* any time to see your list.";
+  const seeHint = isMeeting ? "Send */meet* any time to see your meetings." : "Send */rem* any time to see your list.";
   const savedLine = isMeeting
     ? `📅 Meeting saved${whenStr}:\n"${noteText.slice(0, 200)}"`
     : `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"`;
@@ -1268,8 +1271,8 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   if (total === 0) {
     const emptyMsg = filter === "all"
       ? (isMeeting
-          ? "📅 You have no meetings saved.\n\nAdd one by sending *\\meet <what> # <time>*\ne.g. *\\meet vendor call # 3pm tomorrow*"
-          : "📝 You have no reminders.\n\nAdd one by sending *\\rem <note> # <time>*\ne.g. *\\rem call the vendor # 9am tomorrow*")
+          ? "📅 You have no meetings saved.\n\nAdd one by sending */meet <what> # <time>*\ne.g. */meet vendor call # 3pm tomorrow*"
+          : "📝 You have no reminders.\n\nAdd one by sending */rem <note> # <time>*\ne.g. */rem call the vendor # 9am tomorrow*")
       : `${icon} Nothing ${verb} ${filter === "week" ? "this week" : filter} — and nothing overdue. 🎉`;
     await sendText(fromPhone, emptyMsg);
     return;
@@ -1292,7 +1295,7 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
     for (const r of overdue) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 was ${verb} ${fmtWhen(r.remind_at)}`); }
     // A missed item usually just needs a new time — surface the edit shortcut right
     // under the Overdue block (item 1 is always the first overdue row).
-    parts.push(`\n_✏️ Missed one? Reschedule it: *\\edit 1 tomorrow 9am*_`);
+    parts.push(`\n_✏️ Missed one? Reschedule it: */edit 1 tomorrow 9am*_`);
   }
   if (todayItems.length) {
     // Boxed green banner so TODAY is unmistakable right after the Overdue block.
@@ -1305,12 +1308,12 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   }
 
   const removeHint = ids.length === 1
-    ? `\n\n❌ Remove it: *\\done 1*   ·   ✏️ Change it: *\\edit 1 <new time>*   ·   🗓️ Turn on Calendar notification: *\\cal 1*`
-    : `\n\n❌ Remove: *\\done 1* (or *\\done 1 3*…)   ·   ✏️ Change: *\\edit 1 <new time>*   ·   🗓️ Turn on Calendar notification: *\\cal 1* or *\\cal 2*…`;
+    ? `\n\n❌ Remove it: */done 1*   ·   ✏️ Change it: */edit 1 <new time>*   ·   🗓️ Turn on Calendar notification: */cal 1*`
+    : `\n\n❌ Remove: */done 1* (or */done 1 3*…)   ·   ✏️ Change: */edit 1 <new time>*   ·   🗓️ Turn on Calendar notification: */cal 1* or */cal 2*…`;
   const addHint = showHint
     ? (isMeeting
-        ? `\n➕ Add: *\\meet <what> # <time>*   ·   🔎 See: *\\meet*, *\\meet today*, *\\meet tomorrow*`
-        : `\n➕ Add: *\\rem <note> # <time>*   ·   🔎 See: *\\rem*, *\\rem today*, *\\rem tomorrow*`)
+        ? `\n➕ Add: */meet <what> # <time>*   ·   🔎 See: */meet*, */meet today*, */meet tomorrow*`
+        : `\n➕ Add: */rem <note> # <time>*   ·   🔎 See: */rem*, */rem today*, */rem tomorrow*`)
     : "";
   await sendText(fromPhone, `${parts.join("\n")}${removeHint}${addHint}`);
 
@@ -1348,7 +1351,7 @@ async function handleListDone(fromPhone: string, userId: string, numsRaw: string
   const kind: string = (conv?.payload as any)?.kind || "reminder";
   if (!conv || !ids.length) return false;
 
-  const seeCmd = kind === "meeting" ? "\\meet" : "\\rem";
+  const seeCmd = kind === "meeting" ? "/meet" : "/rem";
   const noun = kind === "meeting" ? "meeting" : "reminder";
   const bad = nums.filter((n) => !ids[n - 1]);
   const good = nums.filter((n) => ids[n - 1]);
@@ -1423,7 +1426,7 @@ async function handleListEdit(fromPhone: string, userId: string, num: number, re
   const ids: string[] = (convs?.[0]?.payload as any)?.ids || [];
   const kind: "reminder" | "meeting" = ((convs?.[0]?.payload as any)?.kind === "meeting") ? "meeting" : "reminder";
   if (!ids.length) return false;
-  const seeCmd = kind === "meeting" ? "\\meet" : "\\rem";
+  const seeCmd = kind === "meeting" ? "/meet" : "/rem";
   const noun = kind === "meeting" ? "meeting" : "reminder";
   const id = ids[num - 1];
   if (!id) { await sendText(fromPhone, `That number isn't on the list. Reply *${seeCmd}* to see it again.`); return true; }
@@ -1435,8 +1438,8 @@ async function handleListEdit(fromPhone: string, userId: string, num: number, re
   rest = (rest || "").trim();
   if (!rest) {
     await sendText(fromPhone, kind === "meeting"
-      ? `✏️ What should I change for *${num}*? e.g. *\\edit ${num} tomorrow 3pm* (new time), or *\\edit ${num} vendor call at 4pm* (new text + time).`
-      : `✏️ What should I change for *${num}*? e.g. *\\edit ${num} tomorrow 9am* (new time), or *\\edit ${num} call the vendor at 9am* (new text + time).`);
+      ? `✏️ What should I change for *${num}*? e.g. */edit ${num} tomorrow 3pm* (new time), or */edit ${num} vendor call at 4pm* (new text + time).`
+      : `✏️ What should I change for *${num}*? e.g. */edit ${num} tomorrow 9am* (new time), or */edit ${num} call the vendor at 9am* (new text + time).`);
     return true;
   }
 
@@ -1545,21 +1548,21 @@ async function sendHelp(fromPhone: string, userId: string) {
     fromPhone,
     `👋 Hi ${first}! Here's how to use *Horae* on WhatsApp:\n\n` +
     `*OPTION 1 — TAP THE MENU*\n` +
-    `Send *\\menu*, then pick what you need from the list that appears.\n\n` +
-    `*OPTION 2 — TYPE A KEYWORD (start it with a \\ )*\n` +
-    `Every typed command begins with a backslash *\\* — that's how Horae knows it's a command and not just a message. Use *\\task*, *\\rem* or *\\meet* to create and view your tasks, reminders and meetings.\n\n` +
+    `Send *hi* or */menu*, then pick what you need from the list that appears.\n\n` +
+    `*OPTION 2 — TYPE A KEYWORD (start it with a / )*\n` +
+    `Every typed command begins with a slash */* — that's how Horae knows it's a command and not just a message. Use */task*, */rem* or */meet* to create and view your tasks, reminders and meetings.\n\n` +
     `For example:\n` +
-    `• *\\task* _fix the freezer_\n` +
-    `• *\\rem* _call the vendor_ *#* _3pm tomorrow_  (put *#* before the time & date)\n` +
-    `• *\\meet* _supplier review_ *#* _3 Sep 11am_\n\n` +
-    `To view tasks: type *\\task* / *\\task to me* / *\\task by me*\n` +
-    `To view reminders: type *\\rem* / *\\rem today* / *\\rem this week*\n` +
-    `To view meetings: type *\\meet* / *\\meet today* / *\\meet this week*\n` +
-    `• *\\done 1* _clear item 1 from the last list_\n` +
-    `• *\\edit 1* _tomorrow 9am_ _reschedule item 1 (great for an overdue one)_\n` +
-    `• *\\cal 1* _add item 1 to your calendar_\n\n` +
-    `_(No backslash? Whatever you send is saved as a task to capture — so a forwarded message just becomes a task.)_\n\n` +
-    `*OPTION 3 — SEND A VOICE NOTE* — no backslash needed, just say it naturally:\n` +
+    `• */task* _fix the freezer_\n` +
+    `• */rem* _call the vendor_ *#* _3pm tomorrow_  (put *#* before the time & date)\n` +
+    `• */meet* _supplier review_ *#* _3 Sep 11am_\n\n` +
+    `To view tasks: type */task* / */task to me* / */task by me*\n` +
+    `To view reminders: type */rem* / */rem today* / */rem this week*\n` +
+    `To view meetings: type */meet* / */meet today* / */meet this week*\n` +
+    `• */done 1* _clear item 1 from the last list_\n` +
+    `• */edit 1* _tomorrow 9am_ _reschedule item 1 (great for an overdue one)_\n` +
+    `• */cal 1* _add item 1 to your calendar_\n\n` +
+    `_(No slash? Whatever you send is saved as a task to capture — so a forwarded message just becomes a task.)_\n\n` +
+    `*OPTION 3 — SEND A VOICE NOTE* — no slash needed, just say it naturally:\n` +
     `• For a task: say the task itself — _"paint the signboard before Friday"_\n` +
     `• For a reminder: _"Remind me to call the vendor at 3pm tomorrow"_ (use *at* / *on* before the time & date)\n` +
     `• For a meeting: _"Meeting with the supplier on 3 Sep 11am"_\n\n` +
@@ -1578,7 +1581,7 @@ async function offerCaptureMenu(fromPhone: string, userId: string, tenantId: str
   const preview = text.length > 120 ? text.slice(0, 117) + "…" : text;
   const wamid = await sendButtons(
     fromPhone,
-    `📥 *Got it.*\n"${preview}"\n\nWhat would you like to do with this?\n\n_(Looking for a command? Start it with a *\\* — e.g. *\\menu*, *\\rem*, *\\help*.)_`,
+    `📥 *Got it.*\n"${preview}"\n\nWhat would you like to do with this?\n\n_(Looking for a command? Start it with a */* — e.g. */menu*, */rem*, */help*.)_`,
     [
       { id: "create_task", title: "📋 Create Task" },
       { id: "dismiss",     title: "Dismiss" },
