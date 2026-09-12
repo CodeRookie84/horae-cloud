@@ -1551,10 +1551,12 @@ async function sendHelp(fromPhone: string, userId: string) {
     `Send *hi* or */menu*, then pick what you need from the list that appears.\n\n` +
     `*OPTION 2 — TYPE A KEYWORD (start it with a / )*\n` +
     `Every typed command begins with a slash */* — that's how Horae knows it's a command and not just a message. Use */task*, */rem* or */meet* to create and view your tasks, reminders and meetings.\n\n` +
-    `For example:\n` +
+    `⚡ *Quick examples — copy, edit the words, send:*\n` +
     `• */task* _fix the freezer_\n` +
     `• */rem* _call the vendor_ *#* _3pm tomorrow_  (put *#* before the time & date)\n` +
-    `• */meet* _supplier review_ *#* _3 Sep 11am_\n\n` +
+    `• */rem* _submit GST return_ *#* _5 Oct_  (a date works too — no clock time needed)\n` +
+    `• */meet* _supplier review_ *#* _3 Sep 11am_\n` +
+    `• */rem* — on its own, lists your reminders\n\n` +
     `To view tasks: type */task* / */task to me* / */task by me*\n` +
     `To view reminders: type */rem* / */rem today* / */rem this week*\n` +
     `To view meetings: type */meet* / */meet today* / */meet this week*\n` +
