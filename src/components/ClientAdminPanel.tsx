@@ -94,8 +94,8 @@ interface ClientAdminPanelProps {
   activeUser: AppUser;
   activeClient: Client;
   
-  onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
-  onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
+  onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant") => void;
+  onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant") => void;
   onDeleteTenant: (tenantId: string) => void;
   
   onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean, clitAccess?: boolean, clitRole?: string) => Promise<string>;
@@ -171,7 +171,7 @@ export default function ClientAdminPanel({
   const [editTenantName, setEditTenantName] = useState("");
   const [editTenantSubdomain, setEditTenantSubdomain] = useState("");
   const [editTenantLogo, setEditTenantLogo] = useState("");
-  const [editTenantPlan, setEditTenantPlan] = useState<"Free" | "Essential" | "Pro" | "Enterprise" | "Training">("Pro");
+  const [editTenantPlan, setEditTenantPlan] = useState<"Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant">("Pro");
   const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
 
   const handleCreateOutlet = (e: React.FormEvent) => {

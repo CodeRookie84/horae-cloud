@@ -9,7 +9,7 @@
 // mapping here — rather than a per-browser localStorage override — means a
 // super-admin plan switch propagates to every user of that client immediately.
 
-export type PlanId = "Free" | "Essential" | "Pro" | "Enterprise" | "Training";
+export type PlanId = "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant";
 
 /** Canonical feature keys used across the sidebar + tab gating. */
 export type FeatureKey =
@@ -30,6 +30,11 @@ const PLAN_BASE: Record<Exclude<PlanId, "Free">, FeatureKey[]> = {
   Pro: ["tasks", "checklists", "maintenance", "notices"],
   Enterprise: ["tasks", "checklists", "maintenance", "notices", "training", "sops"],
   Training: ["training"],
+  // Assistant = WhatsApp-only productivity (Reminders + Meetings + Translate).
+  // Those three live entirely in the WhatsApp bot and aren't app FeatureKeys, so
+  // the app grants NO tabs here — notably no Task Manager. The webhook separately
+  // hides the WhatsApp task commands for a client without the `tasks` feature.
+  Assistant: [],
 };
 
 export const PLAN_LABELS: Record<PlanId, string> = {
@@ -38,6 +43,7 @@ export const PLAN_LABELS: Record<PlanId, string> = {
   Pro: "Pro",
   Enterprise: "Enterprise",
   Training: "Training",
+  Assistant: "Assistant",
 };
 
 /** Human labels for the feature keys — used by the admin plan preview. */

@@ -93,15 +93,15 @@ interface HoraeAdminPanelProps {
   clients: Client[];
   tenants: Tenant[];
   users: User[];
-  onAddClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages: string[]) => void;
-  onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
+  onAddClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant", trainingAddon: boolean, languages: string[]) => void;
+  onAddTenant: (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant") => void;
   onOnboardUser: (tenantId: string, name: string, email: string, role: string, department: string, avatar: string, phoneNumber?: string, whatsappOptedIn?: boolean) => Promise<string>;
   onSelectUser: (userId: string) => void;
-  onUpdateClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages: string[], digestEnabled: boolean) => void;
+  onUpdateClient: (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant", trainingAddon: boolean, languages: string[], digestEnabled: boolean) => void;
   onDeleteClient: (id: string) => void;
   /** Provision a time-limited demo sandbox; resolves with the login to hand over. */
   onProvisionDemo: (companyName: string, days: number) => Promise<{ loginEmail: string; password: string; expiresAt: string }>;
-  onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => void;
+  onUpdateTenant: (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant") => void;
   onDeleteTenant: (tenantId: string) => void;
   onUpdateUser: (userId: string, name: string, email: string, role: string, department: string) => void;
   onDeleteUser: (userId: string) => void;
@@ -614,6 +614,7 @@ export default function HoraeAdminPanel({
                         <option value="Pro">Pro</option>
                         <option value="Enterprise">Enterprise</option>
                         <option value="Training">Training</option>
+                        <option value="Assistant">Assistant</option>
                       </select>
                     </div>
                   </div>
@@ -1273,6 +1274,7 @@ export default function HoraeAdminPanel({
                       <option value="Pro">Pro</option>
                       <option value="Enterprise">Enterprise</option>
                       <option value="Training">Training</option>
+                      <option value="Assistant">Assistant</option>
                     </select>
                   </div>
                 </div>
@@ -1440,6 +1442,7 @@ export default function HoraeAdminPanel({
                       <option value="Pro">Pro</option>
                       <option value="Enterprise">Enterprise</option>
                       <option value="Training">Training</option>
+                      <option value="Assistant">Assistant</option>
                     </select>
                   </div>
                 </div>

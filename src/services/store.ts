@@ -515,7 +515,7 @@ export class StoreService {
   }
 
   // --- Horae ONBOARDING METHODS ---
-  public async addClient(id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false, languages: string[] = []): Promise<Client> {
+  public async addClient(id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant", trainingAddon: boolean = false, languages: string[] = []): Promise<Client> {
     const cleanId = id.toLowerCase().trim().replace(/\s+/g, '-');
     const newClient = {
       id: cleanId,
@@ -672,7 +672,7 @@ export class StoreService {
     ]);
   }
 
-  public async updateClient(clientId: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean = false, languages?: string[], digestEnabled?: boolean): Promise<void> {
+  public async updateClient(clientId: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant", trainingAddon: boolean = false, languages?: string[], digestEnabled?: boolean): Promise<void> {
     const cleanId = clientId.toLowerCase().trim().replace(/\s+/g, '-');
     const patch: Record<string, any> = { name, logo, plan, training_addon: trainingAddon };
     if (languages !== undefined) patch.languages = languages;
@@ -750,7 +750,7 @@ export class StoreService {
     }
   }
 
-  public async addTenant(clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training"): Promise<Tenant> {
+  public async addTenant(clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant"): Promise<Tenant> {
     const newTenant = {
       id: "tenant-" + Date.now(),
       client_id: clientId,
@@ -772,7 +772,7 @@ export class StoreService {
     };
   }
 
-  public async updateTenant(tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training"): Promise<void> {
+  public async updateTenant(tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant"): Promise<void> {
     await supabase
       .from('tenants')
       .update({ name, subdomain, logo, plan })

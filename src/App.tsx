@@ -664,7 +664,7 @@ function AppInner() {
     triggerToast("Switched active Brand Client!");
   };
 
-  const handleAddClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages: string[] = []) => {
+  const handleAddClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant", trainingAddon: boolean, languages: string[] = []) => {
     await store.addClient(id, name, logo, plan, trainingAddon, languages);
     await refreshLocalState();
   };
@@ -675,7 +675,7 @@ function AppInner() {
     return { loginEmail: res.loginEmail, password: res.password, expiresAt: res.expiresAt };
   };
 
-  const handleUpdateClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training", trainingAddon: boolean, languages?: string[], digestEnabled?: boolean) => {
+  const handleUpdateClient = async (id: string, name: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant", trainingAddon: boolean, languages?: string[], digestEnabled?: boolean) => {
     await store.updateClient(id, name, logo, plan, trainingAddon, languages, digestEnabled);
     await refreshLocalState();
   };
@@ -694,7 +694,7 @@ function AppInner() {
     triggerToast("Logged out successfully.");
   };
 
-  const handleAddTenant = async (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => {
+  const handleAddTenant = async (clientId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant") => {
     await store.addTenant(clientId, name, subdomain, logo, plan);
     await refreshLocalState();
   };
@@ -901,7 +901,7 @@ function AppInner() {
   };
 
   // Outlet & Staff CRUD Callbacks
-  const handleUpdateTenant = async (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training") => {
+  const handleUpdateTenant = async (tenantId: string, name: string, subdomain: string, logo: string, plan: "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | "Assistant") => {
     await store.updateTenant(tenantId, name, subdomain, logo, plan);
     await refreshLocalState();
     triggerToast("Outlet workspace updated.");

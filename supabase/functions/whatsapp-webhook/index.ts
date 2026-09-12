@@ -317,7 +317,10 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
     // 4pm" lands as a reminder/meeting — not always a task. If no verb is
     // recognized, fall back to the original behavior: a straight task capture.
     if (await routeVerbCommand(fromPhone, userId, tenantId, transcript)) return;
-    await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_voice", transcript);
+    // The verb router already handled rem/meet. A voice note that's neither would
+    // otherwise become a task — skip that for a task-less plan (Assistant).
+    if (await tasksAllowed(tenantId)) await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_voice", transcript);
+    else await sendText(fromPhone, "🎙️ Got it. For a *reminder* say _\"remind me to …\"_, or a *meeting* say _\"meeting with …\"_. To translate, send *msg*.");
     return;
   }
 
@@ -328,11 +331,18 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
     // without one is plain content → offer to capture it as a task. (Voice notes
     // are exempt — handled above — since you can't speak a slash.)
     const cmd = asCommand(text);
-    if (cmd === null) { await offerCaptureMenu(fromPhone, userId, tenantId, text); return; }
+    if (cmd === null) {
+      // Plain content → a task capture. Skip it entirely for a task-less plan
+      // (Assistant): point them at what they CAN do instead of offering a task.
+      if (await tasksAllowed(tenantId)) await offerCaptureMenu(fromPhone, userId, tenantId, text);
+      else await sendText(fromPhone, "🙂 I can help with *Reminders* (*/rem*), *Meetings* (*/meet*) and *Translate* (send *msg*). Send */help* to see how.");
+      return;
+    }
 
     // "/new task ..." (or "/newtask ...") → straight to a prefilled capture link.
     const newTask = cmd.match(/^new\s*task\b[:\-\s]*(.*)$/is);
     if (newTask) {
+      if (!(await tasksAllowed(tenantId))) { await denyTasks(fromPhone); return; }
       const content = (newTask[1] || "").trim();
       await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_newtask", content);
       return;
@@ -444,6 +454,7 @@ async function routeVerbCommand(fromPhone: string, userId: string, tenantId: str
   // "task <details>" → CREATE: opens the same prefilled task form as "Create a task".
   const taskKw = text.match(/^\s*tasks?\b(.*)$/is);
   if (taskKw) {
+    if (!(await tasksAllowed(tenantId))) { await denyTasks(fromPhone); return true; }
     const rest = (taskKw[1] || "").trim();
     const tf = rest.toLowerCase();
     // Scope shortcuts — "tasks to me" / "tasks by me" jump straight to the right
@@ -481,28 +492,97 @@ async function routeVerbCommand(fromPhone: string, userId: string, tenantId: str
 
 // ── Main menu (WhatsApp interactive list) ─────────────────────────────────────
 
+// ── Plan entitlements (mirror of src/services/plans.ts, for the webhook) ──────
+// The app gates its tabs from the CLIENT's plan; the WhatsApp bot mirrors that
+// for the features it exposes. Chiefly: an "Assistant" (or "Training") client has
+// no `tasks` feature, so the task-capture flows are hidden here — while
+// Reminders / Meetings / Translate (WhatsApp-only, plan-independent) keep working.
+type Feat = "tasks" | "notices" | "checklists" | "maintenance" | "training" | "sops";
+const ALL_FEATS: Feat[] = ["tasks", "notices", "checklists", "maintenance", "training", "sops"];
+const TRIAL_MS = 15 * 24 * 60 * 60 * 1000;
+
+/** Per-isolate memo of tenant → client plan row, so gating costs ≤1 lookup. */
+const _planCache = new Map<string, { plan: string; is_demo?: boolean; demo_expires_at?: string; created_at?: string; training_addon?: boolean } | null>();
+
+async function clientPlanFor(tenantId: string | null) {
+  if (!tenantId) return null;
+  if (_planCache.has(tenantId)) return _planCache.get(tenantId)!;
+  let row: any = null;
+  try {
+    const { data: t } = await supabase.from("tenants").select("client_id").eq("id", tenantId).single();
+    const clientId = t?.client_id;
+    if (clientId) {
+      const { data: c } = await supabase.from("clients")
+        .select("plan, is_demo, demo_expires_at, created_at, training_addon").eq("id", clientId).single();
+      if (c) row = c;
+    }
+  } catch (_) { /* fail-open below */ }
+  _planCache.set(tenantId, row);
+  return row;
+}
+
+/** The feature keys a client is entitled to (mirrors plans.planFeatures). When the
+ *  plan can't be resolved we FAIL OPEN (all features) so a lookup hiccup can never
+ *  silently strip an existing client's task flows. */
+function planFeatureKeys(row: any): Feat[] {
+  if (!row) return [...ALL_FEATS];
+  const now = Date.now();
+  if (row.is_demo) return (row.demo_expires_at && now < Date.parse(row.demo_expires_at)) ? [...ALL_FEATS] : [];
+  if (row.plan === "Free") {
+    const created = row.created_at ? Date.parse(row.created_at) : now; // missing → treat as just-created (active), like the app
+    return (now - created <= TRIAL_MS) ? [...ALL_FEATS] : [];
+  }
+  const addon = !!row.training_addon;
+  switch (row.plan) {
+    case "Essential":  return addon ? ["tasks", "training"] : ["tasks"];
+    case "Pro":        return addon ? ["tasks", "checklists", "maintenance", "notices", "training"] : ["tasks", "checklists", "maintenance", "notices"];
+    case "Enterprise": return ["tasks", "checklists", "maintenance", "notices", "training", "sops"];
+    case "Training":   return ["training"];
+    case "Assistant":  return [];
+    default:           return [...ALL_FEATS]; // unknown label → fail open
+  }
+}
+
+async function clientFeatureSet(tenantId: string | null): Promise<Set<Feat>> {
+  return new Set(planFeatureKeys(await clientPlanFor(tenantId)));
+}
+
+/** True when this client may use the Task Manager over WhatsApp. */
+async function tasksAllowed(tenantId: string | null): Promise<boolean> {
+  return (await clientFeatureSet(tenantId)).has("tasks");
+}
+
+/** Friendly "not on your plan" reply for a task action a client can't use. */
+async function denyTasks(fromPhone: string) {
+  await sendText(
+    fromPhone,
+    "📋 The *Task Manager* isn't part of your plan.\n\nYou can still use *Reminders* (*/rem*), *Meetings* (*/meet*) and *Translate* (send *msg*). Send */help* to see how.",
+  );
+}
+
 /** Show the tappable action menu. The list BODY is a live personalised briefing
  *  (open tasks + overdue, new notices, pending training) so "Hi" doubles as the
- *  daily digest — all free, since it's inside the user-opened 24h window. */
+ *  daily digest — all free, since it's inside the user-opened 24h window. Rows are
+ *  gated by the client's plan, so a task-less plan (e.g. Assistant) shows only
+ *  Reminders / Meetings / Translate / Help. */
 async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: string | null) {
+  const feats = await clientFeatureSet(tenantId ?? null);
   const body = userId ? await buildBriefingBody(userId, tenantId ?? null)
                       : "👋 *Horae* — what would you like to do?";
-  await sendList(
-    fromPhone,
-    body,
-    "Choose",
-    [
-      { id: "menu_view_tasks",    title: "📋 View & Update Tasks" },
-      { id: "menu_create_task",   title: "📝 Create a task" },
-      { id: "menu_complaint",     title: "⚠️ Raise a complaint" },
-      { id: "menu_checklists",    title: "✅ My checklists" },
-      { id: "menu_training",      title: "📚 My training" },
-      { id: "menu_reminders",     title: "⏰ Reminders" },
-      { id: "menu_meetings",      title: "📅 Meetings" },
-      { id: "menu_help",          title: "❓ Help — how to use" },
-      { id: "menu_go_app",        title: "🔗 Go to Horae app", description: `${APP_BASE_URL}/dashboard` },
-    ],
-  );
+  const rows: ListRow[] = [];
+  if (feats.has("tasks")) {
+    rows.push({ id: "menu_view_tasks",  title: "📋 View & Update Tasks" });
+    rows.push({ id: "menu_create_task", title: "📝 Create a task" });
+    rows.push({ id: "menu_complaint",   title: "⚠️ Raise a complaint" });
+  }
+  if (feats.has("checklists")) rows.push({ id: "menu_checklists", title: "✅ My checklists" });
+  if (feats.has("training"))   rows.push({ id: "menu_training",   title: "📚 My training" });
+  rows.push({ id: "menu_reminders", title: "⏰ Reminders" });
+  rows.push({ id: "menu_meetings",  title: "📅 Meetings" });
+  rows.push({ id: "menu_translate", title: "🌍 Translate" });
+  rows.push({ id: "menu_help",      title: "❓ Help — how to use" });
+  rows.push({ id: "menu_go_app",    title: "🔗 Go to Horae app", description: `${APP_BASE_URL}/dashboard` });
+  await sendList(fromPhone, body, "Choose", rows);
 }
 
 /** Build the personalised briefing shown as the menu's body text. Best-effort:
@@ -597,6 +677,11 @@ async function pendingTrainingCount(userId: string, tenantId: string | null, use
 
 /** Dispatch a main-menu list selection. */
 async function handleMenuSelection(id: string, fromPhone: string, userId: string, tenantId: string | null) {
+  // Task rows are gated on the client's plan (defensive — a task-less plan hides
+  // them from the menu, but a stale tap could still arrive).
+  if ((id === "menu_create_task" || id === "menu_view_tasks" || id === "menu_complaint") && !(await tasksAllowed(tenantId))) {
+    await denyTasks(fromPhone); return;
+  }
   switch (id) {
     case "menu_create_task":   await startAwaitingInput(fromPhone, userId, tenantId, "create_task"); break;
     case "menu_reminders":     await sendRemindersList(fromPhone, userId, "all", true, "reminder"); break;
@@ -605,6 +690,7 @@ async function handleMenuSelection(id: string, fromPhone: string, userId: string
     case "menu_view_tasks":    await sendTaskScopePrompt(fromPhone); break;
     case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
     case "menu_training":      await sendTrainingList(fromPhone, userId, tenantId); break;
+    case "menu_translate":     await sendText(fromPhone, "🌍 *Translate*\n\nSend *msg* (or */msg*) to translate text — or a voice note — between your languages."); break;
     case "menu_help":          await sendHelp(fromPhone, userId); break;
     case "help_tasks":         await sendHelpTopic(fromPhone, "tasks"); break;
     case "help_reminders":     await sendHelpTopic(fromPhone, "reminders"); break;
@@ -1763,6 +1849,10 @@ async function handleButtonReply(m: any, fromPhone: string, userId: string, tena
   if (!conv) return; // menu expired or already handled
 
   if (buttonId === "create_task") {
+    if (!(await tasksAllowed(tenantId))) {
+      await supabase.from("whatsapp_conversations").update({ state: "done", updated_at: new Date().toISOString() }).eq("id", conv.id);
+      await denyTasks(fromPhone); return;
+    }
     const text = conv.payload?.text || "";
     await supabase.from("whatsapp_conversations").update({ state: "done", updated_at: new Date().toISOString() }).eq("id", conv.id);
     await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_forward", text);
