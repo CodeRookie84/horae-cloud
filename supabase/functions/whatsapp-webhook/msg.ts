@@ -86,12 +86,11 @@ const TRANSLIT_SUPPORTED = new Set([
   "hi", "kn", "ta", "te", "ml", "mr", "bn", "gu", "pa", "or", "ur", "ar", "ne", "si", "fa", "el", "ru",
 ]);
 
-// Leading keywords that belong to Horae's own WhatsApp features. If one of these
-// starts a message while a translation session is open, we hand the message back
-// to index.ts (which routes rem/meet/task/menu/… ) instead of translating it.
-// Deliberately narrow — the pure feature-launch words — so ordinary text (incl.
-// "delete", "change", "today") is still translated normally.
-const HORAE_COMMAND = /^\s*(?:hi|hai|hey|hello|menu|start|help|rem(?:ind(?:er)?s?)?|meet(?:ing)?s?|tasks?|new\s*task|kot)\b/i;
+// Any backslash-prefixed message is a Horae command (\rem, \task, \menu, …). If
+// one arrives while a translation session is open, we hand it straight back to
+// index.ts for normal routing instead of translating it — so `\rem` lists your
+// reminders. Plain text (no backslash) is still translated as before.
+const HORAE_COMMAND = /^\s*\\/;
 
 interface MsgWho { participantId: string; clientId: string | null; name: string; languages: string[]; }
 interface MsgSession { phone_last10: string; state: string; input_lang: string | null; output_langs: string[]; }
@@ -108,7 +107,7 @@ interface StaffCtx { userId: string; name?: string | null; }
  *  sender isn't a msg participant, or when there's neither the keyword nor an
  *  open session — so normal Horae routing takes over. */
 export async function routeMsgText(text: string, fromPhone: string, staff?: StaffCtx): Promise<boolean> {
-  const isKeyword = /^\s*[\/?]?msg\b/i.test(text);
+  const isKeyword = /^\s*[\/?\\]?msg\b/i.test(text);
   const last10 = digits10(fromPhone);
   if (!last10) return false;
   const session = await getSession(last10);
@@ -117,22 +116,25 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
   const who = await resolveMsgParticipant(fromPhone, staff);
   if (!who) return false; // neither an onboarded phone nor staff → let Horae handle it
 
-  // A recognised Horae feature keyword ALWAYS breaks out of an open translation
-  // session, so the user can jump straight to reminders / tasks / the menu without
-  // first closing the translator. (Bug: after translating, typing *rem* was being
-  // swallowed as text to translate — transliterated to gibberish — instead of
-  // listing reminders.) Only when a session is already open (the *msg* keyword
-  // itself is handled below); we close the session first, then return false so
-  // index.ts routes the message through normal Horae handling.
+  // A backslash-prefixed Horae command (\rem, \task, \menu, …) ALWAYS breaks out
+  // of an open translation session, so the user can jump straight to reminders /
+  // tasks / the menu without first closing the translator. (Bug: after translating,
+  // typing plain *rem* was swallowed as text to translate — transliterated to
+  // gibberish — instead of listing reminders; a command now needs the \ prefix.)
+  // Only when a session is already open (the *msg* / *\msg* keyword is handled
+  // below); we close the session first, then return false so index.ts routes the
+  // message through normal Horae handling.
   if (session && !isKeyword && HORAE_COMMAND.test(text)) {
     await clearSession(last10);
     return false;
   }
 
-  // A cancel/close command ends the session cleanly, at any point.
-  if (/^\s*(cancel|stop|back|done|menu|exit)\b/i.test(text)) {
+  // A bare cancel/close verb ends the session cleanly, at any point. (\menu /
+  // \cancel and any other \command already handed off above; the ✖ Done button
+  // closes too. "done"/"menu" are left out here so they're translated normally.)
+  if (/^\s*(cancel|stop|back|exit)\b/i.test(text)) {
     await clearSession(last10);
-    await sendText(fromPhone, "✅ Translation closed. Send *msg* any time to translate again.");
+    await sendText(fromPhone, "✅ Translation closed. Send *\\menu* for options, or *msg* to translate again.");
     return true;
   }
 
@@ -140,7 +142,7 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
   // "langs" / "reset" while a session is open. This is the escape hatch for a user
   // who saved the wrong 5 — before this, the only route back to the picker was the
   // "Edit my 5" button, which appears only AFTER a completed translation.
-  const afterKeyword = text.replace(/^\s*[\/?]?msg\b/i, "").trim();
+  const afterKeyword = text.replace(/^\s*[\/?\\]?msg\b/i, "").trim();
   if (/^(langs?|languages?|re-?pick|reset)\s*$/i.test(afterKeyword)) {
     await startLangPick(fromPhone, who, last10);
     return true;
