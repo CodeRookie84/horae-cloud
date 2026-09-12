@@ -86,6 +86,13 @@ const TRANSLIT_SUPPORTED = new Set([
   "hi", "kn", "ta", "te", "ml", "mr", "bn", "gu", "pa", "or", "ur", "ar", "ne", "si", "fa", "el", "ru",
 ]);
 
+// Leading keywords that belong to Horae's own WhatsApp features. If one of these
+// starts a message while a translation session is open, we hand the message back
+// to index.ts (which routes rem/meet/task/menu/… ) instead of translating it.
+// Deliberately narrow — the pure feature-launch words — so ordinary text (incl.
+// "delete", "change", "today") is still translated normally.
+const HORAE_COMMAND = /^\s*(?:hi|hai|hey|hello|menu|start|help|rem(?:ind(?:er)?s?)?|meet(?:ing)?s?|tasks?|new\s*task|kot)\b/i;
+
 interface MsgWho { participantId: string; clientId: string | null; name: string; languages: string[]; }
 interface MsgSession { phone_last10: string; state: string; input_lang: string | null; output_langs: string[]; }
 
@@ -109,6 +116,18 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
 
   const who = await resolveMsgParticipant(fromPhone, staff);
   if (!who) return false; // neither an onboarded phone nor staff → let Horae handle it
+
+  // A recognised Horae feature keyword ALWAYS breaks out of an open translation
+  // session, so the user can jump straight to reminders / tasks / the menu without
+  // first closing the translator. (Bug: after translating, typing *rem* was being
+  // swallowed as text to translate — transliterated to gibberish — instead of
+  // listing reminders.) Only when a session is already open (the *msg* keyword
+  // itself is handled below); we close the session first, then return false so
+  // index.ts routes the message through normal Horae handling.
+  if (session && !isKeyword && HORAE_COMMAND.test(text)) {
+    await clearSession(last10);
+    return false;
+  }
 
   // A cancel/close command ends the session cleanly, at any point.
   if (/^\s*(cancel|stop|back|done|menu|exit)\b/i.test(text)) {
@@ -305,10 +324,16 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
     if (native) source = native;
   }
 
-  // 2. Translate to each output language (identity when out === input).
+  // 2. Translate to each output language (identity when out === input). A null
+  //    result means every Google endpoint failed (throttled) — collect those so
+  //    we can tell the user rather than passing the untranslated text off as a
+  //    "translation".
   const results: Array<{ lang: string; text: string }> = [];
+  const failed: string[] = [];
   for (const out of outputLangs) {
-    const t = out === inputLang ? source : await translate(source, out, inputLang);
+    if (out === inputLang) { results.push({ lang: out, text: source }); continue; }
+    const t = await translate(source, out, inputLang);
+    if (t == null) { failed.push(out); continue; }
     results.push({ lang: out, text: t });
   }
 
@@ -316,9 +341,18 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
   //    translation ONLY, so a long-press → Copy / Forward grabs exactly the text
   //    to paste into any WhatsApp group. (WhatsApp has no "copy" button; a clean
   //    standalone message is the copy/forward unit.)
-  await sendText(fromPhone, `🌐 Translations (long-press any message to *Copy* or *Forward*):`);
-  for (const r of results) {
-    await sendText(fromPhone, r.text);
+  if (results.length) {
+    await sendText(fromPhone, `🌐 Translations (long-press any message to *Copy* or *Forward*):`);
+    for (const r of results) {
+      await sendText(fromPhone, r.text);
+    }
+  }
+  if (failed.length) {
+    await sendText(
+      fromPhone,
+      `⚠️ Couldn't translate into ${failed.map(langLabel).join(", ")} just now ` +
+      `(translation service is busy). Please send the text again in a moment.`,
+    );
   }
 
   // 4. Offer next actions. Session stays in await_content, so they can simply send
@@ -333,22 +367,25 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
 // ── Keyless Google helpers (duplicated for isolation) ────────────────────────
 
 /** Translate `text` into `target`, from `source` (falls back to auto-detect).
- *  Keyless Google endpoints, no key. The free `client=gtx` bucket is frequently
- *  rate-limited (HTTP 429) from datacenter IPs like Supabase's — which used to
- *  silently return the ORIGINAL text (looked like "translation doesn't work") —
- *  so we try several clients/hosts in order and only give up (returning the
- *  original) when every one fails. */
-async function translate(text: string, target: string, source?: string): Promise<string> {
+ *  Keyless Google endpoints, no key. The free buckets are frequently rate-limited
+ *  (HTTP 429) from datacenter IPs like Supabase's — a bare fetch with no browser
+ *  User-Agent gets throttled hardest — so we send a browser UA and try several
+ *  clients/hosts in order. Returns `null` (NOT the original text) when every one
+ *  fails, so the caller can tell the user it couldn't translate instead of echoing
+ *  the untranslated input back as if it were the translation. */
+async function translate(text: string, target: string, source?: string): Promise<string | null> {
   if (!text.trim() || !target) return text;
   const esl = encodeURIComponent(source || "auto");
   const tl = encodeURIComponent(target);
   const q = encodeURIComponent(text);
+  // A real browser UA — datacenter default UAs are the ones Google 429s first.
+  const headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36" };
 
   // 1) translate_a/single — rich shape [[["translated","src",…],…],…]. Two client
   //    buckets: "at" first (holds up when "gtx" is throttled), then "gtx".
   for (const client of ["at", "gtx"]) {
     try {
-      const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=${client}&dt=t&sl=${esl}&tl=${tl}&q=${q}`);
+      const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=${client}&dt=t&sl=${esl}&tl=${tl}&q=${q}`, { headers });
       if (!res.ok) continue;
       const data = await res.json();
       const out = (data?.[0] || []).map((item: any) => item?.[0] || "").join("");
@@ -358,7 +395,7 @@ async function translate(text: string, target: string, source?: string): Promise
   // 2) clients5 dict-chrome-ex — different host/quota, returns ["s1","s2",…].
   //    Often works when translate_a is throttled.
   try {
-    const res = await fetch(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${esl}&tl=${tl}&q=${q}`);
+    const res = await fetch(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${esl}&tl=${tl}&q=${q}`, { headers });
     if (res.ok) {
       const data = await res.json();
       const out = Array.isArray(data)
@@ -367,9 +404,9 @@ async function translate(text: string, target: string, source?: string): Promise
       if (out) return out;
     }
   } catch (e) {
-    console.error("[msg.translate] all endpoints failed, returning original:", e);
+    console.error("[msg.translate] all endpoints failed:", e);
   }
-  return text;
+  return null;
 }
 
 /** Transliterate romanized (Latin) `text` into `lang`'s native script via the
@@ -382,7 +419,7 @@ async function transliterate(text: string, lang: string): Promise<string> {
     for (const w of words) {
       if (!/\S/.test(w) || !/[a-zA-Z]/.test(w)) { out.push(w); continue; }
       const url = `https://inputtools.google.com/request?text=${encodeURIComponent(w)}&itc=${encodeURIComponent(lang)}-t-i0-und&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8`;
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36" } });
       if (!res.ok) { out.push(w); continue; }
       const data = await res.json().catch(() => null);
       // Shape: ["SUCCESS", [ [ "<input>", ["<transliterated>", ...], [], {} ] ] ]
