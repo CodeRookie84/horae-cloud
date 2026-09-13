@@ -1404,15 +1404,10 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
     for (const r of upcoming) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 ${fmtWhen(r.remind_at)}`); }
   }
 
-  const removeHint = ids.length === 1
-    ? `\n\n❌ Remove it: */done 1*   ·   ✏️ Change it: */edit 1 <new time>*   ·   🗓️ Turn on Calendar notification: */cal 1*`
-    : `\n\n❌ Remove: */done 1* (or */done 1 3*…)   ·   ✏️ Change: */edit 1 <new time>*   ·   🗓️ Turn on Calendar notification: */cal 1* or */cal 2*…`;
-  const addHint = showHint
-    ? (isMeeting
-        ? `\n➕ Add: */meet <what> # <time>*   ·   🔎 See: */meet*, */meet today*, */meet tomorrow*`
-        : `\n➕ Add: */rem <note> # <time>*   ·   🔎 See: */rem*, */rem today*, */rem tomorrow*`)
-    : "";
-  await sendText(fromPhone, `${parts.join("\n")}${removeHint}${addHint}`);
+  // The full manage/add cheat-sheet used to print under every list, which got
+  // tiresome — it lives in /help now. Just leave one tiny pointer.
+  const helpHint = showHint ? `\n\n_Add / remove / reschedule — see */help ${isMeeting ? "meetings" : "reminders"}*_` : "";
+  await sendText(fromPhone, `${parts.join("\n")}${helpHint}`);
 
   // Remember the shown order so a later "done <n>" maps N → the right row. Expire
   // any earlier list first so "done 2" always refers to the most recent listing.
@@ -1706,9 +1701,10 @@ async function sendHelpTopic(fromPhone: string, topic: HelpTopic) {
         `Start by sending */msg* (or *msg*). Then:\n\n` +
         `1️⃣ First time only: pick your *5 languages* — reply with 5 numbers, e.g. *2 3 4 6 20*.\n\n` +
         `2️⃣ Choose *input > outputs* — the language you'll write in, then the ones to translate INTO:\n` +
-        `• *1 > 3 4*  (from language 1 into 3 and 4)\n` +
-        `• Also fine: *1 > 3,4*  ·  *1 to 3 4*  ·  *1to3,4*  (commas or spaces, both optional)\n\n` +
-        `3️⃣ Send the *text* — or a *voice note*. You can type in English letters (romanised) and I'll read it in your language.\n\n` +
+        `• *1 to 3,4*  (from language 1 into 3 and 4)\n` +
+        `• Also fine: *1 > 3 4*  ·  *1 > 3,4*  ·  *1to3,4*  (commas or spaces, both optional)\n\n` +
+        `⚡ Shortcut: send it in one go — *msg 1 to 3,4* — to skip straight to step 3.\n\n` +
+        `3️⃣ Send the *text* you want translated. You can type in English letters (romanised) and I'll read it in your language.\n\n` +
         `Each translation comes back as its *own* message — long-press to *Copy* or *Forward*.\n\n` +
         `• *msg langs* — change your 5 languages\n` +
         `• *cancel* — close the translator`;

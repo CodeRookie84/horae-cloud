@@ -153,6 +153,17 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
     return true;
   }
 
+  // One-shot: "/msg 1 > 3,4" (any of the selection variations) picks input→outputs
+  // in the SAME message and jumps straight to "send the text" — a shortcut for a
+  // regular user who already knows their pair, skipping the "which languages" step.
+  // Only when the keyword carries a numeric selection AND the 5 are already set; an
+  // invalid one falls through to the normal picker below.
+  if (isKeyword && /\d/.test(afterKeyword) && who.languages.length >= 2 &&
+      parseSelection(afterKeyword, who.languages.length)) {
+    await handleSelection(fromPhone, who, last10, afterKeyword);
+    return true;
+  }
+
   // The keyword always (re)starts: pick languages the first time, else the
   // input→outputs prompt (keeping the 5 they already chose).
   if (isKeyword || !session) {
@@ -281,21 +292,18 @@ async function startSelection(fromPhone: string, who: MsgWho, last10: string) {
   await sendText(
     fromPhone,
     `🌐 *Which languages?*\n\n${list}\n\nReply *input > outputs*\n` +
-    `e.g. *1 > 3 4*  (from ${langLabel(who.languages[0])} into languages 3 and 4)`,
+    `e.g. *1 to 3,4*  (from ${langLabel(who.languages[0])} into languages 3 and 4)`,
   );
 }
 
-/** Parse the "input > outputs" selection, validate, store input_lang +
- *  output_langs, ask for content. Accepts every shape below (spaces optional,
- *  commas or spaces between the output numbers):
- *    1 > 3 4   ·   1 > 3,4   ·   1>3,4   ·   1 to 3 4   ·   1 to 3,4   ·   1to3,4
- *  and the arrow "1 → 3 4". Numbers left of the separator = input; right = outputs. */
-async function handleSelection(fromPhone: string, who: MsgWho, last10: string, text: string) {
-  const n = who.languages.length;
+/** Parse an "input > outputs" selection against `n` languages. Accepts every shape
+ *  (spaces optional, commas or spaces between output numbers):
+ *    1 > 3 4  ·  1 > 3,4  ·  1>3,4  ·  1 to 3 4  ·  1 to 3,4  ·  1to3,4  ·  1 → 3 4
+ *  Numbers left of the separator = input, right = outputs. Returns null if invalid. */
+function parseSelection(text: string, n: number): { inputIdx: number; outIdxs: number[] } | null {
   // Normalise any separator — ">", "→", or the word "to" (even with no spaces,
   // e.g. "1to3") — to a single ">". Digits never contain letters, so replacing
-  // every "to" is safe. parseNumbers then ignores the commas/spaces around the
-  // numbers.
+  // every "to" is safe. parseNumbers then ignores commas/spaces around the numbers.
   const norm = text.replace(/→/g, ">").replace(/to/gi, ">");
   let inputIdx: number; let outIdxs: number[];
   if (norm.includes(">")) {
@@ -303,19 +311,26 @@ async function handleSelection(fromPhone: string, who: MsgWho, last10: string, t
     inputIdx = parseNumbers(parts[0])[0];               // first number before the 1st ">"
     outIdxs = parseNumbers(parts.slice(1).join(" "));   // everything after it
   } else {
-    // No separator (e.g. "1 3 4") → first number is the input, the rest outputs.
-    const all = parseNumbers(norm);
+    const all = parseNumbers(norm);                     // "1 3 4" → 1 in, rest out
     inputIdx = all[0];
     outIdxs = all.slice(1);
   }
   const valid = (x: number) => Number.isInteger(x) && x >= 1 && x <= n;
   outIdxs = [...new Set(outIdxs.filter(valid))];
-  if (!valid(inputIdx) || outIdxs.length === 0) {
-    await sendText(fromPhone, `Reply like *1 > 3 4* — one input number (1–${n}), then one or more output numbers.`);
+  if (!valid(inputIdx) || outIdxs.length === 0) return null;
+  return { inputIdx, outIdxs };
+}
+
+/** Validate the selection, store input_lang + output_langs, ask for content. */
+async function handleSelection(fromPhone: string, who: MsgWho, last10: string, text: string) {
+  const n = who.languages.length;
+  const sel = parseSelection(text, n);
+  if (!sel) {
+    await sendText(fromPhone, `Reply like *1 to 3,4* — one input number (1–${n}), then one or more output numbers.`);
     return;
   }
-  const inputLang = who.languages[inputIdx - 1];
-  const outputLangs = outIdxs.map((i) => who.languages[i - 1]);
+  const inputLang = who.languages[sel.inputIdx - 1];
+  const outputLangs = sel.outIdxs.map((i) => who.languages[i - 1]);
   await upsertSession(last10, who, { state: "await_content", input_lang: inputLang, output_langs: outputLangs });
   await sendText(
     fromPhone,
