@@ -1320,7 +1320,8 @@ function istDayRange(dayOffset: number): { from: string; to: string } {
  *  is no "Tap to select an item" footer, and there is no 10-row cap. To remove an
  *  item the user replies "done <n>" — see handleListDone; to reschedule/rewrite
  *  one (handy for an overdue item) they reply "edit <n> <changes>" — see handleListEdit.
- *  `showHint` adds the add/see instructions — on only for the menu "Remind" tap. */
+ *  (`showHint` is retained for call-site compatibility; every list now prints the
+ *  same tiny "/help" pointer regardless.) */
 async function sendRemindersList(fromPhone: string, userId: string, filter: ReminderFilter = "all", showHint = false, kind: "reminder" | "meeting" = "reminder") {
   const isMeeting = kind === "meeting";
   const noun = isMeeting ? "meetings" : "reminders";
@@ -1405,8 +1406,8 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   }
 
   // The full manage/add cheat-sheet used to print under every list, which got
-  // tiresome — it lives in /help now. Just leave one tiny pointer.
-  const helpHint = showHint ? `\n\n_Add / remove / reschedule — see */help ${isMeeting ? "meetings" : "reminders"}*_` : "";
+  // tiresome — it lives in /help now. Just one tiny pointer under every list.
+  const helpHint = `\n\n_Add / remove / reschedule — type */help*_`;
   await sendText(fromPhone, `${parts.join("\n")}${helpHint}`);
 
   // Remember the shown order so a later "done <n>" maps N → the right row. Expire
