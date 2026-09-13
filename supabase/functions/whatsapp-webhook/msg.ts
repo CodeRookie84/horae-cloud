@@ -22,7 +22,7 @@
 // handling, so this keyword is invisible to everyone else. Remove MSG = delete
 // this file + the `// [MSG]` seam in index.ts + the import.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { transcribeAudio } from "../_shared/ai.ts";
+import { transcribeAudio, translateViaGroq } from "../_shared/ai.ts";
 
 const SUPABASE_URL      = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -78,6 +78,8 @@ const langLabel = (code: string) => {
   const l = LANG_BY_CODE.get(code);
   return l ? `${l.native} (${l.name})` : code;
 };
+/** The plain English name of a language (for the Groq fallback prompt). */
+const langName = (code: string) => LANG_BY_CODE.get(code)?.name || code;
 
 // Languages whose native script Google Input Tools can produce from romanized
 // (Latin-letter) input. If a selected input language isn't here, we skip
@@ -337,15 +339,16 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
     if (native) source = native;
   }
 
-  // 2. Translate to each output language (identity when out === input). A null
-  //    result means every Google endpoint failed (throttled) — collect those so
-  //    we can tell the user rather than passing the untranslated text off as a
-  //    "translation".
+  // 2. Translate to each output language (identity when out === input). Keyless
+  //    Google is tried first; if it's throttled (null), fall back to the Groq LLM
+  //    so a rate-limit no longer surfaces as "translation service is busy". Only a
+  //    failure of BOTH engines is collected as `failed` and reported to the user.
   const results: Array<{ lang: string; text: string }> = [];
   const failed: string[] = [];
   for (const out of outputLangs) {
     if (out === inputLang) { results.push({ lang: out, text: source }); continue; }
-    const t = await translate(source, out, inputLang);
+    let t = await translate(source, out, inputLang);
+    if (t == null) t = (await translateViaGroq(source, langName(out), langName(inputLang))) || null;
     if (t == null) { failed.push(out); continue; }
     results.push({ lang: out, text: t });
   }
@@ -411,18 +414,18 @@ async function translate(text: string, target: string, source?: string): Promise
     return Array.isArray(data) ? data.map((s: any) => (typeof s === "string" ? s : Array.isArray(s) ? s[0] : "")).join("") : "";
   });
 
-  // Up to 3 passes over every endpoint, with a short backoff between passes — the
-  // free buckets throttle (429) intermittently, so a brief wait + retry usually
-  // gets through. We run in the background (after Meta's 200), so this is safe.
+  // 2 passes over every endpoint with one short backoff — a transient 429 usually
+  // clears on the retry. We keep it short because the caller has a Groq fallback
+  // for a persistent throttle; no point grinding many passes here first.
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   let lastErr: unknown = null;
-  for (let pass = 0; pass < 3; pass++) {
+  for (let pass = 0; pass < 2; pass++) {
     for (const attempt of attempts) {
       try { const out = await attempt(); if (out) return out; } catch (e) { lastErr = e; }
     }
-    if (pass < 2) await sleep(500 * (pass + 1));
+    if (pass < 1) await sleep(400);
   }
-  console.error("[msg.translate] all endpoints failed after retries:", lastErr);
+  console.error("[msg.translate] Google endpoints failed (will try Groq fallback):", lastErr);
   return null;
 }
 
