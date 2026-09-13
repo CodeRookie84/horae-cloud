@@ -3,26 +3,28 @@
 //
 // An onboarded person (matched by phone against msg_participants of a msg-enabled
 // client — a directory that is INDEPENDENT of Horae's staff `users` table) can
-// translate text/voice between the 5 languages they picked:
+// translate text between the 5 languages they picked:
 //   /msg (or msg / ?msg)  → first time: pick your 5 languages; after that: the
 //                           "input > outputs" prompt
 //   e.g. "1 > 2 3"        → translate FROM language 1 INTO languages 2 and 3
-//   then type or speak    → each output language comes back as its OWN clean
+//   then type the text    → each output language comes back as its OWN clean
 //                           standalone message (long-press → Copy / Forward), so
 //                           it pastes straight into any WhatsApp group.
 // Romanized input (e.g. Kannada typed in English letters) is transliterated to
 // the selected input language's native script BEFORE translating. Output is
-// always the target language's native script, never romanized.
+// always the target language's native script, never romanized. (Voice input was
+// removed 2026-09-14 — no reliable server-side engine to translate the transcript;
+// see routeMsgAudio.)
 //
 // ISOLATION: this file is fully self-contained — its own Supabase client, its own
 // WhatsApp send helpers, its own translate/transliterate calls (all keyless
 // Google endpoints, duplicated, never imported from Horae). The single shared
-// dependency is transcribeAudio (the shared AI helper), used only for voice.
-// Anyone who isn't a msg participant falls straight through to normal Horae
-// handling, so this keyword is invisible to everyone else. Remove MSG = delete
-// this file + the `// [MSG]` seam in index.ts + the import.
+// dependency is translateViaGroq (the shared AI helper), the LLM fallback used when
+// Google translate is throttled. Anyone who isn't a msg participant falls straight
+// through to normal Horae handling, so this keyword is invisible to everyone else.
+// Remove MSG = delete this file + the `// [MSG]` seam in index.ts + the import.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { transcribeAudio, translateViaGroq } from "../_shared/ai.ts";
+import { translateViaGroq } from "../_shared/ai.ts";
 
 const SUPABASE_URL      = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -167,9 +169,14 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
   }
 }
 
-/** A voice note. Only meaningful while the session is awaiting content; then we
- *  transcribe it and translate exactly like typed text. */
-export async function routeMsgAudio(mediaId: string, fromPhone: string, staff?: StaffCtx): Promise<boolean> {
+/** A voice note during a translation session. Voice input was REMOVED (2026-09-14):
+ *  the only speech-to-text option here is Groq Whisper, and translating its output
+ *  needs a translation engine that's reliable server-side — Google is throttled
+ *  (429) from the datacenter IP and Groq chat isn't available on this key — so voice
+ *  translations kept failing. We still intercept the note (so it isn't mistaken for
+ *  a task voice note) and ask the user to type instead. Re-enable by restoring the
+ *  transcribe→handleContent path once a reliable translation engine is in place. */
+export async function routeMsgAudio(_mediaId: string, fromPhone: string, staff?: StaffCtx): Promise<boolean> {
   const last10 = digits10(fromPhone);
   if (!last10) return false;
   const session = await getSession(last10);
@@ -177,13 +184,7 @@ export async function routeMsgAudio(mediaId: string, fromPhone: string, staff?: 
   const who = await resolveMsgParticipant(fromPhone, staff);
   if (!who) return false;
 
-  // Pin transcription to the language they chose as INPUT, so Whisper doesn't
-  // auto-detect the wrong one (which produced Arabic for a clearly-English note).
-  const transcript = await transcribeVoice(mediaId, session.input_lang);
-  if (!transcript) { await sendText(fromPhone, "🎙️ I couldn't read that voice note. Please type the text instead."); return true; }
-  // Voice already used Groq to transcribe (so Groq works on this key) — translate
-  // it via Groq first, skipping the possibly-throttled Google retries.
-  await handleContent(fromPhone, who, session, transcript, true);
+  await sendText(fromPhone, "🎙️ Voice notes aren't supported for translation — please *type* the text you want translated.");
   return true;
 }
 
@@ -319,7 +320,7 @@ async function handleSelection(fromPhone: string, who: MsgWho, last10: string, t
   await sendText(
     fromPhone,
     `✍️ *${langLabel(inputLang)} → ${outputLangs.map(langLabel).join(", ")}*\n\n` +
-    `Now send the text — or a voice note — you want translated. ` +
+    `Now *type* the text you want translated. ` +
     `You can type in English letters (I'll read it as ${langLabel(inputLang)}).`,
   );
 }
@@ -342,7 +343,7 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
   const inputLang = session.input_lang || "en";
   const outputLangs = session.output_langs || [];
   const raw = (content || "").trim();
-  if (!raw) { await sendText(fromPhone, "That looked empty — send the text or a voice note to translate."); return; }
+  if (!raw) { await sendText(fromPhone, "That looked empty — type the text to translate."); return; }
   if (!outputLangs.length) { await sendText(fromPhone, "No output language set. Send *msg* to choose again."); return; }
 
   // 1. If the text is in Latin letters but the input language uses another
@@ -470,27 +471,6 @@ async function transliterate(text: string, lang: string): Promise<string> {
  *  script, so no transliteration is needed.  -ɏ = ASCII + Latin-1 + Latin Ext-A/B. */
 function hasNonLatin(text: string): boolean {
   return /[^ -ɏ]/.test(text);
-}
-
-/** Download a WhatsApp voice note and transcribe it (Groq Whisper, shared helper).
- *  `language` (the session's input language) pins Whisper so it doesn't auto-detect
- *  the wrong one. */
-async function transcribeVoice(mediaId: string, language?: string | null): Promise<string> {
-  try {
-    const metaRes = await fetch(`https://graph.facebook.com/v19.0/${mediaId}`, { headers: { "Authorization": `Bearer ${META_WA_TOKEN}` } });
-    if (!metaRes.ok) return "";
-    const meta = await metaRes.json();
-    const mediaUrl: string = meta?.url;
-    const mime: string = meta?.mime_type || "audio/ogg";
-    if (!mediaUrl) return "";
-    const fileRes = await fetch(mediaUrl, { headers: { "Authorization": `Bearer ${META_WA_TOKEN}` } });
-    if (!fileRes.ok) return "";
-    const bytes = new Uint8Array(await fileRes.arrayBuffer());
-    return await transcribeAudio(bytes, mime.split(";")[0], "voice.ogg", language);
-  } catch (e) {
-    console.error("[msg.transcribeVoice] error:", e);
-    return "";
-  }
 }
 
 // ── Session store ────────────────────────────────────────────────────────────
