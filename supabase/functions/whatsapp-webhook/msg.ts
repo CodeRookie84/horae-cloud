@@ -181,7 +181,9 @@ export async function routeMsgAudio(mediaId: string, fromPhone: string, staff?: 
   // auto-detect the wrong one (which produced Arabic for a clearly-English note).
   const transcript = await transcribeVoice(mediaId, session.input_lang);
   if (!transcript) { await sendText(fromPhone, "🎙️ I couldn't read that voice note. Please type the text instead."); return true; }
-  await handleContent(fromPhone, who, session, transcript);
+  // Voice already used Groq to transcribe (so Groq works on this key) — translate
+  // it via Groq first, skipping the possibly-throttled Google retries.
+  await handleContent(fromPhone, who, session, transcript, true);
   return true;
 }
 
@@ -322,9 +324,21 @@ async function handleSelection(fromPhone: string, who: MsgWho, last10: string, t
   );
 }
 
+/** Translate one string, trying both engines. `preferGroq` picks the order: voice
+ *  notes already went through Groq (transcription), so Groq is tried first for them
+ *  — reliable and it skips the (possibly throttled) Google retries; typed text goes
+ *  Google-first (fast + free). Returns null only if BOTH engines fail. */
+async function translateBest(source: string, out: string, inputLang: string, preferGroq: boolean): Promise<string | null> {
+  const viaGoogle = () => translate(source, out, inputLang);
+  const viaGroq = async () => (await translateViaGroq(source, langName(out), langName(inputLang))) || null;
+  if (preferGroq) return (await viaGroq()) ?? (await viaGoogle());
+  return (await viaGoogle()) ?? (await viaGroq());
+}
+
 /** The heart of it: transliterate (if needed) → translate to each output → send
- *  each translation as its own clean, standalone (copy/forward-ready) message. */
-async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSession, content: string) {
+ *  each translation as its own clean, standalone (copy/forward-ready) message.
+ *  `preferGroq` is set for voice notes (see translateBest). */
+async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSession, content: string, preferGroq = false) {
   const inputLang = session.input_lang || "en";
   const outputLangs = session.output_langs || [];
   const raw = (content || "").trim();
@@ -347,8 +361,7 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
   const failed: string[] = [];
   for (const out of outputLangs) {
     if (out === inputLang) { results.push({ lang: out, text: source }); continue; }
-    let t = await translate(source, out, inputLang);
-    if (t == null) t = (await translateViaGroq(source, langName(out), langName(inputLang))) || null;
+    const t = await translateBest(source, out, inputLang, preferGroq);
     if (t == null) { failed.push(out); continue; }
     results.push({ lang: out, text: t });
   }
