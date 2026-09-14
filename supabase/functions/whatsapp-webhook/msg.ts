@@ -396,7 +396,11 @@ async function translatePreserving(source: string, out: string, inputLang: strin
   const inputLatin = isLatinInput(inputLang);
   const hasLatin = runs.some((r) => !r.native && hasLetters(r.text));
   const hasNative = runs.some((r) => r.native && hasLetters(r.text));
-  if (!(hasLatin && hasNative)) return translateBest(source, out, inputLang, preferGroq);
+  // Not mixed → nothing to preserve. OR the output IS English → the English chunks
+  // translate to themselves, so translating the WHOLE message keeps them AND reads
+  // more smoothly (proper word order) than chunk-by-chunk. Either way, translate
+  // the whole thing; chunking (below) is only for non-English targets.
+  if (!(hasLatin && hasNative) || out === "en") return translateBest(source, out, inputLang, preferGroq);
 
   const parts: string[] = [];
   for (const run of runs) {
