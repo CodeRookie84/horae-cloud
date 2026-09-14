@@ -208,7 +208,13 @@ export async function routeMsgInteractive(id: string, fromPhone: string, staff?:
   const who = await resolveMsgParticipant(fromPhone, staff);
   if (!who) return false;
 
-  if (id === "msg_change") { await startSelection(fromPhone, who, last10); return true; }
+  // "Change languages" no longer opens the numbered "Which languages?" prompt (that
+  // extra step is gone); it just points to the one-shot. Kept for any old buttons
+  // still in chat history.
+  if (id === "msg_change") {
+    await sendText(fromPhone, "🌐 To switch languages, send */msg 1 to 3,4* — your input number, then the outputs.\n\n(Send */msg* on its own if you need to see your numbered languages.)");
+    return true;
+  }
   if (id === "msg_relangs"){ await startLangPick(fromPhone, who, last10); return true; }
   if (id === "msg_done")   { await clearSession(last10); await sendText(fromPhone, "✅ Translation closed. Send *msg* any time to translate again."); return true; }
   return true;
@@ -398,11 +404,13 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
   }
 
   // 4. Offer next actions. Session stays in await_content, so they can simply send
-  //    more text/voice to translate again with the SAME languages.
-  await sendButtons(fromPhone, "Send more text to translate again, or:", [
-    { id: "msg_change", title: "🔁 Change languages" },
-    { id: "msg_done", title: "✖ Done" },
-  ]);
+  //    more text to translate again with the SAME languages. Switching languages is
+  //    now a one-shot (*/msg 1 to 3,4*) mentioned inline — no button/extra prompt.
+  await sendButtons(
+    fromPhone,
+    "Send more text to translate again.\n\n_To switch languages, send */msg 1 to 3,4* (input → outputs)._",
+    [{ id: "msg_done", title: "✖ Done" }],
+  );
 }
 
 // ── Keyless Google helpers (duplicated for isolation) ────────────────────────
