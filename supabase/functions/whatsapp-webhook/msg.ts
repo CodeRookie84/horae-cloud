@@ -357,6 +357,62 @@ async function translateBest(source: string, out: string, inputLang: string, pre
   return (await viaGoogle()) ?? (await viaGroq());
 }
 
+// Languages written in the LATIN alphabet (the rest of the catalogue is a distinct
+// script). Used to decide which runs of a mixed message are "in the input language".
+const LATIN_SCRIPT = new Set(["en", "es", "fr", "de", "pt", "it", "tr", "id", "vi", "nl", "pl", "sw"]);
+const isLatinInput = (code: string) => LATIN_SCRIPT.has(code);
+const hasLetters = (s: string) => /\p{L}/u.test(s);
+
+/** Split text into consecutive runs by SCRIPT of the letters (`native` = a non-Latin
+ *  script). Spaces / digits / punctuation are neutral — they attach to the current
+ *  run rather than forcing a split, so a native sentence with ASCII spaces stays ONE
+ *  run (translated with full context) instead of fragmenting word-by-word. */
+function splitByScript(text: string): Array<{ native: boolean; text: string }> {
+  const runs: Array<{ native: boolean; text: string }> = [];
+  for (const ch of text) {
+    const isLetter = /\p{L}/u.test(ch);
+    const isLatinLetter = /\p{Script=Latin}/u.test(ch);
+    const type = !isLetter ? null : !isLatinLetter; // null = neutral, else native?(true/false)
+    const last = runs[runs.length - 1];
+    if (type === null) {                       // neutral: keep in the current run
+      if (last) last.text += ch;
+      else runs.push({ native: false, text: ch });
+    } else if (last && last.native === type) {
+      last.text += ch;
+    } else {
+      runs.push({ native: type, text: ch });
+    }
+  }
+  return runs;
+}
+
+/** Translate, but keep any text NOT in the input language's script verbatim (e.g.
+ *  English words inside a Malayalam message stay English in every output). Only
+ *  kicks in when the message genuinely MIXES scripts — a single-script message (incl.
+ *  romanized input already transliterated upstream) translates as a whole, so nothing
+ *  else changes. Returns null if a required piece fails, matching translateBest. */
+async function translatePreserving(source: string, out: string, inputLang: string, preferGroq: boolean): Promise<string | null> {
+  const runs = splitByScript(source);
+  const inputLatin = isLatinInput(inputLang);
+  const hasLatin = runs.some((r) => !r.native && hasLetters(r.text));
+  const hasNative = runs.some((r) => r.native && hasLetters(r.text));
+  if (!(hasLatin && hasNative)) return translateBest(source, out, inputLang, preferGroq);
+
+  const parts: string[] = [];
+  for (const run of runs) {
+    // A run is "in the input language" when its script matches the input's script.
+    const isInputScript = run.native !== inputLatin;
+    if (isInputScript && hasLetters(run.text)) {
+      const t = await translateBest(run.text, out, inputLang, preferGroq);
+      if (t == null) return null;           // a piece we had to translate failed → whole thing fails
+      parts.push(t);
+    } else {
+      parts.push(run.text);                 // other-script (usually English) → keep as-is
+    }
+  }
+  return parts.join("");
+}
+
 /** The heart of it: transliterate (if needed) → translate to each output → send
  *  each translation as its own clean, standalone (copy/forward-ready) message.
  *  `preferGroq` is set for voice notes (see translateBest). */
@@ -383,7 +439,8 @@ async function handleContent(fromPhone: string, _who: MsgWho, session: MsgSessio
   const failed: string[] = [];
   for (const out of outputLangs) {
     if (out === inputLang) { results.push({ lang: out, text: source }); continue; }
-    const t = await translateBest(source, out, inputLang, preferGroq);
+    // translatePreserving keeps any non-input-language text (usually English) as-is.
+    const t = await translatePreserving(source, out, inputLang, preferGroq);
     if (t == null) { failed.push(out); continue; }
     results.push({ lang: out, text: t });
   }
