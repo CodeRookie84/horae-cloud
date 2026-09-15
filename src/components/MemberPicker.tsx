@@ -27,6 +27,9 @@ interface MemberPickerProps {
   tenants?: Tenant[];
   value: MemberPickerSelection;
   onChange: (selection: MemberPickerSelection) => void;
+  /** When true, an empty picker shows a subtle "add at least one" hint (this is a
+   *  compulsory field). Optional pickers stay quiet when empty to reduce clutter. */
+  required?: boolean;
 }
 
 function resolveMemberIds(selection: MemberPickerSelection, candidates: AppUser[], tenants: Tenant[]): string[] {
@@ -46,7 +49,7 @@ function resolveMemberIds(selection: MemberPickerSelection, candidates: AppUser[
 
 export { resolveMemberIds, EMPTY_SELECTION };
 
-export default function MemberPicker({ candidates, tenants = [], value, onChange }: MemberPickerProps) {
+export default function MemberPicker({ candidates, tenants = [], value, onChange, required = false }: MemberPickerProps) {
   const [query, setQuery] = useState('');
 
   const allDepts = useMemo(() => Array.from(new Set(candidates.map(u => u.department).filter(Boolean))), [candidates]);
@@ -196,12 +199,15 @@ export default function MemberPicker({ candidates, tenants = [], value, onChange
         </div>
       )}
 
-      <div className={`rounded-xl p-3 flex items-center gap-3 ${memberIds.length > 0 ? 'bg-emerald-50 border border-emerald-200' : 'bg-amber-50 border border-amber-200'}`}>
-        <Users className={`w-4 h-4 shrink-0 ${memberIds.length > 0 ? 'text-emerald-600' : 'text-amber-500'}`} />
-        <p className={`text-[14px] font-bold ${memberIds.length > 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
-          {memberIds.length > 0 ? `${memberIds.length} staff selected` : 'No members selected yet'}
+      {/* Quiet status line — no loud coloured box. A subtle hint appears only when a
+          COMPULSORY picker is still empty; optional pickers stay silent. */}
+      {memberIds.length > 0 ? (
+        <p className="px-1 text-[13px] text-slate-500 font-medium flex items-center gap-1.5">
+          <Users className="w-3.5 h-3.5 text-slate-400" /> {memberIds.length} selected
         </p>
-      </div>
+      ) : required ? (
+        <p className="px-1 text-[13px] text-amber-600 font-medium">Add at least one owner</p>
+      ) : null}
     </div>
   );
 }

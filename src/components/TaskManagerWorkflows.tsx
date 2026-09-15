@@ -2744,6 +2744,7 @@ export default function TaskManagerWorkflows({
                   tenants={tenants}
                   value={assigneePicked}
                   onChange={setAssigneePicked}
+                  required
                 />
               </div>
 

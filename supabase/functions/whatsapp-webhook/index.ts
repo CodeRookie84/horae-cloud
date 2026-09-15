@@ -1390,7 +1390,7 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   let n = 0;
   if (overdue.length) {
     parts.push(`\n⚠️ *Overdue — ${verb === "due" ? "due date passed" : "date passed"}*\n`);
-    for (const r of overdue) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 was ${verb} ${fmtWhen(r.remind_at)}`); }
+    for (const r of overdue) { n++; ids.push(r.id); parts.push(`*${n}.* 🔴 *${r.text}*\n      🕒 was ${verb} ${fmtWhen(r.remind_at)}`); }
     // A missed item usually just needs a new time — surface the edit shortcut right
     // under the Overdue block (item 1 is always the first overdue row).
     parts.push(`\n_✏️ Missed one? Reschedule it: */edit 1 tomorrow 9am*_`);
@@ -1402,12 +1402,12 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
   }
   if (upcoming.length) {
     parts.push(`\n🔜 *Upcoming*\n`);
-    for (const r of upcoming) { n++; ids.push(r.id); parts.push(`*${n}.* *_${r.text}_*\n      🕒 ${fmtWhen(r.remind_at)}`); }
+    for (const r of upcoming) { n++; ids.push(r.id); parts.push(`*${n}.* 🔵 *${r.text}*\n      📅 ${fmtWhen(r.remind_at)}`); }
   }
 
   // The full manage/add cheat-sheet used to print under every list, which got
   // tiresome — it lives in /help now. Just one tiny pointer under every list.
-  const helpHint = `\n\n_Add / remove / reschedule — type */help*_`;
+  const helpHint = `\n\n_Need to add, remove or reschedule? Just send */help*_`;
   await sendText(fromPhone, `${parts.join("\n")}${helpHint}`);
 
   // Remember the shown order so a later "done <n>" maps N → the right row. Expire
