@@ -101,6 +101,12 @@ export interface Notice {
   subject?: string;
 }
 
+/** How a checklist item is answered. `tick` = ✓/NA (default, back-compatible with
+ *  every existing checklist); `yes_no` = Yes/No (+ optional remark); `numeric` = a
+ *  logged value checked against `target` (e.g. fridge temp 0–5 °C); `score` = a 1–5
+ *  audit rating. */
+export type ChecklistResponseType = "tick" | "yes_no" | "numeric" | "score";
+
 export interface ChecklistItem {
   id: string;
   text: string;
@@ -110,6 +116,16 @@ export interface ChecklistItem {
     name: string;
   } | null;
   completedAt?: string | null;
+  // ── Food-safety / compliance extensions (all optional; absent ⇒ a plain tick item) ──
+  responseType?: ChecklistResponseType;
+  /** A critical non-conformance — failing it fails the whole run, regardless of score. */
+  critical?: boolean;
+  /** Pre-set fix surfaced when this item fails / scores low (QC "Action if Fail"). */
+  correctiveAction?: string;
+  /** Require a photo as evidence when completing this item. */
+  requiresPhoto?: boolean;
+  /** Pass range for a `numeric` item (e.g. { min: 0, max: 5, unit: "°C" }). */
+  target?: { min?: number; max?: number; unit?: string };
 }
 
 export interface Checklist {
@@ -148,6 +164,64 @@ export interface Checklist {
   adminNotes?: string;
   submissions?: any[];
   groupId?: string;
+  // ── Food-safety / compliance extensions ──
+  /** Operational cadence for a compliance checklist (opening/closing shift, or a
+   *  periodic audit). Distinct from the existing display `recurrence`. */
+  frequency?: ChecklistFrequency;
+  /** Template pack this checklist came from — used to gate content by plan
+   *  (e.g. the Enterprise-only `fssai` pack). Absent ⇒ a hand-built checklist. */
+  packId?: string;
+  /** Who is responsible: module-local stations and/or specific staff — decoupled
+   *  from the staff-directory `department`/`role` above (mirrors the KOT model). */
+  assignment?: { stationIds?: string[]; userIds?: string[] };
+}
+
+export type ChecklistFrequency =
+  | "opening" | "closing" | "shift" | "daily" | "weekly" | "monthly" | "audit";
+
+/** A responsible identity for a checklist, defined inside the module (not the staff
+ *  directory) — e.g. "Kitchen — Closing", "Counter — Opening". Mirrors kot_stations:
+ *  a shared, optionally PIN-protected identity a completed run is attributed to. */
+export interface ChecklistStation {
+  id: string;
+  tenantId: string;
+  clientId?: string;
+  label: string;
+  active: boolean;
+  createdAt?: string;
+}
+
+/** One item's result within a run. Shape follows the item's `responseType`. */
+export interface ChecklistRunItem {
+  itemId: string;
+  responseType?: ChecklistResponseType;
+  /** Pass/fail after evaluation (numeric vs target, score threshold, yes/no, tick). */
+  ok?: boolean;
+  /** Logged value for a `numeric` item, or the 1–5 rating for a `score` item. */
+  value?: number;
+  remark?: string;
+  photoUrl?: string;
+  /** Copied from the item when it failed, so the register shows the fix inline. */
+  correctiveAction?: string;
+}
+
+/** A single completion of a checklist — the immutable, inspection-ready record. */
+export interface ChecklistRun {
+  id: string;
+  checklistId: string;
+  tenantId: string;
+  /** The station this run was performed under, if any. */
+  stationId?: string | null;
+  performer: { userId?: string; stationId?: string; name: string };
+  startedAt?: string | null;
+  completedAt: string;
+  status: "completed" | "failed";
+  /** Mean of `score`-type item ratings (audits), if the checklist has any. */
+  score?: number | null;
+  /** Share of applicable items that passed, 0–100. */
+  compliancePct?: number | null;
+  items: ChecklistRunItem[];
+  createdAt?: string;
 }
 
 export interface ChatMessage {

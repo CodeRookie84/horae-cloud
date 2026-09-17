@@ -4,10 +4,18 @@
  */
 
 import React, { useState } from "react";
-import { ClipboardCheck, CheckCircle2, UserCheck, Building2, Check, ArrowLeft, ChevronRight, Clock, Loader2, Languages } from "lucide-react";
-import { Checklist, ChecklistItem, Tenant } from "../types";
+import { ClipboardCheck, CheckCircle2, UserCheck, Building2, Check, ArrowLeft, ChevronRight, Clock, Loader2, Languages, FileText, Plus, X } from "lucide-react";
+import { Checklist, ChecklistItem, Tenant, Role } from "../types";
 import { translateText, store } from "../services/store";
 import { resolveLanguages } from "../services/languages";
+import ChecklistRun from "./ChecklistRun";
+import ChecklistRegister from "./ChecklistRegister";
+import { installChecklistPack, packsForPlan } from "../services/checklistCompliance";
+
+/** A checklist is a compliance/food-safety one when it came from a pack or carries
+ *  an operational frequency — those open the run-capture flow instead of the plain
+ *  tick-and-submit view. */
+const isComplianceChecklist = (c: Checklist) => !!(c.packId || c.frequency);
 
 // Fallback when a client hasn't chosen any translation languages yet.
 const DEFAULT_LANG_CODES = ['hi', 'kn', 'ta'];
@@ -21,6 +29,12 @@ interface ChecklistsWorkflowsProps {
   onRefresh?: () => void;
   /** Translation languages this client chose at onboarding (ISO codes). */
   languages?: string[];
+  /** Current user — the performer attributed to a compliance run. */
+  activeUser?: { id: string; name: string; role?: string };
+  /** Client id — used for the evidence-photo storage path. */
+  clientId?: string;
+  /** Client plan — gates which template packs can be installed. */
+  plan?: string;
 }
 
 export default function ChecklistsWorkflows({
@@ -30,6 +44,9 @@ export default function ChecklistsWorkflows({
   onBack,
   onRefresh,
   languages = [],
+  activeUser,
+  clientId,
+  plan,
 }: ChecklistsWorkflowsProps) {
   const pickerLangs = (resolveLanguages(languages).length ? resolveLanguages(languages) : resolveLanguages(DEFAULT_LANG_CODES));
   const [selectedTenantId, setSelectedTenantId] = useState<string>("ALL");
@@ -205,7 +222,38 @@ export default function ChecklistsWorkflows({
 
   const [selectedChecklistId, setSelectedChecklistId] = useState<string | null>(null);
 
-  const checklists = (selectedTenantId === "ALL" 
+  // ── Food-safety: register view + template-pack install (admin only) ──────────
+  const [showRegister, setShowRegister] = useState(false);
+  const [installOpen, setInstallOpen] = useState(false);
+  const [installPackId, setInstallPackId] = useState("");
+  const [installTenantIds, setInstallTenantIds] = useState<string[]>([]);
+  const [installing, setInstalling] = useState(false);
+  const [installNote, setInstallNote] = useState("");
+  const isManager = activeUser?.role === Role.ADMIN || activeUser?.role === Role.MANAGER || activeUser?.role === Role.SUPER_ADMIN;
+  const availablePacks = packsForPlan(plan || "");
+
+  const doInstall = async () => {
+    if (!installPackId || installTenantIds.length === 0 || !activeUser) return;
+    setInstalling(true); setInstallNote("");
+    try {
+      const n = await installChecklistPack(installPackId, installTenantIds, {
+        userId: activeUser.id, name: activeUser.name, role: activeUser.role || "Admin",
+      });
+      if (n > 0) {
+        setInstallNote(`Installed ${n} checklist${n === 1 ? "" : "s"}.`);
+        onRefresh?.();
+        setTimeout(() => { setInstallOpen(false); setInstallNote(""); }, 1200);
+      } else {
+        setInstallNote("This pack has no templates yet — it's provisioned during onboarding.");
+      }
+    } catch (e: any) {
+      setInstallNote(e?.message || "Install failed. Please retry.");
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const checklists = (selectedTenantId === "ALL"
     ? rawChecklists 
     : rawChecklists.filter(c => c.tenantId === selectedTenantId)
   ).filter(c => {
@@ -222,6 +270,19 @@ export default function ChecklistsWorkflows({
   // If a specific checklist is selected, show only it
   if (activeChecklist) {
     const checklist = activeChecklist;
+
+    // Compliance / food-safety checklists use the typed run-capture flow.
+    if (isComplianceChecklist(checklist)) {
+      return (
+        <ChecklistRun
+          checklist={checklist}
+          performer={{ userId: activeUser?.id, name: activeUser?.name || "Staff" }}
+          clientId={clientId}
+          onBack={() => setSelectedChecklistId(null)}
+          onDone={() => { setSelectedChecklistId(null); onRefresh?.(); }}
+        />
+      );
+    }
     const completedCount = checklist.type === "yes_no"
       ? checklist.items.filter(item => yesNoAnswers[item.id] === "yes" || yesNoAnswers[item.id] === "no" || yesNoAnswers[item.id] === "na").length
       : checklist.items.filter(item => localChecked[item.id]).length;
@@ -554,6 +615,18 @@ export default function ChecklistsWorkflows({
     );
   }
 
+  // ─── FOOD-SAFETY REGISTER VIEW ────────────────────────────────────────────────
+  if (showRegister) {
+    return (
+      <ChecklistRegister
+        tenants={tenants}
+        clientId={clientId}
+        checklists={rawChecklists}
+        onBack={() => setShowRegister(false)}
+      />
+    );
+  }
+
   // ─── CHECKLISTS LIST VIEW ─────────────────────────────────────────────────────
   return (
     <div className="space-y-4" id="checklists-wrapper">
@@ -575,6 +648,26 @@ export default function ChecklistsWorkflows({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {isManager && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowRegister(true)}
+                className="px-3 py-2 rounded-xl text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileText className="w-3.5 h-3.5" /> Register
+              </button>
+              {availablePacks.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { setInstallOpen(true); setInstallNote(""); setInstallPackId(availablePacks.find(p => p.templates.length > 0)?.id || ""); }}
+                  className="px-3 py-2 rounded-xl text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Templates
+                </button>
+              )}
+            </>
+          )}
           {/* Hide/Show Completed Toggle */}
           <button
             type="button"
@@ -661,6 +754,55 @@ export default function ChecklistsWorkflows({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* Install template pack (admin) */}
+      {installOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4" onClick={() => !installing && setInstallOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-800">Install food-safety templates</h3>
+              <button onClick={() => !installing && setInstallOpen(false)} className="text-slate-400 hover:text-slate-700 cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Pack</label>
+              <select value={installPackId} onChange={(e) => setInstallPackId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-sm text-slate-800 focus:outline-none cursor-pointer">
+                {availablePacks.map((p) => (
+                  <option key={p.id} value={p.id} disabled={p.templates.length === 0}>
+                    {p.label}{p.templates.length === 0 ? " — provisioned at onboarding" : ` (${p.templates.length})`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Outlets</label>
+                <button type="button" onClick={() => setInstallTenantIds(installTenantIds.length === tenants.length ? [] : tenants.map((t) => t.id))} className="text-[11px] font-bold text-indigo-600 cursor-pointer">
+                  {installTenantIds.length === tenants.length ? "Clear" : "Select all"}
+                </button>
+              </div>
+              <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                {tenants.map((t) => (
+                  <label key={t.id} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 cursor-pointer hover:bg-slate-50">
+                    <input type="checkbox" checked={installTenantIds.includes(t.id)}
+                      onChange={(e) => setInstallTenantIds((prev) => e.target.checked ? [...prev, t.id] : prev.filter((x) => x !== t.id))} />
+                    {t.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {installNote && <p className="text-xs text-slate-600">{installNote}</p>}
+
+            <button onClick={doInstall} disabled={installing || !installPackId || installTenantIds.length === 0}
+              className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-sm font-bold bg-slate-900 hover:bg-slate-800 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+              {installing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              Install into {installTenantIds.length || 0} outlet{installTenantIds.length === 1 ? "" : "s"}
+            </button>
+          </div>
         </div>
       )}
     </div>

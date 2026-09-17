@@ -1282,6 +1282,9 @@ export class StoreService {
       let type: "single" | "yes_no" = "single";
       let adminNotes = "";
       let groupId = `group-${c.id}`;
+      let frequency: string | undefined = undefined;
+      let packId: string | undefined = undefined;
+      let assignment: any = undefined;
       try {
         if (c.description && c.description.startsWith("{")) {
           const obj = JSON.parse(c.description);
@@ -1296,6 +1299,9 @@ export class StoreService {
           adminNotes = obj.adminNotes || "";
           groupId = obj.groupId || `group-${c.id}`;
           submissions = groupSubmissionsMap[groupId] || [];
+          frequency = obj.frequency || undefined;
+          packId = obj.packId || undefined;
+          assignment = obj.assignment || undefined;
         }
       } catch (e) {
         // Fallback for legacy text descriptions
@@ -1309,7 +1315,13 @@ export class StoreService {
           text: item.text,
           completed: false,
           completedBy: null as any,
-          completedAt: null as any
+          completedAt: null as any,
+          // Food-safety / compliance metadata (absent on plain checklists ⇒ tick).
+          ...(item.response_type && item.response_type !== "tick" ? { responseType: item.response_type } : {}),
+          ...(item.critical ? { critical: true } : {}),
+          ...(item.corrective_action ? { correctiveAction: item.corrective_action } : {}),
+          ...(item.requires_photo ? { requiresPhoto: true } : {}),
+          ...(item.target ? { target: item.target } : {}),
         }));
 
       // Sort templateItems by index parsed from ID (e.g. item-checklist-0, item-checklist-1)
@@ -1421,7 +1433,10 @@ export class StoreService {
         type,
         adminNotes,
         submissions,
-        groupId
+        groupId,
+        frequency,
+        packId,
+        assignment
       } as any;
     });
 

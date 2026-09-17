@@ -1356,6 +1356,9 @@ function AppInner() {
                       onBack={backToDashboard}
                       onRefresh={refreshLocalState}
                       languages={activeClient?.languages || []}
+                      activeUser={activeUser ? { id: activeUser.id, name: activeUser.name, role: activeUser.role } : undefined}
+                      clientId={activeClient?.id}
+                      plan={activeClient?.plan}
                     />
                   )}
 
