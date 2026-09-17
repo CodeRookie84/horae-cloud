@@ -200,7 +200,7 @@ async function handleInboundMessage(m: any, contact: any) {
   }
 }
 
-/** Typed Horae commands must start with a slash: `/rem`, `/task`, `/menu`, …
+/** Typed Horae commands must start with a slash: `/note`, `/task`, `/menu`, …
  *  This makes a command unambiguous — anything WITHOUT the slash is treated as
  *  plain content (a message to capture as a task), never accidentally as a keyword.
  *  Returns the command text with the leading slash (and any following space)
@@ -276,7 +276,8 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
     const helpA = cmd !== null ? cmd.match(/^(?:help|\?)\s*(.*)$/i) : null;
     if (helpA) {
       const topic = helpTopicFromWord(helpA[1]);
-      if (topic) await sendHelpTopic(fromPhone, topic); else await sendHelp(fromPhone, userId);
+      if (topic && (topic !== "tasks" || await tasksAllowed(tenantId))) await sendHelpTopic(fromPhone, topic);
+      else await sendHelp(fromPhone, userId, tenantId);
       return;
     }
   }
@@ -320,14 +321,14 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
     // The verb router already handled rem/meet. A voice note that's neither would
     // otherwise become a task — skip that for a task-less plan (Assistant).
     if (await tasksAllowed(tenantId)) await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_voice", transcript);
-    else await sendText(fromPhone, "🎙️ Got it. For a *reminder* say _\"remind me to …\"_, or a *meeting* say _\"meeting with …\"_. To translate, send *msg*.");
+    else await sendText(fromPhone, "🎙️ Got it. To save a *note* say _\"note buy stock\"_ (add a time to get a reminder), or for a *meeting* say _\"meeting with …\"_. To translate, send *msg*.");
     return;
   }
 
   if (m.type === "text") {
     const text = (m.text?.body || "").trim();
     if (!text) return;
-    // Typed commands MUST start with a slash (/rem, /task, /menu, …). Anything
+    // Typed commands MUST start with a slash (/note, /task, /menu, …). Anything
     // without one is plain content → offer to capture it as a task. (Voice notes
     // are exempt — handled above — since you can't speak a slash.)
     const cmd = asCommand(text);
@@ -335,7 +336,7 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
       // Plain content → a task capture. Skip it entirely for a task-less plan
       // (Assistant): point them at what they CAN do instead of offering a task.
       if (await tasksAllowed(tenantId)) await offerCaptureMenu(fromPhone, userId, tenantId, text);
-      else await sendText(fromPhone, "🙂 I can help with *Reminders* (*/rem*), *Meetings* (*/meet*) and *Translate* (send *msg*). Send */help* to see how.");
+      else await sendText(fromPhone, "🙂 I can help with *Notes* (*/note*), *Meetings* (*/meet*) and *Translate* (send *msg*). Send */help* to see how.");
       return;
     }
 
@@ -356,7 +357,8 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
     const helpM = cmd.match(/^(?:help|\?)\s*(.*)$/i);
     if (helpM) {
       const topic = helpTopicFromWord(helpM[1]);
-      if (topic) await sendHelpTopic(fromPhone, topic); else await sendHelp(fromPhone, userId);
+      if (topic && (topic !== "tasks" || await tasksAllowed(tenantId))) await sendHelpTopic(fromPhone, topic);
+      else await sendHelp(fromPhone, userId, tenantId);
       return;
     }
     // "/done N" / "/remove N" → mark item N (from the numbered list we last showed
@@ -428,9 +430,11 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
  * "remember"/"remove"/"reminders".
  */
 async function routeVerbCommand(fromPhone: string, userId: string, tenantId: string | null, text: string): Promise<boolean> {
-  // "rem …" / "remind …" / "reminder …" → save a reminder, or LIST when the tail
-  // is a filter keyword (reminders / today / tomorrow / week).
-  const rem = text.match(/^\s*rem(?:ind(?:er)?)?\b(.*)$/is);
+  // "note …" / "rem …" / "remind …" / "reminder …" → save a note, or LIST when the
+  // tail is a filter keyword (notes / today / tomorrow / week). `/note` is the
+  // primary command now; `rem`/`remind`/`reminder` stay as aliases (and cover the
+  // spoken "remind me to …" that Whisper transcribes in full).
+  const rem = text.match(/^\s*(?:notes?|rem(?:ind(?:er)?)?)\b(.*)$/is);
   if (rem) {
     const rest = (rem[1] || "").trim();
     const filter = reminderFilterFromKeyword(rest);
@@ -556,7 +560,7 @@ async function tasksAllowed(tenantId: string | null): Promise<boolean> {
 async function denyTasks(fromPhone: string) {
   await sendText(
     fromPhone,
-    "📋 The *Task Manager* isn't part of your plan.\n\nYou can still use *Reminders* (*/rem*), *Meetings* (*/meet*) and *Translate* (send *msg*). Send */help* to see how.",
+    "📋 The *Task Manager* isn't part of your plan.\n\nYou can still use *Notes* (*/note*), *Meetings* (*/meet*) and *Translate* (send *msg*). Send */help* to see how.",
   );
 }
 
@@ -564,7 +568,7 @@ async function denyTasks(fromPhone: string) {
  *  (open tasks + overdue, new notices, pending training) so "Hi" doubles as the
  *  daily digest — all free, since it's inside the user-opened 24h window. Rows are
  *  gated by the client's plan, so a task-less plan (e.g. Assistant) shows only
- *  Reminders / Meetings / Translate / Help. */
+ *  Notes / Meetings / Translate / Help. */
 async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: string | null) {
   const feats = await clientFeatureSet(tenantId ?? null);
   const body = userId ? await buildBriefingBody(userId, tenantId ?? null)
@@ -577,7 +581,7 @@ async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: strin
   }
   if (feats.has("checklists")) rows.push({ id: "menu_checklists", title: "✅ My checklists" });
   if (feats.has("training"))   rows.push({ id: "menu_training",   title: "📚 My training" });
-  rows.push({ id: "menu_reminders", title: "⏰ Reminders" });
+  rows.push({ id: "menu_reminders", title: "📝 Notes" });
   rows.push({ id: "menu_meetings",  title: "📅 Meetings" });
   rows.push({ id: "menu_translate", title: "🌍 Translate" });
   rows.push({ id: "menu_help",      title: "❓ Help — how to use" });
@@ -691,7 +695,7 @@ async function handleMenuSelection(id: string, fromPhone: string, userId: string
     case "menu_checklists":    await sendChecklistsList(fromPhone, tenantId); break;
     case "menu_training":      await sendTrainingList(fromPhone, userId, tenantId); break;
     case "menu_translate":     await sendText(fromPhone, "🌍 *Translate*\n\nSend *msg* (or */msg*) to translate text — or a voice note — between your languages."); break;
-    case "menu_help":          await sendHelp(fromPhone, userId); break;
+    case "menu_help":          await sendHelp(fromPhone, userId, tenantId); break;
     case "help_tasks":         await sendHelpTopic(fromPhone, "tasks"); break;
     case "help_reminders":     await sendHelpTopic(fromPhone, "reminders"); break;
     case "help_meetings":      await sendHelpTopic(fromPhone, "meetings"); break;
@@ -1250,7 +1254,7 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
   if (!noteText) {
     await sendText(fromPhone, isMeeting
       ? "📅 What meeting? e.g. */meet vendor call # tomorrow 3pm*"
-      : "📝 What should I note? e.g. */rem call the vendor # 3pm*");
+      : "📝 What should I note? e.g. */note call the vendor # 3pm*");
     return;
   }
 
@@ -1262,7 +1266,7 @@ async function createReminder(fromPhone: string, userId: string, tenantId: strin
   if (error) { console.error("[whatsapp-webhook] createReminder failed:", error); await sendText(fromPhone, "Sorry, I couldn't save that. Please try again."); return; }
 
   const whenStr = remindAt ? ` for *${fmtWhen(remindAt)}*` : "";
-  const seeHint = isMeeting ? "Send */meet* any time to see your meetings." : "Send */rem* any time to see your list.";
+  const seeHint = isMeeting ? "Send */meet* any time to see your meetings." : "Send */note* any time to see your list.";
   const savedLine = isMeeting
     ? `📅 Meeting saved${whenStr}:\n"${noteText.slice(0, 200)}"`
     : `📝 Noted${whenStr}:\n"${noteText.slice(0, 200)}"`;
@@ -1324,7 +1328,7 @@ function istDayRange(dayOffset: number): { from: string; to: string } {
  *  same tiny "/help" pointer regardless.) */
 async function sendRemindersList(fromPhone: string, userId: string, filter: ReminderFilter = "all", showHint = false, kind: "reminder" | "meeting" = "reminder") {
   const isMeeting = kind === "meeting";
-  const noun = isMeeting ? "meetings" : "reminders";
+  const noun = isMeeting ? "meetings" : "notes";
   const icon = isMeeting ? "📅" : "📝";
   const verb = isMeeting ? "scheduled" : "due";
 
@@ -1370,7 +1374,7 @@ async function sendRemindersList(fromPhone: string, userId: string, filter: Remi
     const emptyMsg = filter === "all"
       ? (isMeeting
           ? "📅 You have no meetings saved.\n\nAdd one by sending */meet <what> # <time>*\ne.g. */meet vendor call # 3pm tomorrow*"
-          : "📝 You have no reminders.\n\nAdd one by sending */rem <note> # <time>*\ne.g. */rem call the vendor # 9am tomorrow*")
+          : "📝 You have no notes.\n\nAdd one by sending */note <note> # <time>*\ne.g. */note call the vendor # 9am tomorrow*")
       : `${icon} Nothing ${verb} ${filter === "week" ? "this week" : filter} — and nothing overdue. 🎉`;
     await sendText(fromPhone, emptyMsg);
     return;
@@ -1638,17 +1642,20 @@ function helpTopicFromWord(s: string): HelpTopic | null {
 
 /** "/help" (bare, or menu → Help) → a topic PICKER. The detailed guidance lives
  *  in per-topic messages (sendHelpTopic) so no single screen is a wall of text. */
-async function sendHelp(fromPhone: string, _userId?: string) {
+async function sendHelp(fromPhone: string, _userId?: string, tenantId?: string | null) {
+  // Mirror the main menu: a task-less plan (e.g. Assistant) shouldn't be offered a
+  // "Tasks" help topic for a feature it can't use.
+  const feats = await clientFeatureSet(tenantId ?? null);
+  const rows: ListRow[] = [];
+  if (feats.has("tasks")) rows.push({ id: "help_tasks", title: "📋 Tasks", description: "Create, view & update tasks" });
+  rows.push({ id: "help_reminders", title: "📝 Notes",     description: "Jot notes, list & reschedule" });
+  rows.push({ id: "help_meetings",  title: "📅 Meetings",  description: "Add & list meetings" });
+  rows.push({ id: "help_translate", title: "🌍 Translate", description: "Translate text or voice (/msg)" });
   await sendList(
     fromPhone,
-    `❓ *Horae help*\n\nEvery typed command starts with a slash */* — e.g. */rem call the vendor*. (Send *hi* any time for the menu; send a voice note to talk instead of type.)\n\nWhich would you like help with?`,
+    `❓ *Horae help*\n\nEvery typed command starts with a slash */* — e.g. */note call the vendor*. (Send *hi* any time for the menu; send a voice note to talk instead of type.)\n\nWhich would you like help with?`,
     "Pick a topic",
-    [
-      { id: "help_tasks",     title: "📋 Tasks",     description: "Create, view & update tasks" },
-      { id: "help_reminders", title: "⏰ Reminders", description: "Add, list & reschedule reminders" },
-      { id: "help_meetings",  title: "📅 Meetings",  description: "Add & list meetings" },
-      { id: "help_translate", title: "🌍 Translate", description: "Translate text or voice (/msg)" },
-    ],
+    rows,
   );
 }
 
@@ -1672,18 +1679,19 @@ async function sendHelpTopic(fromPhone: string, topic: HelpTopic) {
       break;
     case "reminders":
       text =
-        `⏰ *Reminders — help*\n\n` +
-        `*Add one* (put *#* before the time/date):\n` +
-        `• */rem* _call the vendor_ *#* _3pm tomorrow_\n` +
-        `• */rem* _submit GST return_ *#* _5 Oct_  (a date alone is fine)\n` +
-        `• */rem* _buy stock_  (no time — just a note)\n\n` +
+        `📝 *Notes — help*\n\n` +
+        `*Add one* (add *#* before a time/date to get a calendar reminder):\n` +
+        `• */note* _buy stock_  (just a note — no time needed)\n` +
+        `• */note* _call the vendor_ *#* _3pm tomorrow_\n` +
+        `• */note* _submit GST return_ *#* _5 Oct_  (a date alone is fine)\n\n` +
         `*See your list:*\n` +
-        `• */rem*  ·  */rem today*  ·  */rem this week*\n\n` +
+        `• */note*  ·  */note today*  ·  */note this week*\n\n` +
         `*Manage a listed item (by its number):*\n` +
         `• */done 1* — clear it   (*/done 1 3* for several)\n` +
         `• */edit 1 tomorrow 9am* — reschedule or rewrite\n` +
         `• */cal 1* — add it to your Google Calendar\n\n` +
-        `🎙️ Voice: _"Remind me to call the vendor at 3pm tomorrow"_.`;
+        `🎙️ Voice: _"Note — call the vendor at 3pm tomorrow"_.\n\n` +
+        `_(*/rem* still works too.)_`;
       break;
     case "meetings":
       text =
@@ -1693,7 +1701,7 @@ async function sendHelpTopic(fromPhone: string, topic: HelpTopic) {
         `*See your list:*\n` +
         `• */meet*  ·  */meet today*  ·  */meet this week*\n\n` +
         `*Manage a listed item (by its number):*\n` +
-        `• */done 1*  ·  */edit 1 <new time>*  ·  */cal 1*  (same as reminders)\n\n` +
+        `• */done 1*  ·  */edit 1 <new time>*  ·  */cal 1*  (same as notes)\n\n` +
         `🎙️ Voice: _"Meeting with the supplier on 3 Sep 11am"_.`;
       break;
     case "translate":
@@ -1725,7 +1733,7 @@ async function offerCaptureMenu(fromPhone: string, userId: string, tenantId: str
   const preview = text.length > 120 ? text.slice(0, 117) + "…" : text;
   const wamid = await sendButtons(
     fromPhone,
-    `📥 *Got it.*\n"${preview}"\n\nWhat would you like to do with this?\n\n_(Looking for a command? Start it with a */* — e.g. */menu*, */rem*, */help*.)_`,
+    `📥 *Got it.*\n"${preview}"\n\nWhat would you like to do with this?\n\n_(Looking for a command? Start it with a */* — e.g. */menu*, */note*, */help*.)_`,
     [
       { id: "create_task", title: "📋 Create Task" },
       { id: "dismiss",     title: "Dismiss" },

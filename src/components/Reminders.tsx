@@ -2,9 +2,10 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Reminders.tsx — a lightweight personal notes/reminders view. Pull-only: nothing
- * is ever pushed (no notifications), so it adds zero messaging cost. Staff add
- * reminders here or from WhatsApp ("me <note> - <time>") and check them anytime.
+ * Reminders.tsx — the personal "Notes" view (renamed from Reminders in the UI;
+ * file/route/tab id stay "reminders" for back-compat). Pull-only: nothing is ever
+ * pushed (no notifications), so it adds zero messaging cost. Staff add notes here
+ * or from WhatsApp ("/note <what> # <time>") and check them anytime.
  */
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, Plus, Check, Trash2, Clock, RefreshCw } from "lucide-react";
@@ -54,9 +55,9 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
       )}
 
       <div>
-        <h2 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Reminders</h2>
+        <h2 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Notes</h2>
         <p className="text-sm text-[var(--color-ink-soft)] mt-1">
-          Your personal notes. Add one here, or from WhatsApp — send <span className="font-mono bg-[var(--color-cream-deep)] px-1.5 py-0.5 rounded">me &lt;note&gt; - &lt;time&gt;</span>. Nothing is pushed; check them whenever you like.
+          Your personal notes. Add one here, or from WhatsApp — send <span className="font-mono bg-[var(--color-cream-deep)] px-1.5 py-0.5 rounded">/note &lt;what&gt; # &lt;time&gt;</span>. Nothing is pushed; check them whenever you like.
         </p>
       </div>
 
