@@ -1467,6 +1467,7 @@ function AppInner() {
                        onUpdateChecklist={handleUpdateChecklist}
                        onSubmitChecklist={handleSubmitChecklist}
                        onDeleteChecklist={handleDeleteChecklist}
+                       onComplianceSaved={refreshLocalState}
                       tasks={tasks}
                       tenantUsers={tenantUsers}
                       tenants={tenants}

@@ -11,9 +11,12 @@ import {
   Building2, UserPlus, Edit2, Copy, Languages, ArrowLeft, KeyRound, Eye, EyeOff, MessageCircle
 } from "lucide-react";
 import {
-  Notice, Checklist, Task, User as AppUser, Tenant, Department, Role, SOP, SOPReadStatus, Client, WhatsAppEngagementRow
+  Notice, Checklist, Task, User as AppUser, Tenant, Department, Role, SOP, SOPReadStatus, Client, WhatsAppEngagementRow, ChecklistStation
 } from "../types";
 import { store, translateText } from "../services/store";
+import { getChecklistStations, saveCustomComplianceChecklist, serializeChecklistItem } from "../services/checklistCompliance";
+
+const CHECKLIST_FREQUENCIES = ["opening", "closing", "shift", "daily", "weekly", "monthly", "audit"];
 
 
 function MultiSelectChecklist({
@@ -74,6 +77,8 @@ interface ClientAdminPanelProps {
   onUpdateChecklist?: (id: string, title: string, description: string, dept: Department | string, role: Role | string, items: string[], tenantId: string, recurrence?: string, recurrenceDay?: string, attachment?: string, customInputFields?: string[], sections?: any[], type?: "single" | "yes_no", adminNotes?: string) => void;
   onSubmitChecklist: (checklistId: string, itemStates: { [itemId: string]: boolean }, customInputs?: { [fieldName: string]: string }) => void;
   onDeleteChecklist: (id: string) => void;
+  /** Called after a custom compliance checklist is created/updated, to refresh. */
+  onComplianceSaved?: () => void | Promise<void>;
   
   tasks: Task[];
   allUsers: AppUser[];
@@ -113,6 +118,7 @@ export default function ClientAdminPanel({
   onUpdateChecklist,
   onSubmitChecklist,
   onDeleteChecklist,
+  onComplianceSaved,
   tasks,
   allUsers,
   tenantUsers,
@@ -451,6 +457,25 @@ export default function ClientAdminPanel({
   ]);
   const [editingChecklistId, setEditingChecklistId] = useState<string | null>(null);
   const [isTranslatingForm, setIsTranslatingForm] = useState(false);
+  // ── Food-safety assignment (replaces dept/role for compliance checklists) ──
+  const [checklistFrequency, setChecklistFrequency] = useState<string>("daily");
+  const [checklistStationIds, setChecklistStationIds] = useState<string[]>([]);
+  const [checklistUserIds, setChecklistUserIds] = useState<string[]>([]);
+  const [newStationLabels, setNewStationLabels] = useState<string>("");
+  const [availableStations, setAvailableStations] = useState<ChecklistStation[]>([]);
+  const [savingChecklist, setSavingChecklist] = useState(false);
+
+  // Load existing stations for the selected outlet (station reuse only makes sense
+  // for a single outlet — for "ALL" the admin can only add new ones per outlet).
+  useEffect(() => {
+    let alive = true;
+    if (checklistTenant && checklistTenant !== "ALL") {
+      getChecklistStations([checklistTenant]).then((s) => { if (alive) setAvailableStations(s.filter((x) => x.active)); });
+    } else {
+      setAvailableStations([]);
+    }
+    return () => { alive = false; };
+  }, [checklistTenant]);
 
   const handleChecklistFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -558,19 +583,30 @@ export default function ClientAdminPanel({
     setChecklistAttachment(chk.attachment || "");
     setChecklistType(chk.type || "single");
     setChecklistAdminNotes(chk.adminNotes || "");
-    
+    setChecklistFrequency((chk as any).frequency || "daily");
+    setChecklistStationIds((chk as any).assignment?.stationIds || []);
+    setChecklistUserIds((chk as any).assignment?.userIds || []);
+    setNewStationLabels("");
+
     if (chk.customInputFields && chk.customInputFields.length > 0) {
       setChecklistCustomFields(chk.customInputFields);
     } else {
       setChecklistCustomFields(["Unit", "Date", "Checked by"]);
     }
     
+    // Serialize each item back to a tagged line so the paste editor round-trips
+    // its type/flags (e.g. "Fridge temp @num(0-5°C) @photo").
+    const itemMeta = new Map(chk.items.map(i => [i.id, i]));
+    const lineFor = (it: { id: string; text: string }) => {
+      const full = itemMeta.get(it.id);
+      return full ? serializeChecklistItem(full) : it.text;
+    };
     if (chk.sections && chk.sections.length > 0) {
       const mappedSections = chk.sections.map(sec => ({
         id: sec.id,
         number: sec.number,
         name: sec.name,
-        itemsText: sec.items.map(item => item.text).join("\n")
+        itemsText: sec.items.map(lineFor).join("\n")
       }));
       setChecklistSections(mappedSections);
     } else {
@@ -579,7 +615,7 @@ export default function ClientAdminPanel({
           id: "sec-1",
           number: "1.0",
           name: "Standard Checkpoints",
-          itemsText: chk.items.map(item => item.text).join("\n")
+          itemsText: chk.items.map(item => serializeChecklistItem(item)).join("\n")
         }
       ]);
     }
@@ -623,6 +659,10 @@ export default function ClientAdminPanel({
     setChecklistSections([
       { id: "sec-1", number: "1.0", name: "Opening Checks", itemsText: "" }
     ]);
+    setChecklistFrequency("daily");
+    setChecklistStationIds([]);
+    setChecklistUserIds([]);
+    setNewStationLabels("");
   };
 
   const handleAutoTranslateForm = async (targetLang: 'hi' | 'kn' | 'ta') => {
@@ -665,92 +705,68 @@ export default function ClientAdminPanel({
     }
   };
 
-  const handleCreateChecklistSubmit = (e: React.FormEvent) => {
+  const handleCreateChecklistSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!checklistTitle.trim()) {
       setChecklistError("Checklist Title is required.");
       return;
     }
 
-    const sectionsToSave: any[] = [];
-    const flatItemsToCreate: string[] = [];
-
+    // Each subsection keeps the paste-a-block technique: one tagged line per item.
+    const sections: { number: string; name: string; lines: string[] }[] = [];
     for (const sec of checklistSections) {
       if (!sec.number.trim() || !sec.name.trim()) {
         setChecklistError("Please enter Subsection Number and Name for all subsections.");
         return;
       }
-      const sectionItems = sec.itemsText
-        .split("\n")
-        .map(line => line.trim())
-        .filter(line => line.length > 0);
-      
-      if (sectionItems.length === 0) {
+      const lines = sec.itemsText.split("\n").map(l => l.trim()).filter(Boolean);
+      if (lines.length === 0) {
         setChecklistError(`Please add at least one checkpoint in Subsection ${sec.number}: ${sec.name}.`);
         return;
       }
-
-      const parsedItems = sectionItems.map((txt, index) => {
-        const itemId = `item-${sec.id}-${index}-${Date.now()}`;
-        flatItemsToCreate.push(txt);
-        return {
-          id: itemId,
-          text: txt
-        };
-      });
-
-      sectionsToSave.push({
-        id: sec.id,
-        number: sec.number.trim(),
-        name: sec.name.trim(),
-        items: parsedItems
-      });
+      sections.push({ number: sec.number.trim(), name: sec.name.trim(), lines });
     }
-
-    if (sectionsToSave.length === 0) {
+    if (sections.length === 0) {
       setChecklistError("Please add at least one subsection.");
       return;
     }
 
-    if (editingChecklistId) {
-      if (onUpdateChecklist) {
-        onUpdateChecklist(
-          editingChecklistId,
-          checklistTitle,
-          checklistDesc,
-          JSON.stringify(checklistDepts),
-          JSON.stringify(checklistRoles),
-          flatItemsToCreate,
-          checklistTenant,
-          checklistRecurrence,
-          checklistRecurrenceDay,
-          checklistAttachment,
-          checklistCustomFields,
-          sectionsToSave,
-          checklistType,
-          checklistAdminNotes
-        );
-      }
-    } else {
-      onCreateChecklist(
-        checklistTitle, 
-        checklistDesc, 
-        JSON.stringify(checklistDepts), 
-        JSON.stringify(checklistRoles), 
-        flatItemsToCreate, 
-        checklistTenant,
-        checklistRecurrence,
-        checklistRecurrenceDay,
-        checklistAttachment,
-        checklistCustomFields,
-        sectionsToSave,
-        checklistType,
-        checklistAdminNotes,
-        duplicatingGroupId || undefined
-      );
+    const tenantIds = editingChecklistId
+      ? [checklistTenant]
+      : (checklistTenant === "ALL" ? tenants.map(t => t.id) : [checklistTenant]);
+    if (tenantIds.length === 0 || tenantIds[0] === "ALL") {
+      setChecklistError("Please choose an outlet for this checklist.");
+      return;
     }
 
-    handleResetChecklistForm();
+    const newStations = newStationLabels.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+
+    setSavingChecklist(true);
+    setChecklistError("");
+    try {
+      await saveCustomComplianceChecklist({
+        id: editingChecklistId || undefined,
+        title: checklistTitle.trim(),
+        desc: checklistDesc,
+        tenantIds,
+        sections,
+        frequency: checklistFrequency as any,
+        stationIds: checklistTenant !== "ALL" ? checklistStationIds : [],
+        newStationLabels: newStations,
+        userIds: checklistUserIds,
+        customInputFields: checklistCustomFields,
+        recurrence: checklistRecurrence,
+        recurrenceDay: checklistRecurrenceDay,
+        createdBy: { userId: activeUser.id, name: activeUser.name, role: activeUser.role as string },
+        clientId: activeClient?.id,
+      });
+      await onComplianceSaved?.();
+      handleResetChecklistForm();
+    } catch (err: any) {
+      setChecklistError(err?.message || "Couldn't save the checklist. Please retry.");
+    } finally {
+      setSavingChecklist(false);
+    }
   };
 
   const downloadChecklistCSV = () => {
@@ -1359,21 +1375,68 @@ export default function ClientAdminPanel({
                   </select>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <MultiSelectChecklist
-                    label="Department"
-                    options={multiSelectDepts}
-                    selectedValues={checklistDepts}
-                    onChange={setChecklistDepts}
-                    allValue={Department.ALL}
-                  />
-                  <MultiSelectChecklist
-                    label="Role Grade"
-                    options={multiSelectRoles}
-                    selectedValues={checklistRoles}
-                    onChange={setChecklistRoles}
-                    allValue={Role.ALL}
-                  />
+                {/* Assignment — stations + individuals (the new model, replaces dept/role) */}
+                <div className="space-y-3 border-t border-slate-100 pt-4">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Frequency</label>
+                      <select
+                        value={checklistFrequency}
+                        onChange={(e) => setChecklistFrequency(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-750 font-semibold focus:outline-none cursor-pointer capitalize"
+                      >
+                        {CHECKLIST_FREQUENCIES.map((f) => <option key={f} value={f} className="capitalize">{f}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Add station(s)</label>
+                      <input
+                        type="text"
+                        value={newStationLabels}
+                        onChange={(e) => setNewStationLabels(e.target.value)}
+                        placeholder="e.g. Kitchen — Closing, Counter"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {checklistTenant !== "ALL" && availableStations.length > 0 && (
+                    <div className="space-y-1">
+                      <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Existing stations (tap to assign)</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {availableStations.map((s) => {
+                          const on = checklistStationIds.includes(s.id);
+                          return (
+                            <button key={s.id} type="button"
+                              onClick={() => setChecklistStationIds((prev) => on ? prev.filter((x) => x !== s.id) : [...prev, s.id])}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold border cursor-pointer transition-all ${on ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}>
+                              {s.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {checklistTenant === "ALL" && (
+                    <p className="text-[9px] text-amber-600 font-medium">Pick a single outlet to reuse its existing stations. Stations added above are created in each selected outlet.</p>
+                  )}
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Assign to individuals <span className="text-slate-400 normal-case font-medium">(optional — empty = everyone at the outlet)</span></label>
+                    <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                      {tenantUsers.filter((u) => u.role !== Role.SUPER_ADMIN).map((u) => {
+                        const on = checklistUserIds.includes(u.id);
+                        return (
+                          <label key={u.id} className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 cursor-pointer hover:bg-slate-50">
+                            <input type="checkbox" checked={on}
+                              onChange={(e) => setChecklistUserIds((prev) => e.target.checked ? [...prev, u.id] : prev.filter((x) => x !== u.id))} />
+                            <span>{u.name}{u.department ? <span className="text-slate-400"> · {u.department}</span> : null}</span>
+                          </label>
+                        );
+                      })}
+                      {tenantUsers.length === 0 && <p className="px-3 py-2 text-[10px] text-slate-400 italic">No staff onboarded yet.</p>}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="space-y-1">
@@ -1515,13 +1578,19 @@ export default function ClientAdminPanel({
                         </div>
 
                         <div className="space-y-1">
-                          <label className="text-[9px] text-slate-450 font-bold uppercase block">Checkpoints (One step per line)</label>
+                          <label className="text-[9px] text-slate-450 font-bold uppercase block">Checkpoints (paste one per line)</label>
+                          {idx === 0 && (
+                            <p className="text-[9px] text-slate-400 leading-relaxed">
+                              Paste your list — each line is a checkpoint (default = tick / NA). Add tags to change the type:
+                              {" "}<span className="font-mono text-slate-600">@yesno</span>, <span className="font-mono text-slate-600">@score</span>, <span className="font-mono text-slate-600">@num(0-5°C)</span>, <span className="font-mono text-slate-600">@photo</span>, <span className="font-mono text-slate-600">@critical</span>, <span className="font-mono text-slate-600">@fix(action)</span>.
+                            </p>
+                          )}
                           <textarea
                             rows={4}
                             required
                             value={sec.itemsText}
                             onChange={(e) => handleUpdateChecklistSection(sec.id, "itemsText", e.target.value)}
-                            placeholder="e.g. Preheat mixers&#10;Sanitize steel bowl&#10;Weigh flour ingredients"
+                            placeholder={"No expired products in use @critical\nFridge temp @num(0-5°C) @photo\nCounter cleanliness @score @fix(Clean before ops)"}
                             className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none font-normal"
                           />
                         </div>
@@ -1542,9 +1611,10 @@ export default function ClientAdminPanel({
                   )}
                   <button
                     type="submit"
-                    className="flex-1 py-2.5 bg-slate-900 text-white hover:bg-slate-800 font-bold text-xs rounded-xl shadow cursor-pointer transition-all"
+                    disabled={savingChecklist}
+                    className="flex-1 py-2.5 bg-slate-900 text-white hover:bg-slate-800 font-bold text-xs rounded-xl shadow cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {editingChecklistId ? "Update Checklist" : "Deploy Checklist"}
+                    {savingChecklist ? "Saving…" : editingChecklistId ? "Update Checklist" : "Deploy Checklist"}
                   </button>
                 </div>
               </form>

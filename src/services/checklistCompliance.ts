@@ -26,6 +26,7 @@ import type {
   ChecklistFrequency,
   ChecklistStation,
   ChecklistRun,
+  ChecklistItem,
 } from "../types";
 import { compressImage } from "../kot/lib/image";
 
@@ -432,4 +433,158 @@ export async function uploadChecklistPhoto(
   const { error } = (await Promise.race([upload, timeout])) as Awaited<typeof upload>;
   if (error) throw error;
   return supabase.storage.from("checklist-photos").getPublicUrl(path).data.publicUrl;
+}
+
+// ─── Custom checklists built by a client admin (paste-a-block + inline tags) ──
+// The admin form keeps the "one checkpoint per line" paste technique; a line may
+// carry inline tags to set its type/flags (default = tick):
+//   @yesno · @score · @num(0-5°C) / @num(>=63°C) · @photo · @critical · @fix(text)
+// e.g.  Fridge temp @num(0-5°C) @photo        No expired stock @critical
+export interface ParsedLine {
+  text: string;
+  responseType: ChecklistResponseType;
+  critical?: boolean;
+  requiresPhoto?: boolean;
+  target?: { min?: number; max?: number; unit?: string };
+  correctiveAction?: string;
+}
+
+function parseTarget(s: string): { min?: number; max?: number; unit?: string } {
+  const t = s.trim();
+  const unitM = t.match(/[^\d\s.\-–<>=≥≤]+$/);
+  const unit = unitM ? unitM[0].trim() : undefined;
+  const range = t.match(/(-?\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)/);
+  if (range) return { min: +range[1], max: +range[2], unit };
+  const n = t.match(/-?\d+(?:\.\d+)?/);
+  const num = n ? +n[0] : undefined;
+  if (/[<≤]/.test(t)) return { max: num, unit };
+  if (/[>≥]/.test(t)) return { min: num, unit };
+  if (num !== undefined) return { min: num, unit };
+  return { unit };
+}
+
+export function parseChecklistLine(raw: string): ParsedLine {
+  let text = raw;
+  let responseType: ChecklistResponseType = "tick";
+  let critical: boolean | undefined;
+  let requiresPhoto: boolean | undefined;
+  let target: { min?: number; max?: number; unit?: string } | undefined;
+  let correctiveAction: string | undefined;
+
+  const fix = text.match(/@fix\(([^)]*)\)/i);
+  if (fix) { correctiveAction = fix[1].trim() || undefined; text = text.replace(fix[0], ""); }
+  const num = text.match(/@num\(([^)]*)\)/i);
+  if (num) { responseType = "numeric"; target = parseTarget(num[1]); text = text.replace(num[0], ""); }
+  if (/@score\b/i.test(text)) { responseType = "score"; text = text.replace(/@score\b/i, ""); }
+  if (/@yesno\b/i.test(text)) { if (responseType === "tick") responseType = "yes_no"; text = text.replace(/@yesno\b/i, ""); }
+  if (/@photo\b/i.test(text)) { requiresPhoto = true; text = text.replace(/@photo\b/i, ""); }
+  if (/@critical\b/i.test(text)) { critical = true; text = text.replace(/@critical\b/i, ""); }
+
+  text = text.replace(/\s{2,}/g, " ").trim();
+  return {
+    text, responseType,
+    ...(critical ? { critical } : {}),
+    ...(requiresPhoto ? { requiresPhoto } : {}),
+    ...(target ? { target } : {}),
+    ...(correctiveAction ? { correctiveAction } : {}),
+  };
+}
+
+/** Turn a stored item back into an editable tagged line (for the edit form). */
+export function serializeChecklistItem(it: ChecklistItem): string {
+  let s = it.text;
+  const rt = it.responseType || "tick";
+  if (rt === "numeric" && it.target) {
+    const { min, max, unit = "" } = it.target;
+    const tag = (min !== undefined && max !== undefined) ? `${min}-${max}${unit}`
+      : (min !== undefined) ? `>=${min}${unit}` : (max !== undefined) ? `<=${max}${unit}` : unit;
+    s += ` @num(${tag})`;
+  } else if (rt === "score") { s += " @score"; }
+  else if (rt === "yes_no") { s += " @yesno"; }
+  if (it.requiresPhoto) s += " @photo";
+  if (it.critical) s += " @critical";
+  if (it.correctiveAction) s += ` @fix(${it.correctiveAction})`;
+  return s;
+}
+
+async function createStationsFor(labels: string[] | undefined, tenantId: string, clientId?: string): Promise<string[]> {
+  const clean = (labels || []).map((l) => l.trim()).filter(Boolean);
+  if (!clean.length) return [];
+  const rows = clean.map((label) => ({
+    id: `cstn-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    tenant_id: tenantId, client_id: clientId ?? null, label, active: true,
+  }));
+  const { error } = await supabase.from("checklist_stations").insert(rows);
+  if (error) throw error;
+  return rows.map((r) => r.id);
+}
+
+export interface CustomChecklistInput {
+  id?: string;                 // present ⇒ update this checklist in place
+  title: string;
+  desc?: string;
+  tenantIds: string[];         // create: 1..n outlets; update: [the checklist's tenant]
+  sections: { number: string; name: string; lines: string[] }[];
+  frequency: ChecklistFrequency;
+  stationIds?: string[];       // existing stations (single-outlet only)
+  newStationLabels?: string[];
+  userIds?: string[];
+  customInputFields?: string[];
+  recurrence?: string;
+  recurrenceDay?: string;
+  createdBy: { userId: string; name: string; role: string };
+  clientId?: string;
+}
+
+/** Create (per outlet) or update a client's own compliance checklist — typed items
+ *  from the tagged paste, station + individual assignment, no dept/role targeting. */
+export async function saveCustomComplianceChecklist(input: CustomChecklistInput): Promise<void> {
+  const parsedSections = input.sections.map((s, i) => ({
+    id: `sec-${i}`, number: s.number, name: s.name,
+    items: s.lines.map((l) => parseChecklistLine(l)).filter((p) => p.text),
+  }));
+  const flat = parsedSections.flatMap((s) => s.items);
+
+  const buildDesc = (checklistId: string, stationIds: string[]) => JSON.stringify({
+    desc: input.desc || "",
+    recurrence: input.recurrence || "One-time",
+    recurrenceDay: input.recurrenceDay || "",
+    attachment: "",
+    customInputFields: input.customInputFields || [],
+    sections: parsedSections.map((s) => ({ id: s.id, number: s.number, name: s.name, items: s.items.map((it) => ({ id: "", text: it.text })) })),
+    type: "single",
+    adminNotes: "",
+    groupId: `group-${checklistId}`,
+    frequency: input.frequency,
+    packId: "custom",
+    assignment: { stationIds, userIds: input.userIds || [] },
+  });
+
+  const itemRows = (checklistId: string) => flat.map((it, idx) => ({
+    id: `item-${checklistId}-${idx}`, checklist_id: checklistId, text: it.text, completed: false,
+    response_type: it.responseType, critical: !!it.critical,
+    corrective_action: it.correctiveAction ?? null, requires_photo: !!it.requiresPhoto, target: it.target ?? null,
+  }));
+
+  if (input.id) {
+    const tId = input.tenantIds[0];
+    const newIds = await createStationsFor(input.newStationLabels, tId, input.clientId);
+    const stationIds = [...(input.stationIds || []), ...newIds];
+    await supabase.from("checklists").update({ title: input.title, description: buildDesc(input.id, stationIds) }).eq("id", input.id);
+    await supabase.from("checklist_items").delete().eq("checklist_id", input.id);
+    if (flat.length) await supabase.from("checklist_items").insert(itemRows(input.id));
+    return;
+  }
+
+  for (const tId of input.tenantIds) {
+    const checklistId = `checklist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const newIds = await createStationsFor(input.newStationLabels, tId, input.clientId);
+    const stationIds = [...(input.tenantIds.length === 1 ? (input.stationIds || []) : []), ...newIds];
+    await supabase.from("checklists").insert([{
+      id: checklistId, tenant_id: tId, title: input.title, description: buildDesc(checklistId, stationIds),
+      department: "All Departments", role: "All Roles", created_at: new Date().toISOString(),
+      created_by_user_id: input.createdBy.userId, created_by_name: input.createdBy.name, created_by_role: input.createdBy.role,
+    }]);
+    if (flat.length) await supabase.from("checklist_items").insert(itemRows(checklistId));
+  }
 }
