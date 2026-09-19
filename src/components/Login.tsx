@@ -271,7 +271,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     inputMode="email"
                     autoComplete="username"
                     required
-                    placeholder="e.g. karan@cakewala.com or +91 98…"
+                    placeholder="e.g. karan@example.com or +91 98…"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className={`${inputBase} ${isSuperAdminEmail ? inputAdmin : inputBrand} pl-10 pr-4`}

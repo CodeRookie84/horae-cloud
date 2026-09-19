@@ -10,11 +10,12 @@
  * Inbound flows (all happen inside the 24-hr customer-service window the user
  * opens by messaging us, so free-form replies + interactive buttons are allowed
  * and free):
- *   #1 Forward/paste a message → we offer [Create Task] / [Dismiss] buttons →
- *      tapping Create Task stores a task_capture and replies with a prefilled
+ *   #1 Plain text/voice (no keyword) → saved as a NOTE by default, with one-tap
+ *      follow-ups: [⏰ Add date & time] (or [📅 Add to Calendar] when a time was
+ *      detected) and [🗑️ Delete] to undo. Tasks are NOT the default anymore.
+ *   #2 "task …" / "create task …" (typed /task, or spoken) → we transcribe voice
+ *      via Whisper, store a task_capture, and reply with a prefilled
  *      /tasks/new?capture={id} link.
- *   #2 "new task" (text or voice note) → we transcribe voice via Whisper, store
- *      a task_capture, and reply with the same prefilled link.
  *
  * Meta requires a fast 200, and voice transcription is slow, so we acknowledge
  * immediately and finish the work via EdgeRuntime.waitUntil when available.
@@ -241,6 +242,10 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
       if (bid.startsWith("tphoto~")) { await startPhotoForTask(fromPhone, userId, tenantId, bid.slice(7)); return; }
       // "tscope~to-me" / "tscope~by-me" = scope chosen from the "Which tasks?" prompt.
       if (bid.startsWith("tscope~")) { await sendTaskPickerForView(fromPhone, userId, tenantId, "all", bid.slice(7) === "by-me" ? "by-me" : "to-me"); return; }
+      // Follow-up buttons under a just-saved NOTE (random text/voice → note by default).
+      if (bid.startsWith("ntime~")) { await startNoteTimeInput(fromPhone, userId, tenantId, bid.slice(6)); return; }
+      if (bid.startsWith("ncal~"))  { await sendNoteCalendar(fromPhone, userId, bid.slice(5)); return; }
+      if (bid.startsWith("ndel~"))  { await deleteNote(fromPhone, userId, bid.slice(5)); return; }
       await handleButtonReply(m, fromPhone, userId, tenantId); return;
     }
     return;
@@ -301,6 +306,12 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
         await addTaskComment(fromPhone, userId, pending.payload?.taskId, content);
         return;
       }
+      // "note_time" → they tapped "Add date & time" on a saved note; this reply is
+      // the time (and optionally new text) to set on it.
+      if (pending.intent === "note_time") {
+        await setNoteTime(fromPhone, userId, pending.payload?.reminderId, content);
+        return;
+      }
       const isComplaint = pending.intent === "complaint";
       await createCaptureAndReply(fromPhone, userId, tenantId, isComplaint ? "whatsapp_complaint" : "whatsapp_newtask", content, isComplaint);
       return;
@@ -314,14 +325,12 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
       return;
     }
     // Route the transcript through the same verb commands as typed text, so a
-    // spoken "remind me to call the vendor at 3pm" or "meeting with Sam tomorrow
-    // 4pm" lands as a reminder/meeting — not always a task. If no verb is
-    // recognized, fall back to the original behavior: a straight task capture.
+    // spoken "remind me to call the vendor at 3pm", "meeting with Sam tomorrow
+    // 4pm", or "create task restock the fridge" lands as a note/meeting/task — the
+    // right thing, not always a task. If no verb is recognized, a plain voice note
+    // now defaults to a NOTE (tasks need the explicit "task"/"create task" verb).
     if (await routeVerbCommand(fromPhone, userId, tenantId, transcript)) return;
-    // The verb router already handled rem/meet. A voice note that's neither would
-    // otherwise become a task — skip that for a task-less plan (Assistant).
-    if (await tasksAllowed(tenantId)) await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_voice", transcript);
-    else await sendText(fromPhone, "🎙️ Got it. To save a *note* say _\"note buy stock\"_ (add a time to get a reminder), or for a *meeting* say _\"meeting with …\"_. To translate, send *msg*.");
+    await offerNoteCapture(fromPhone, userId, tenantId, transcript);
     return;
   }
 
@@ -329,14 +338,11 @@ async function dispatchInbound(m: any, fromPhone: string, userId: string, tenant
     const text = (m.text?.body || "").trim();
     if (!text) return;
     // Typed commands MUST start with a slash (/note, /task, /menu, …). Anything
-    // without one is plain content → offer to capture it as a task. (Voice notes
-    // are exempt — handled above — since you can't speak a slash.)
+    // without one is plain content → save it as a NOTE by default. (Tasks now need
+    // the explicit "task" keyword / "create task…"; voice is handled above.)
     const cmd = asCommand(text);
     if (cmd === null) {
-      // Plain content → a task capture. Skip it entirely for a task-less plan
-      // (Assistant): point them at what they CAN do instead of offering a task.
-      if (await tasksAllowed(tenantId)) await offerCaptureMenu(fromPhone, userId, tenantId, text);
-      else await sendText(fromPhone, "🙂 I can help with *Notes* (*/note*), *Meetings* (*/meet*) and *Translate* (send *msg*). Send */help* to see how.");
+      await offerNoteCapture(fromPhone, userId, tenantId, text);
       return;
     }
 
@@ -452,6 +458,16 @@ async function routeVerbCommand(fromPhone: string, userId: string, tenantId: str
     const filter = reminderFilterFromKeyword(rest);
     if (filter) { await sendRemindersList(fromPhone, userId, filter, false, "meeting"); return true; }
     await createReminder(fromPhone, userId, tenantId, rest, "meeting");
+    return true;
+  }
+  // "create task …" / "create a task …" / "create new task …" → CREATE a task.
+  // This is the explicit spoken/typed verb for tasks now that plain text and voice
+  // default to a note. ("task <details>" below also still creates.)
+  const createTask = text.match(/^\s*create\s+(?:a\s+|an\s+|the\s+|new\s+)?tasks?\b[:\-\s]*(.*)$/is);
+  if (createTask) {
+    if (!(await tasksAllowed(tenantId))) { await denyTasks(fromPhone); return true; }
+    const rest = (createTask[1] || "").trim();
+    await createCaptureAndReply(fromPhone, userId, tenantId, "whatsapp_newtask", rest);
     return true;
   }
   // "task"/"tasks" → FETCH your tasks (bare, or "task list/all/open/pending").
@@ -1742,6 +1758,110 @@ async function offerCaptureMenu(fromPhone: string, userId: string, tenantId: str
   // Tie the eventual button tap (arrives with context.id = this wamid) back to
   // the stored conversation.
   if (wamid) await supabase.from("whatsapp_conversations").update({ menu_message_id: wamid }).eq("id", conv.id);
+}
+
+/**
+ * Plain inbound text/voice → save it as a NOTE by default. (Tasks now need the
+ * explicit "task"/"create task" verb; anything else is a note.) Fewest clicks:
+ * the note is written immediately and the buttons are optional follow-ups.
+ *   • no time in the message → offer "⏰ Add date & time"
+ *   • a time was detected     → save it with the time and offer "📅 Add to Calendar"
+ * Either way a "🗑️ Delete" button undoes the save in one tap. Notes aren't
+ * plan-gated (like /note), so this works on every plan.
+ */
+async function offerNoteCapture(fromPhone: string, userId: string, tenantId: string | null, text: string) {
+  const raw = (text || "").trim();
+  if (!raw) return;
+
+  // Separate any time phrase from the note text (same parser /note uses).
+  let noteText = raw;
+  let remindAt: string | null = null;
+  const split = splitReminderWhen(raw);
+  if (split) { noteText = split.text; remindAt = split.remindAt; }
+  noteText = noteText.trim() || raw;
+
+  const id = "rem-" + Date.now();
+  const { error } = await supabase.from("reminders").insert([{
+    id, user_id: userId, tenant_id: tenantId, text: noteText.slice(0, 300),
+    remind_at: remindAt, status: "pending", kind: "reminder",
+  }]);
+  if (error) { console.error("[whatsapp-webhook] offerNoteCapture failed:", error); await sendText(fromPhone, "Sorry, I couldn't save that. Please try again."); return; }
+
+  const whenStr = remindAt ? ` for *${fmtWhen(remindAt)}*` : "";
+  const savedLine = `📝 Saved as a note${whenStr}:\n"${noteText.slice(0, 200)}"`;
+  const hint = "Send */note* any time to see your list.";
+  const buttons = remindAt
+    ? [{ id: `ncal~${id}`, title: "📅 Add to Calendar" }, { id: `ndel~${id}`, title: "🗑️ Delete" }]
+    : [{ id: `ntime~${id}`, title: "⏰ Add date & time" }, { id: `ndel~${id}`, title: "🗑️ Delete" }];
+  await sendButtons(fromPhone, `${savedLine}\n\n${hint}`, buttons);
+}
+
+/** "⏰ Add date & time" tapped on a saved note → wait for the user's next message
+ *  (the time, and optionally new text) and apply it in setNoteTime. */
+async function startNoteTimeInput(fromPhone: string, userId: string, tenantId: string | null, reminderId: string) {
+  if (!reminderId) { await sendText(fromPhone, "That note couldn't be found. Send it again to save a new one."); return; }
+  await supabase.from("whatsapp_conversations").insert([{
+    user_id: userId, tenant_id: tenantId, from_phone: fromPhone,
+    state: "awaiting_input", intent: "note_time", payload: { reminderId },
+  }]);
+  await sendText(fromPhone, "⏰ When should this note remind you? e.g. *tomorrow 3pm* or *today 6pm*.\n\n(Reply *cancel* to keep it without a time.)");
+}
+
+/** The reply after "⏰ Add date & time": parse a time (and optional new text) and
+ *  set it on the note, then offer the one-tap "Add to Calendar" button. */
+async function setNoteTime(fromPhone: string, userId: string, reminderId: string | undefined, input: string) {
+  if (!reminderId) { await sendText(fromPhone, "That note couldn't be found. Send it again to save a new one."); return; }
+  const { data: r } = await supabase.from("reminders")
+    .select("id, text, remind_at").eq("id", reminderId).eq("user_id", userId).maybeSingle();
+  if (!r) { await sendText(fromPhone, "That note couldn't be found — it may have been removed."); return; }
+
+  // A full "text + time" split wins; otherwise treat the whole reply as a time.
+  let newText: string | null = null;
+  let newRemindAt: string | null = null;
+  const split = splitReminderWhen(input);
+  if (split && split.remindAt) {
+    newRemindAt = split.remindAt;
+    if (split.text && split.text.trim()) newText = split.text.trim();
+  } else {
+    const dt = parseReminderWhen(input, new Date());
+    if (dt && !isNaN(dt.getTime())) newRemindAt = dt.toISOString();
+  }
+  if (!newRemindAt) {
+    await sendText(fromPhone, "I couldn't read a date/time there. Try *tomorrow 3pm* or *today 6pm* — the note is still saved without a time.");
+    return;
+  }
+
+  const update: Record<string, unknown> = { remind_at: newRemindAt, updated_at: new Date().toISOString() };
+  if (newText) update.text = newText.slice(0, 300);
+  const { error } = await supabase.from("reminders").update(update).eq("id", reminderId).eq("user_id", userId);
+  if (error) { console.error("[whatsapp-webhook] setNoteTime failed:", error); await sendText(fromPhone, "Sorry, I couldn't update that. Please try again."); return; }
+
+  const finalText = String(newText ?? r.text ?? "note");
+  await sendCtaUrl(fromPhone,
+    `📝 Note set for *${fmtWhen(newRemindAt)}*:\n"${finalText.slice(0, 200)}"\n\nSend */note* any time to see your list.\n\nTo turn on notification 👇 (_optional_)`,
+    "Add to Calendar", googleCalUrl(finalText, newRemindAt, "reminder"));
+}
+
+/** "📅 Add to Calendar" tapped on a saved (timed) note → send the one-tap Google
+ *  Calendar link so the user's own calendar owns the reminding. */
+async function sendNoteCalendar(fromPhone: string, userId: string, reminderId: string) {
+  const { data: r } = await supabase.from("reminders")
+    .select("text, remind_at").eq("id", reminderId).eq("user_id", userId).maybeSingle();
+  if (!r) { await sendText(fromPhone, "That note couldn't be found — it may have been removed."); return; }
+  if (!r.remind_at) { await sendText(fromPhone, "That note has no time yet, so there's nothing to schedule. Send it again with a time, e.g. *tomorrow 3pm*."); return; }
+  await sendCtaUrl(fromPhone,
+    `🗓️ Add to your calendar:\n"${String(r.text).slice(0, 120)}" — ${fmtWhen(r.remind_at)}`,
+    "Add to Calendar", googleCalUrl(String(r.text), r.remind_at, "reminder"));
+}
+
+/** "🗑️ Delete" tapped on a just-saved note → remove it (an undo of the auto-save,
+ *  the equivalent of the old "Ignore"). Scoped to the user's own note. */
+async function deleteNote(fromPhone: string, userId: string, reminderId: string) {
+  if (!reminderId) { await sendText(fromPhone, "That note couldn't be found."); return; }
+  const { data: r } = await supabase.from("reminders")
+    .select("text").eq("id", reminderId).eq("user_id", userId).maybeSingle();
+  await supabase.from("reminders").delete().eq("id", reminderId).eq("user_id", userId);
+  await sendText(fromPhone, `🗑️ Deleted — nothing saved${r?.text ? `:\n"${String(r.text).slice(0, 120)}"` : "."}`);
 }
 
 // Staff-settable task statuses offered over WhatsApp. "Assigned" is the initial
