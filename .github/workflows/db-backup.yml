@@ -1,0 +1,67 @@
+name: Nightly DB Backup
+
+# Off-site, laptop-independent backup of the Horae Supabase Postgres DB.
+# Runs on GitHub's servers, dumps roles + schema + data (same three files the
+# local scripts/backup-db.ps1 produces), and stores them as a downloadable
+# GitHub artifact. This is a safety net; Supabase Pro PITR is the primary DR.
+#
+# One-time setup: add a repo secret SUPABASE_DB_URL
+#   Settings → Secrets and variables → Actions → New repository secret
+#   Value = the "Session pooler" URI from
+#   Supabase → Project Settings → Database → Connection string (with the real
+#   password, special chars percent-encoded). See scripts/.backup.env.example.
+#
+# Restore later: download the artifact, unzip, then against a target DB run
+#   psql <DB_URL> -f roles.sql
+#   psql <DB_URL> -f schema.sql
+#   psql <DB_URL> -f data.sql
+
+on:
+  schedule:
+    # 19:00 UTC = 00:30 IST (low-traffic). GitHub cron is always UTC.
+    - cron: "0 19 * * *"
+  workflow_dispatch: {} # allow manual "Run workflow" from the Actions tab
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Timestamp
+        id: ts
+        run: echo "stamp=$(date -u +'%Y-%m-%d_%H%M%S')" >> "$GITHUB_OUTPUT"
+
+      - name: Dump database (roles + schema + data)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set. Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          mkdir -p dump
+          echo "Dumping roles..."
+          supabase db dump --db-url "$SUPABASE_DB_URL" --role-only -f dump/roles.sql
+          echo "Dumping schema..."
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f dump/schema.sql
+          echo "Dumping data..."
+          supabase db dump --db-url "$SUPABASE_DB_URL" --data-only -f dump/data.sql
+          echo "--- sizes ---"
+          ls -lh dump
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: horae-db-backup-${{ steps.ts.outputs.stamp }}
+          path: dump/
+          retention-days: 30
+          if-no-files-found: error
