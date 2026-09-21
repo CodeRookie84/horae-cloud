@@ -23,6 +23,7 @@ import {
 } from "../types";
 import supabase from "./supabaseClient";
 import * as plans from "./plans";
+import { isWithinRecurrenceWindow } from "./checklistCompliance";
 
 export class StoreService {
   // Active Simulated States (Client & Tenant focus & acting user role validation)
@@ -1269,6 +1270,37 @@ export class StoreService {
       .select('*')
       .in('checklist_id', complianceChecklistsData.map(c => c.id));
 
+    // Food-safety / compliance checklists are completed via ChecklistRun →
+    // checklist_runs (an immutable audit record), NOT via the submissions blob
+    // above (that's only written by the plain tick-and-submit flow). Without
+    // this, a compliance checklist never shows "completed" here even right
+    // after a run — pull each compliance checklist's latest run by this user
+    // so its completed state below is accurate.
+    const complianceIds = complianceChecklistsData.filter((c) => {
+      try {
+        if (c.description && c.description.startsWith("{")) {
+          const obj = JSON.parse(c.description);
+          return !!(obj.frequency || obj.packId);
+        }
+      } catch (e) {}
+      return false;
+    }).map((c) => c.id);
+
+    const latestRunByChecklist: Record<string, { completedAt: string; performerName: string }> = {};
+    if (complianceIds.length) {
+      const { data: runsData } = await supabase
+        .from('checklist_runs')
+        .select('checklist_id, completed_at, performer_name')
+        .in('checklist_id', complianceIds)
+        .eq('performer_user_id', curUser.id)
+        .order('completed_at', { ascending: false });
+      (runsData || []).forEach((r: any) => {
+        if (!latestRunByChecklist[r.checklist_id]) {
+          latestRunByChecklist[r.checklist_id] = { completedAt: r.completed_at, performerName: r.performer_name };
+        }
+      });
+    }
+
     const combined: Checklist[] = complianceChecklistsData.map(c => {
       // Parse description for recurrence details & attachment & submissions
       let parsedDesc = c.description;
@@ -1349,53 +1381,46 @@ export class StoreService {
         }));
       }
 
-      // Find latest submission within recurrence window for the CURRENT user
-      const userSubmissions = (submissions || []).filter(sub => sub.submittedBy?.userId === curUser.id);
+      const isCompliance = !!(frequency || packId);
+
+      // Compliance checklists: completion comes from the latest checklist_runs
+      // row for this user (fetched above), evaluated against the same
+      // recurrence window as the classic path below.
+      const latestRun = isCompliance ? latestRunByChecklist[c.id] : undefined;
+      const runShowsCompleted = !!latestRun && isWithinRecurrenceWindow(recurrence, latestRun.completedAt);
+
+      // Classic / custom checklists: completion comes from the submissions
+      // blob embedded in this row's description (written by submitChecklist).
+      const userSubmissions = !isCompliance
+        ? (submissions || []).filter(sub => sub.submittedBy?.userId === curUser.id)
+        : [];
       const latestSubmission = userSubmissions.length > 0
         ? [...userSubmissions].sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())[0]
         : null;
+      const submissionShowsCompleted = !isCompliance && !!latestSubmission
+        && isWithinRecurrenceWindow(recurrence, latestSubmission.submittedAt);
 
-      let shouldShowCompleted = false;
-      if (latestSubmission) {
-        const subDateStr = latestSubmission.submittedAt.split("T")[0];
-        const today = new Date();
-        const todayStr = today.toISOString().split("T")[0];
+      const shouldShowCompleted = isCompliance ? runShowsCompleted : submissionShowsCompleted;
 
-        if (recurrence === "Daily") {
-          if (subDateStr === todayStr) {
-            shouldShowCompleted = true;
-          }
-        } else if (recurrence === "Weekly") {
-          const getSunday = (d: Date) => {
-            const dateCopy = new Date(d.getTime());
-            const day = dateCopy.getDay();
-            const diff = dateCopy.getDate() - day;
-            return new Date(dateCopy.setDate(diff)).toISOString().split("T")[0];
-          };
-          const todaySun = getSunday(today);
-          const subSun = getSunday(new Date(latestSubmission.submittedAt));
-          if (subSun === todaySun) {
-            shouldShowCompleted = true;
-          }
-        } else if (recurrence === "Custom") {
-          const diffTime = Math.abs(today.getTime() - new Date(latestSubmission.submittedAt).getTime());
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          if (diffDays < 3) {
-            shouldShowCompleted = true;
-          }
-        } else {
-          // One-time checklists show completion forever once completed
-          shouldShowCompleted = true;
-        }
-      }
-
-      // Map template items to completed states from the latest submission
-      // For yes_no checklists, mark all items as completed if the user submitted
+      // Map template items to completed states. A compliance run is one atomic
+      // action covering every item (like a yes_no submission); the classic path
+      // keeps its existing per-item completed map (except yes_no, same as before).
       const finalItems = templateItems.map(item => {
+        if (isCompliance) {
+          if (shouldShowCompleted && latestRun) {
+            return {
+              ...item,
+              completed: true,
+              completedBy: { userId: curUser.id, name: latestRun.performerName },
+              completedAt: latestRun.completedAt,
+            };
+          }
+          return item;
+        }
         if (shouldShowCompleted && latestSubmission) {
           // For yes_no type, any submission means all items are "done"
-          const isItemChecked = type === "yes_no" 
-            ? true 
+          const isItemChecked = type === "yes_no"
+            ? true
             : !!latestSubmission.items?.[item.id];
           return {
             ...item,

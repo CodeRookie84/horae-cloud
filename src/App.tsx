@@ -1359,6 +1359,7 @@ function AppInner() {
                       activeUser={activeUser ? { id: activeUser.id, name: activeUser.name, role: activeUser.role } : undefined}
                       clientId={activeClient?.id}
                       plan={activeClient?.plan}
+                      allUsers={allUsers.filter(u => tenants.some(t => t.id === u.tenantId))}
                     />
                   )}
 

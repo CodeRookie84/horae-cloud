@@ -172,8 +172,11 @@ export interface Checklist {
    *  (e.g. the Enterprise-only `fssai` pack). Absent ⇒ a hand-built checklist. */
   packId?: string;
   /** Who is responsible: module-local stations and/or specific staff — decoupled
-   *  from the staff-directory `department`/`role` above (mirrors the KOT model). */
-  assignment?: { stationIds?: string[]; userIds?: string[] };
+   *  from the staff-directory `department`/`role` above (mirrors the KOT model).
+   *  `notifyUserIds` are watchers (e.g. a manager/chef) who get an app push when
+   *  this checklist is submitted and can see its submission status board — a
+   *  narrow, per-checklist exception, not a role change. */
+  assignment?: { stationIds?: string[]; userIds?: string[]; notifyUserIds?: string[] };
 }
 
 export type ChecklistFrequency =

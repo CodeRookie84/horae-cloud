@@ -4,12 +4,13 @@
  */
 
 import React, { useState } from "react";
-import { ClipboardCheck, CheckCircle2, UserCheck, Building2, Check, ArrowLeft, ChevronRight, Clock, Loader2, Languages, FileText, Plus, X } from "lucide-react";
-import { Checklist, ChecklistItem, Tenant, Role } from "../types";
+import { ClipboardCheck, CheckCircle2, UserCheck, Building2, Check, ArrowLeft, ChevronRight, Clock, Loader2, Languages, FileText, Plus, X, ListChecks } from "lucide-react";
+import { Checklist, ChecklistItem, Tenant, Role, User as AppUser } from "../types";
 import { translateText, store } from "../services/store";
 import { resolveLanguages } from "../services/languages";
 import ChecklistRun from "./ChecklistRun";
 import ChecklistRegister from "./ChecklistRegister";
+import ChecklistSubmissionStatus from "./ChecklistSubmissionStatus";
 import { installChecklistPack, packsForPlan } from "../services/checklistCompliance";
 
 /** A checklist is a compliance/food-safety one when it came from a pack or carries
@@ -35,6 +36,8 @@ interface ChecklistsWorkflowsProps {
   clientId?: string;
   /** Client plan — gates which template packs can be installed. */
   plan?: string;
+  /** Client-wide staff (all outlets) — for the watcher submission-status board. */
+  allUsers?: AppUser[];
 }
 
 export default function ChecklistsWorkflows({
@@ -47,6 +50,7 @@ export default function ChecklistsWorkflows({
   activeUser,
   clientId,
   plan,
+  allUsers = [],
 }: ChecklistsWorkflowsProps) {
   const pickerLangs = (resolveLanguages(languages).length ? resolveLanguages(languages) : resolveLanguages(DEFAULT_LANG_CODES));
   const [selectedTenantId, setSelectedTenantId] = useState<string>("ALL");
@@ -224,6 +228,7 @@ export default function ChecklistsWorkflows({
 
   // ── Food-safety: register view + template-pack install (admin only) ──────────
   const [showRegister, setShowRegister] = useState(false);
+  const [showStatus, setShowStatus] = useState(false);
   const [installOpen, setInstallOpen] = useState(false);
   const [installPackId, setInstallPackId] = useState("");
   const [installTenantIds, setInstallTenantIds] = useState<string[]>([]);
@@ -231,6 +236,11 @@ export default function ChecklistsWorkflows({
   const [installNote, setInstallNote] = useState("");
   const isManager = activeUser?.role === Role.ADMIN || activeUser?.role === Role.MANAGER || activeUser?.role === Role.SUPER_ADMIN;
   const availablePacks = packsForPlan(plan || "");
+  // A non-manager still gets the "Status" entry point if they're tagged as a
+  // watcher on at least one checklist — a per-checklist exception, not a role.
+  const isWatcherAnywhere = !isManager && !!activeUser && rawChecklists.some(
+    (c) => ((c as any).assignment?.notifyUserIds || []).includes(activeUser.id)
+  );
 
   const doInstall = async () => {
     if (!installPackId || installTenantIds.length === 0 || !activeUser) return;
@@ -627,6 +637,19 @@ export default function ChecklistsWorkflows({
     );
   }
 
+  // ─── SUBMISSION STATUS BOARD (managers + tagged watchers) ────────────────────
+  if (showStatus && activeUser) {
+    return (
+      <ChecklistSubmissionStatus
+        checklists={rawChecklists}
+        tenants={tenants}
+        allUsers={allUsers}
+        activeUser={activeUser}
+        onBack={() => setShowStatus(false)}
+      />
+    );
+  }
+
   // ─── CHECKLISTS LIST VIEW ─────────────────────────────────────────────────────
   return (
     <div className="space-y-4" id="checklists-wrapper">
@@ -648,6 +671,15 @@ export default function ChecklistsWorkflows({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {(isManager || isWatcherAnywhere) && (
+            <button
+              type="button"
+              onClick={() => setShowStatus(true)}
+              className="px-3 py-2 rounded-xl text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
+            >
+              <ListChecks className="w-3.5 h-3.5" /> Status
+            </button>
+          )}
           {isManager && (
             <>
               <button

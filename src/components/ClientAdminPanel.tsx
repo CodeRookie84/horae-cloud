@@ -461,6 +461,8 @@ export default function ClientAdminPanel({
   const [checklistFrequency, setChecklistFrequency] = useState<string>("daily");
   const [checklistStationIds, setChecklistStationIds] = useState<string[]>([]);
   const [checklistUserIds, setChecklistUserIds] = useState<string[]>([]);
+  /** Watchers (managers/chefs) notified on submission — see assignment.notifyUserIds. */
+  const [checklistNotifyUserIds, setChecklistNotifyUserIds] = useState<string[]>([]);
   const [newStationLabels, setNewStationLabels] = useState<string>("");
   const [availableStations, setAvailableStations] = useState<ChecklistStation[]>([]);
   const [savingChecklist, setSavingChecklist] = useState(false);
@@ -586,6 +588,7 @@ export default function ClientAdminPanel({
     setChecklistFrequency((chk as any).frequency || "daily");
     setChecklistStationIds((chk as any).assignment?.stationIds || []);
     setChecklistUserIds((chk as any).assignment?.userIds || []);
+    setChecklistNotifyUserIds((chk as any).assignment?.notifyUserIds || []);
     setNewStationLabels("");
 
     if (chk.customInputFields && chk.customInputFields.length > 0) {
@@ -662,6 +665,7 @@ export default function ClientAdminPanel({
     setChecklistFrequency("daily");
     setChecklistStationIds([]);
     setChecklistUserIds([]);
+    setChecklistNotifyUserIds([]);
     setNewStationLabels("");
   };
 
@@ -754,6 +758,7 @@ export default function ClientAdminPanel({
         stationIds: checklistTenant !== "ALL" ? checklistStationIds : [],
         newStationLabels: newStations,
         userIds: checklistUserIds,
+        notifyUserIds: checklistNotifyUserIds,
         customInputFields: checklistCustomFields,
         recurrence: checklistRecurrence,
         recurrenceDay: checklistRecurrenceDay,
@@ -1422,19 +1427,38 @@ export default function ClientAdminPanel({
                   )}
 
                   <div className="space-y-1">
-                    <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Assign to individuals <span className="text-slate-400 normal-case font-medium">(optional — empty = everyone at the outlet)</span></label>
+                    <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Assign to individuals <span className="text-slate-400 normal-case font-medium">(optional — empty = everyone at the outlet; staff from ANY outlet, e.g. an area manager covering this one)</span></label>
                     <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
-                      {tenantUsers.filter((u) => u.role !== Role.SUPER_ADMIN).map((u) => {
+                      {clientUsers.filter((u) => u.role !== Role.SUPER_ADMIN).map((u) => {
                         const on = checklistUserIds.includes(u.id);
+                        const outletName = tenants.find((t) => t.id === u.tenantId)?.name;
                         return (
                           <label key={u.id} className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 cursor-pointer hover:bg-slate-50">
                             <input type="checkbox" checked={on}
                               onChange={(e) => setChecklistUserIds((prev) => e.target.checked ? [...prev, u.id] : prev.filter((x) => x !== u.id))} />
-                            <span>{u.name}{u.department ? <span className="text-slate-400"> · {u.department}</span> : null}</span>
+                            <span>{u.name}{outletName ? <span className="text-slate-400"> · {outletName}</span> : null}</span>
                           </label>
                         );
                       })}
-                      {tenantUsers.length === 0 && <p className="px-3 py-2 text-[10px] text-slate-400 italic">No staff onboarded yet.</p>}
+                      {clientUsers.length === 0 && <p className="px-3 py-2 text-[10px] text-slate-400 italic">No staff onboarded yet.</p>}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Notify on submission <span className="text-slate-400 normal-case font-medium">(managers/chefs — app push only; they also see this checklist's submission status)</span></label>
+                    <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                      {clientUsers.filter((u) => u.role !== Role.SUPER_ADMIN).map((u) => {
+                        const on = checklistNotifyUserIds.includes(u.id);
+                        const outletName = tenants.find((t) => t.id === u.tenantId)?.name;
+                        return (
+                          <label key={u.id} className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 cursor-pointer hover:bg-slate-50">
+                            <input type="checkbox" checked={on}
+                              onChange={(e) => setChecklistNotifyUserIds((prev) => e.target.checked ? [...prev, u.id] : prev.filter((x) => x !== u.id))} />
+                            <span>{u.name}{outletName ? <span className="text-slate-400"> · {outletName}</span> : null}</span>
+                          </label>
+                        );
+                      })}
+                      {clientUsers.length === 0 && <p className="px-3 py-2 text-[10px] text-slate-400 italic">No staff onboarded yet.</p>}
                     </div>
                   </div>
                 </div>

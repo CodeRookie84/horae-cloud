@@ -13,7 +13,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Camera, Check, X, AlertTriangle, Loader2, CheckCircle2 } from "lucide-react";
 import type { Checklist, ChecklistItem, ChecklistStation, ChecklistRunItem } from "../types";
 import {
-  getChecklistStations, submitChecklistRun, uploadChecklistPhoto,
+  getChecklistStations, submitChecklistRun, uploadChecklistPhoto, notifyChecklistSubmission,
 } from "../services/checklistCompliance";
 
 /** Audit items pass at 3/5 or above. */
@@ -144,7 +144,7 @@ export default function ChecklistRun({
           correctiveAction: !ok && it.correctiveAction ? it.correctiveAction : undefined,
         };
       });
-      await submitChecklistRun({
+      const run = await submitChecklistRun({
         checklistId: checklist.id,
         tenantId: checklist.tenantId,
         stationId: stationId || null,
@@ -156,6 +156,12 @@ export default function ChecklistRun({
         compliancePct,
         items: runItems,
       });
+      notifyChecklistSubmission(
+        checklist,
+        { compliancePct, status: criticalFailed ? "failed" : "completed" },
+        { userId: performer.userId, name: performer.name },
+        run.id,
+      ).catch(() => { /* best-effort — never blocks the run */ });
       onDone();
     } catch (e: any) {
       setError(e?.message || "Couldn't save the run. Please retry.");

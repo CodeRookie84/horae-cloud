@@ -72,6 +72,7 @@ const EVENT_TIERS: Record<string, "urgent" | "normal"> = {
   notice:             "normal", // app push + in-app ONLY (notice template flagged Marketing by Meta)
   training_published: "normal",
   checklist_posted:   "normal",
+  checklist_submitted: "normal", // a watcher ping, not an assignment — push + in-app only, never WhatsApp
   daily_digest:       "normal", // push + in-app ONLY — never WhatsApp (digest content = Marketing category, too costly)
 };
 
@@ -128,6 +129,8 @@ serve(async (req) => {
       await handleUrgentPush(body.kind, body.record, body.userIds, body.tenantId);
     } else if (type === "TASK_REASSIGNED") {
       await handleTaskReassigned(body.record, body.newPrimaryId, body.actorName);
+    } else if (type === "CHECKLIST_SUBMITTED") {
+      await handleChecklistSubmitted(body.record, body.userIds, body.tenantId, body.runId, body.submitterName, body.compliancePct, body.status);
     } else if (type === "NUDGE") {
       await handleMorningNudge(body.userId, body.tenantId, body.summary);
     }
@@ -325,6 +328,32 @@ async function handleChecklistPosted(checklist: any) {
       url: deepLink,
       pushTag: `checklist-${checklist.id}`,
     }, checklist.tenant_id, "checklist_posted", checklist.id);
+  }
+}
+
+/** A checklist's tagged watchers (assignment.notifyUserIds) get pinged when it's
+ *  submitted — push + in-app only, never WhatsApp (a submission ping is not an
+ *  assignment). `runId` (unique per submission) is the dedup key, not the
+ *  checklist id, so repeat submissions of the same recurring checklist each
+ *  still notify. */
+async function handleChecklistSubmitted(
+  record: any, userIds: string[], tenantId: string, runId: string,
+  submitterName: string, compliancePct: number | null | undefined, status: string | undefined,
+) {
+  const deepLink = `${APP_BASE_URL}/checklists/${record.id}`;
+  const statusTxt = status === "failed" ? "⚠️ needs attention" : `${compliancePct ?? 100}% compliant`;
+  const refId = runId || record.id;
+  for (const userId of userIds || []) {
+    const user = await getUser(userId);
+    if (!user) continue;
+    if (!await checkAntiSpam(user.id, tenantId, "checklist_submitted", refId)) continue;
+    await sendNotifications(user, {
+      waMessage: "",
+      pushTitle: `✅ Checklist submitted: ${record.title}`,
+      pushBody: `${submitterName} — ${statusTxt}`,
+      url: deepLink,
+      pushTag: `checklist-submitted-${refId}`,
+    }, tenantId, "checklist_submitted", refId, false, true);
   }
 }
 

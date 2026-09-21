@@ -27,6 +27,7 @@ import type {
   ChecklistStation,
   ChecklistRun,
   ChecklistItem,
+  Checklist,
 } from "../types";
 import { compressImage } from "../kot/lib/image";
 
@@ -529,6 +530,8 @@ export interface CustomChecklistInput {
   stationIds?: string[];       // existing stations (single-outlet only)
   newStationLabels?: string[];
   userIds?: string[];
+  /** Watchers (managers/chefs) notified on every submission — see Checklist.assignment. */
+  notifyUserIds?: string[];
   customInputFields?: string[];
   recurrence?: string;
   recurrenceDay?: string;
@@ -557,7 +560,7 @@ export async function saveCustomComplianceChecklist(input: CustomChecklistInput)
     groupId: `group-${checklistId}`,
     frequency: input.frequency,
     packId: "custom",
-    assignment: { stationIds, userIds: input.userIds || [] },
+    assignment: { stationIds, userIds: input.userIds || [], notifyUserIds: input.notifyUserIds || [] },
   });
 
   const itemRows = (checklistId: string) => flat.map((it, idx) => ({
@@ -587,4 +590,80 @@ export async function saveCustomComplianceChecklist(input: CustomChecklistInput)
     }]);
     if (flat.length) await supabase.from("checklist_items").insert(itemRows(checklistId));
   }
+}
+
+// ─── Recurrence windows ───────────────────────────────────────────────────────
+/** Whether `iso` falls inside the checklist's current display cycle for its
+ *  `recurrence` (Daily resets at midnight, Weekly at the week boundary, Custom
+ *  is a rolling 3 days, One-time/anything else stays "done" forever once hit).
+ *  Shared by store.getChecklists (per-user completed state) and the submission
+ *  status board (per-assignee submitted/pending state) so both agree. */
+export function isWithinRecurrenceWindow(recurrence: string | undefined, iso: string | undefined | null): boolean {
+  if (!iso) return false;
+  const when = new Date(iso);
+  const today = new Date();
+  if (recurrence === "Daily") {
+    return when.toISOString().split("T")[0] === today.toISOString().split("T")[0];
+  }
+  if (recurrence === "Weekly") {
+    const sundayOf = (d: Date) => {
+      const c = new Date(d.getTime());
+      c.setDate(c.getDate() - c.getDay());
+      return c.toISOString().split("T")[0];
+    };
+    return sundayOf(when) === sundayOf(today);
+  }
+  if (recurrence === "Custom") {
+    const diffDays = Math.ceil(Math.abs(today.getTime() - when.getTime()) / (1000 * 60 * 60 * 24));
+    return diffDays < 3;
+  }
+  return true; // One-time — done once, shown done forever.
+}
+
+// ─── Submission notifications (watchers) ─────────────────────────────────────
+/** Pings a checklist's tagged watchers (assignment.notifyUserIds) when it's
+ *  submitted — an in-app bell plus an app push via notify-dispatcher. Never
+ *  WhatsApp: this is a "someone submitted" ping, not an assignment, so it
+ *  stays on the free channels. Best-effort — a failure here must never block
+ *  the run itself, so callers should fire-and-forget this. */
+export async function notifyChecklistSubmission(
+  checklist: Pick<Checklist, "id" | "title" | "tenantId" | "assignment">,
+  outcome: { compliancePct?: number | null; status?: string },
+  submitter: { userId?: string; name: string },
+  runId: string,
+): Promise<void> {
+  const watcherIds = (checklist.assignment?.notifyUserIds || []).filter((id) => id && id !== submitter.userId);
+  if (!watcherIds.length) return;
+
+  const statusTxt = outcome.status === "failed" ? "needs attention" : `${outcome.compliancePct ?? 100}% compliant`;
+  const title = `Checklist submitted: ${checklist.title}`;
+  const message = `${submitter.name} submitted — ${statusTxt}`;
+
+  try {
+    await supabase.from("notifications").insert(
+      watcherIds.map((uid) => ({
+        id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        tenant_id: checklist.tenantId,
+        title, message,
+        category: "checklist",
+        department: "All Departments",
+        role: "All Roles",
+        created_at: new Date().toISOString(),
+        target_user_id: uid,
+      }))
+    );
+  } catch { /* best-effort in-app bell */ }
+
+  supabase.functions.invoke("notify-dispatcher", {
+    body: {
+      type: "CHECKLIST_SUBMITTED",
+      record: { id: checklist.id, title: checklist.title },
+      userIds: watcherIds,
+      tenantId: checklist.tenantId,
+      runId,
+      submitterName: submitter.name,
+      compliancePct: outcome.compliancePct,
+      status: outcome.status,
+    },
+  }).catch(() => { /* best-effort push */ });
 }
