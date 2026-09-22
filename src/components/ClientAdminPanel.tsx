@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   ShieldCheck, Megaphone, ClipboardCheck, MessageSquare, BookOpen, FileText,
@@ -14,7 +14,8 @@ import {
   Notice, Checklist, Task, User as AppUser, Tenant, Department, Role, SOP, SOPReadStatus, Client, WhatsAppEngagementRow, ChecklistStation
 } from "../types";
 import { store, translateText } from "../services/store";
-import { getChecklistStations, saveCustomComplianceChecklist, serializeChecklistItem, installChecklistPack, packsForPlan } from "../services/checklistCompliance";
+import { getChecklistStations, saveCustomComplianceChecklist, serializeChecklistItem, installChecklistPack, packsForPlan, getChecklistComplianceSummary, isWithinRecurrenceWindow } from "../services/checklistCompliance";
+import type { ChecklistComplianceSummary } from "../services/checklistCompliance";
 import ChecklistRegister from "./ChecklistRegister";
 
 const CHECKLIST_FREQUENCIES = ["opening", "closing", "shift", "daily", "weekly", "monthly", "audit"];
@@ -472,15 +473,17 @@ export default function ClientAdminPanel({
   const [showChecklistRegister, setShowChecklistRegister] = useState(false);
   const [installOpen, setInstallOpen] = useState(false);
   const [installPackId, setInstallPackId] = useState("");
+  const [installTemplateKeys, setInstallTemplateKeys] = useState<string[]>([]);
   const [installTenantIds, setInstallTenantIds] = useState<string[]>([]);
   const [installUserIds, setInstallUserIds] = useState<string[]>([]);
   const [installNotifyUserIds, setInstallNotifyUserIds] = useState<string[]>([]);
   const [installing, setInstalling] = useState(false);
   const [installNote, setInstallNote] = useState("");
   const availablePacks = packsForPlan(activeClient?.plan || "");
+  const installPack = availablePacks.find((p) => p.id === installPackId);
 
   const doInstallPack = async () => {
-    if (!installPackId || installTenantIds.length === 0) return;
+    if (!installPackId || installTenantIds.length === 0 || installTemplateKeys.length === 0) return;
     setInstalling(true); setInstallNote("");
     try {
       const result = await installChecklistPack(
@@ -488,6 +491,7 @@ export default function ClientAdminPanel({
         installTenantIds,
         { userId: activeUser.id, name: activeUser.name, role: activeUser.role as string },
         { userIds: installUserIds, notifyUserIds: installNotifyUserIds },
+        installTemplateKeys,
       );
       if (result.installed > 0 || result.skipped > 0) {
         const parts = [];
@@ -496,7 +500,7 @@ export default function ClientAdminPanel({
         setInstallNote(parts.join(" — ") + ".");
         await onComplianceSaved?.();
         if (result.installed > 0) {
-          setTimeout(() => { setInstallOpen(false); setInstallNote(""); setInstallUserIds([]); setInstallNotifyUserIds([]); }, 1500);
+          setTimeout(() => { setInstallOpen(false); setInstallNote(""); setInstallUserIds([]); setInstallNotifyUserIds([]); setInstallTemplateKeys([]); }, 1500);
         }
       } else {
         setInstallNote("This pack has no templates yet — it's provisioned during onboarding.");
@@ -506,6 +510,139 @@ export default function ClientAdminPanel({
     } finally {
       setInstalling(false);
     }
+  };
+
+  // ── Deployed Checklists table + Compliance Report: real submission data ──
+  // (never the per-viewer `item.completed` flags — those only reflect the
+  // CURRENT viewer's own runs, so an admin who never personally submits a
+  // checklist would otherwise see it as permanently "pending".)
+  const [checklistSearch, setChecklistSearch] = useState("");
+  const [checklistFreqFilter, setChecklistFreqFilter] = useState<string>("ALL");
+  const [checklistStatusFilter, setChecklistStatusFilter] = useState<"ALL" | "submitted" | "pending">("ALL");
+  const [allStations, setAllStations] = useState<ChecklistStation[]>([]);
+  const [complianceSummary, setComplianceSummary] = useState<Record<string, ChecklistComplianceSummary>>({});
+  const [reportFrom, setReportFrom] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - 30); d.setHours(0, 0, 0, 0); return d.toISOString(); });
+  const [reportTo, setReportTo] = useState<string>(() => new Date().toISOString());
+  const [reportSummary, setReportSummary] = useState<Record<string, ChecklistComplianceSummary>>({});
+  const [reportLoading, setReportLoading] = useState(false);
+
+  const isCompliance = (c: Checklist) => !!(c.packId || c.frequency);
+  const complianceIdsKey = useMemo(
+    () => checklists.filter(isCompliance).map((c) => c.id).join(","),
+    [checklists]
+  );
+
+  useEffect(() => {
+    let alive = true;
+    if (!tenants.length) { setAllStations([]); return; }
+    getChecklistStations(tenants.map((t) => t.id)).then((s) => { if (alive) setAllStations(s); });
+    return () => { alive = false; };
+  }, [tenants]);
+
+  useEffect(() => {
+    let alive = true;
+    const ids = complianceIdsKey ? complianceIdsKey.split(",") : [];
+    if (!ids.length) { setComplianceSummary({}); return; }
+    getChecklistComplianceSummary(ids).then((s) => { if (alive) setComplianceSummary(s); });
+    return () => { alive = false; };
+  }, [complianceIdsKey]);
+
+  useEffect(() => {
+    let alive = true;
+    const ids = complianceIdsKey ? complianceIdsKey.split(",") : [];
+    if (!ids.length) { setReportSummary({}); setReportLoading(false); return; }
+    setReportLoading(true);
+    getChecklistComplianceSummary(ids, { from: reportFrom, to: reportTo }).then((s) => {
+      if (alive) { setReportSummary(s); setReportLoading(false); }
+    });
+    return () => { alive = false; };
+  }, [complianceIdsKey, reportFrom, reportTo]);
+
+  const assignedToLabel = (chk: Checklist): string => {
+    const asg = chk.assignment;
+    if (asg?.userIds && asg.userIds.length > 0) {
+      if (asg.userIds.length <= 2) {
+        return asg.userIds.map((id) => clientUsers.find((u) => u.id === id)?.name || id).join(", ");
+      }
+      return `${asg.userIds.length} staff`;
+    }
+    if (asg?.stationIds && asg.stationIds.length > 0) {
+      return asg.stationIds.map((id) => allStations.find((s) => s.id === id)?.label || id).join(", ");
+    }
+    return "Everyone at outlet";
+  };
+
+  /** One row's real status, either "current" (no range — for the deployed
+   *  list) or scoped to a date range (for the Compliance Report). Compliance
+   *  checklists read `checklist_runs`; classic ones read their (unfiltered,
+   *  multi-submitter) `submissions` blob — both are real org-wide data. */
+  const checklistStatus = (
+    chk: Checklist,
+    complianceMap: Record<string, ChecklistComplianceSummary>,
+    range?: { from: string; to: string },
+  ) => {
+    if (isCompliance(chk)) {
+      const s = complianceMap[chk.id];
+      if (!s) return { runs: 0, lastAt: undefined as string | undefined, lastBy: undefined as string | undefined, compliancePct: undefined as number | null | undefined, submitted: false };
+      const submitted = isWithinRecurrenceWindow(chk.recurrence, s.latest.completedAt);
+      return { runs: s.runCount, lastAt: s.latest.completedAt, lastBy: s.latest.performer.name, compliancePct: s.latest.compliancePct, submitted };
+    }
+    let subs = chk.submissions || [];
+    if (range) {
+      const fromT = new Date(range.from).getTime();
+      const toT = new Date(range.to).getTime();
+      subs = subs.filter((sub: any) => {
+        const t = new Date(sub.submittedAt).getTime();
+        return t >= fromT && t <= toT;
+      });
+    }
+    if (subs.length === 0) return { runs: 0, lastAt: undefined as string | undefined, lastBy: undefined as string | undefined, compliancePct: undefined as number | null | undefined, submitted: false };
+    const latest = [...subs].sort((a: any, b: any) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())[0];
+    const submitted = isWithinRecurrenceWindow(chk.recurrence, latest.submittedAt);
+    return { runs: subs.length, lastAt: latest.submittedAt, lastBy: latest.submittedBy?.name, compliancePct: undefined as number | null | undefined, submitted };
+  };
+
+  const fmtReportDateTime = (iso?: string) => iso ? new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+
+  // Search + frequency filters shared by both the Deployed Checklists table and
+  // the Compliance Report below it — set once, both reflect it.
+  const searchedChecklists = filteredChecklists.filter((c) => {
+    if (checklistSearch.trim() && !c.title.toLowerCase().includes(checklistSearch.trim().toLowerCase())) return false;
+    if (checklistFreqFilter !== "ALL" && c.frequency !== checklistFreqFilter) return false;
+    return true;
+  });
+  const deployedRows = searchedChecklists.filter((c) => {
+    if (checklistStatusFilter === "ALL") return true;
+    const st = checklistStatus(c, complianceSummary);
+    return checklistStatusFilter === "submitted" ? st.submitted : !st.submitted;
+  });
+  const complianceReportRows = searchedChecklists.filter((c) => {
+    if (checklistStatusFilter === "ALL") return true;
+    const st = checklistStatus(c, reportSummary, { from: reportFrom, to: reportTo });
+    return checklistStatusFilter === "submitted" ? st.submitted : !st.submitted;
+  });
+
+  const downloadComplianceReportCSV = () => {
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Checklist,Outlet,Frequency,Assigned To,Runs In Period,Last Submission,Last Submitted By,Compliance %,Status\n";
+    complianceReportRows.forEach((chk) => {
+      const st = checklistStatus(chk, reportSummary, { from: reportFrom, to: reportTo });
+      const title = `"${chk.title.replace(/"/g, '""')}"`;
+      const outlet = `"${(tenants.find((t) => t.id === chk.tenantId)?.name || chk.tenantId).replace(/"/g, '""')}"`;
+      const freq = `"${chk.frequency || ""}"`;
+      const assigned = `"${assignedToLabel(chk).replace(/"/g, '""')}"`;
+      const lastAt = st.lastAt ? `"${new Date(st.lastAt).toLocaleString()}"` : '""';
+      const lastBy = `"${(st.lastBy || "").replace(/"/g, '""')}"`;
+      const pct = st.compliancePct != null ? st.compliancePct : "";
+      const status = st.submitted ? "Submitted" : "Pending";
+      csvContent += `${title},${outlet},${freq},${assigned},${st.runs},${lastAt},${lastBy},${pct},${status}\n`;
+    });
+    const link = document.createElement("a");
+    link.setAttribute("href", encodeURI(csvContent));
+    link.setAttribute("download", `Compliance_Report_${new Date().toISOString().split("T")[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // Load existing stations for the selected outlet (station reuse only makes sense
@@ -1700,7 +1837,7 @@ export default function ClientAdminPanel({
               {/* Checklists List */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider block">Deployed Checklists ({filteredChecklists.length})</h3>
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider block">Deployed Checklists ({deployedRows.length}{deployedRows.length !== filteredChecklists.length ? ` of ${filteredChecklists.length}` : ""})</h3>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1712,7 +1849,7 @@ export default function ClientAdminPanel({
                     {availablePacks.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => { setInstallOpen(true); setInstallNote(""); setInstallTenantIds([]); setInstallUserIds([]); setInstallNotifyUserIds([]); setInstallPackId(availablePacks.find(p => p.templates.length > 0)?.id || ""); }}
+                        onClick={() => { setInstallOpen(true); setInstallNote(""); setInstallTenantIds([]); setInstallUserIds([]); setInstallNotifyUserIds([]); setInstallTemplateKeys([]); setInstallPackId(availablePacks.find(p => p.templates.length > 0)?.id || ""); }}
                         className="px-3 py-1.5 rounded-xl text-[10px] font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" /> Templates
@@ -1720,69 +1857,80 @@ export default function ClientAdminPanel({
                     )}
                   </div>
                 </div>
-                {filteredChecklists.length === 0 ? (
+
+                {/* Filters — shared with the Compliance Report below */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 flex-1 min-w-[160px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <input
+                      type="text"
+                      value={checklistSearch}
+                      onChange={(e) => setChecklistSearch(e.target.value)}
+                      placeholder="Search by title…"
+                      className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none w-full"
+                    />
+                  </div>
+                  <select value={checklistFreqFilter} onChange={(e) => setChecklistFreqFilter(e.target.value)} className="bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-xl text-[11px] font-bold text-slate-700 focus:outline-none cursor-pointer capitalize">
+                    <option value="ALL">All frequencies</option>
+                    {CHECKLIST_FREQUENCIES.map((f) => <option key={f} value={f} className="capitalize">{f}</option>)}
+                  </select>
+                  <select value={checklistStatusFilter} onChange={(e) => setChecklistStatusFilter(e.target.value as any)} className="bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-xl text-[11px] font-bold text-slate-700 focus:outline-none cursor-pointer">
+                    <option value="ALL">Any status</option>
+                    <option value="submitted">Submitted this cycle</option>
+                    <option value="pending">Pending</option>
+                  </select>
+                </div>
+
+                {deployedRows.length === 0 ? (
                   <div className="bg-white rounded-2xl border border-dashed border-slate-200 py-8 text-center text-slate-400 text-xs">
-                    No checklists currently active.
+                    {filteredChecklists.length === 0 ? "No checklists currently active." : "No checklists match these filters."}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {filteredChecklists.map(chk => {
-                      const completedCount = chk.items.filter(i => i.completed).length;
-                      const pct = chk.items.length > 0 ? Math.round((completedCount / chk.items.length) * 100) : 100;
-                      const isUnsubmitted = pct < 100;
-
-                      return (
-                        <div 
-                          key={chk.id} 
-                          className={`bg-white border rounded-2xl p-4 shadow-sm flex flex-col justify-between space-y-3 text-left transition-all ${
-                            isUnsubmitted ? "border-amber-300 bg-amber-50/5 ring-1 ring-amber-250/20" : "border-slate-100"
-                          }`}
-                        >
-                          <div className="space-y-1">
-                            <div className="flex justify-between items-start gap-2">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[7px] font-bold bg-indigo-50 text-indigo-750 px-1 py-0.2 rounded uppercase">
-                                  {tenants.find(t => t.id === chk.tenantId)?.name || chk.tenantId}
+                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[720px]">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-[10px] uppercase font-bold text-slate-450 tracking-wider">
+                          <th className="py-2.5 px-3">Checklist</th>
+                          <th className="py-2.5 px-3">Outlet</th>
+                          <th className="py-2.5 px-3">Frequency</th>
+                          <th className="py-2.5 px-3">Assigned To</th>
+                          <th className="py-2.5 px-3">Last Submission</th>
+                          <th className="py-2.5 px-3">Status</th>
+                          <th className="py-2.5 px-3"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-[11px] font-medium text-slate-600">
+                        {deployedRows.map((chk) => {
+                          const st = checklistStatus(chk, complianceSummary);
+                          return (
+                            <tr key={chk.id} className="border-b border-slate-50 hover:bg-slate-50/50">
+                              <td className="py-2 px-3 font-semibold text-slate-800 max-w-[180px] truncate" title={chk.title}>{chk.title}</td>
+                              <td className="py-2 px-3">{tenants.find((t) => t.id === chk.tenantId)?.name || chk.tenantId}</td>
+                              <td className="py-2 px-3 capitalize">{chk.frequency || "—"}</td>
+                              <td className="py-2 px-3 max-w-[140px] truncate" title={assignedToLabel(chk)}>{assignedToLabel(chk)}</td>
+                              <td className="py-2 px-3 font-mono text-[10px] text-slate-500">
+                                {st.lastAt ? <>{fmtReportDateTime(st.lastAt)}{st.lastBy ? <span className="text-slate-400"> · {st.lastBy}</span> : null}</> : "—"}
+                              </td>
+                              <td className="py-2 px-3">
+                                <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold font-mono ${st.submitted ? "bg-emerald-50 text-emerald-800 border border-emerald-100" : "bg-amber-50 text-amber-800 border border-amber-100"}`}>
+                                  {st.submitted ? "Submitted" : "Pending"}
                                 </span>
-                                {isUnsubmitted && (
-                                  <span className="text-[7px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded uppercase animate-pulse">
-                                    Incomplete ⚠️
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  onClick={() => handleStartEditChecklist(chk)}
-                                  className="p-1 text-slate-400 hover:text-slate-800 rounded-lg cursor-pointer transition-colors"
-                                  title="Edit Checklist"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => onDeleteChecklist(chk.id)}
-                                  className="p-1 text-slate-400 hover:text-rose-600 rounded-lg cursor-pointer transition-colors"
-                                  title="Delete Checklist"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                            <h4 className="text-xs font-bold text-slate-850 mt-1">{chk.title}</h4>
-                            <p className="text-[10px] text-slate-500 leading-snug">{chk.description}</p>
-                          </div>
-
-                          <div className="pt-2 border-t border-slate-50 space-y-1 mt-2">
-                            <div className="flex justify-between text-[9px] text-slate-400 font-mono">
-                              <span>Completed: {completedCount}/{chk.items.length} items</span>
-                              <span>{pct}%</span>
-                            </div>
-                            <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                              <div className="bg-emerald-500 h-full transition-all duration-300" style={{ width: `${pct}%` }} />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                              </td>
+                              <td className="py-2 px-3">
+                                <div className="flex items-center gap-1 justify-end">
+                                  <button onClick={() => handleStartEditChecklist(chk)} className="p-1 text-slate-400 hover:text-slate-800 rounded-lg cursor-pointer transition-colors" title="Edit Checklist">
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button onClick={() => onDeleteChecklist(chk.id)} className="p-1 text-slate-400 hover:text-rose-600 rounded-lg cursor-pointer transition-colors" title="Delete Checklist">
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
@@ -1790,52 +1938,65 @@ export default function ClientAdminPanel({
               {/* Compliance Report */}
               <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-50 pb-3">
-                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Compliance Report Feed</h3>
-                  <button 
-                    onClick={downloadChecklistCSV}
-                    disabled={filteredChecklists.length === 0}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-xl text-[10px] font-bold hover:bg-slate-800 disabled:opacity-50 cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Download CSV Report
-                  </button>
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Compliance Report</h3>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Real submission data for the period below — one row per checklist, not per checkpoint.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="text-[10px] font-semibold text-slate-600 flex items-center gap-1.5">From
+                      <input type="date" value={reportFrom.slice(0, 10)} onChange={(e) => { const d = new Date(e.target.value); d.setHours(0, 0, 0, 0); setReportFrom(d.toISOString()); }} className="bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg text-[11px]" />
+                    </label>
+                    <label className="text-[10px] font-semibold text-slate-600 flex items-center gap-1.5">To
+                      <input type="date" value={reportTo.slice(0, 10)} onChange={(e) => { const d = new Date(e.target.value); d.setHours(23, 59, 59); setReportTo(d.toISOString()); }} className="bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg text-[11px]" />
+                    </label>
+                    <button
+                      onClick={downloadComplianceReportCSV}
+                      disabled={complianceReportRows.length === 0}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-xl text-[10px] font-bold hover:bg-slate-800 disabled:opacity-50 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download CSV
+                    </button>
+                  </div>
                 </div>
 
-                <div className="overflow-x-auto max-h-[300px]">
-                  <table className="w-full text-left border-collapse">
+                <div className="overflow-x-auto max-h-[360px]">
+                  <table className="w-full text-left border-collapse min-w-[760px]">
                     <thead>
                       <tr className="border-b border-slate-100 text-[10px] uppercase font-bold text-slate-450 tracking-wider">
                         <th className="py-2.5 px-2">Checklist</th>
-                        <th className="py-2.5 px-2">Item Action</th>
+                        <th className="py-2.5 px-2">Outlet</th>
+                        <th className="py-2.5 px-2">Runs in period</th>
+                        <th className="py-2.5 px-2">Last submission</th>
+                        <th className="py-2.5 px-2">Compliance</th>
                         <th className="py-2.5 px-2">Status</th>
-                        <th className="py-2.5 px-2">Completed By</th>
-                        <th className="py-2.5 px-2">Completed At</th>
                       </tr>
                     </thead>
                     <tbody className="text-[11px] font-medium text-slate-600">
-                      {filteredChecklists.flatMap(chk => 
-                        chk.items.map(item => (
-                          <tr key={item.id} className="border-b border-slate-50/50 hover:bg-slate-50/50">
-                            <td className="py-2 px-2 font-semibold text-slate-800 max-w-[120px] truncate">{chk.title}</td>
-                            <td className="py-2 px-2 font-normal text-slate-600">{item.text}</td>
-                            <td className="py-2 px-2">
-                              <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold font-mono ${
-                                item.completed ? "bg-emerald-50 text-emerald-800 border border-emerald-100" : "bg-amber-50 text-amber-800 border border-amber-100"
-                              }`}>
-                                {item.completed ? "Done" : "Pending"}
-                              </span>
-                            </td>
-                            <td className="py-2 px-2 font-mono text-[10px]">{item.completedBy ? item.completedBy.name : "-"}</td>
-                            <td className="py-2 px-2 font-mono text-[9px] text-slate-400">
-                              {item.completedAt ? new Date(item.completedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "-"}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                      {filteredChecklists.length === 0 && (
-                        <tr>
-                          <td colSpan={5} className="py-6 text-center text-slate-400 text-xs">No checklists deployed.</td>
-                        </tr>
+                      {reportLoading ? (
+                        <tr><td colSpan={6} className="py-6 text-center text-slate-400 text-xs">Loading…</td></tr>
+                      ) : complianceReportRows.length === 0 ? (
+                        <tr><td colSpan={6} className="py-6 text-center text-slate-400 text-xs">No checklists match these filters for this period.</td></tr>
+                      ) : (
+                        complianceReportRows.map((chk) => {
+                          const st = checklistStatus(chk, reportSummary, { from: reportFrom, to: reportTo });
+                          return (
+                            <tr key={chk.id} className="border-b border-slate-50/50 hover:bg-slate-50/50">
+                              <td className="py-2 px-2 font-semibold text-slate-800 max-w-[160px] truncate" title={chk.title}>{chk.title}</td>
+                              <td className="py-2 px-2">{tenants.find((t) => t.id === chk.tenantId)?.name || chk.tenantId}</td>
+                              <td className="py-2 px-2 font-mono">{st.runs}</td>
+                              <td className="py-2 px-2 font-mono text-[10px] text-slate-500">
+                                {st.lastAt ? <>{fmtReportDateTime(st.lastAt)}{st.lastBy ? <span className="text-slate-400"> · {st.lastBy}</span> : null}</> : "—"}
+                              </td>
+                              <td className="py-2 px-2 font-mono">{st.compliancePct != null ? `${st.compliancePct}%` : "—"}</td>
+                              <td className="py-2 px-2">
+                                <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold font-mono ${st.submitted ? "bg-emerald-50 text-emerald-800 border border-emerald-100" : "bg-amber-50 text-amber-800 border border-amber-100"}`}>
+                                  {st.submitted ? "Submitted" : "Pending"}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -1857,13 +2018,36 @@ export default function ClientAdminPanel({
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Pack</label>
-                <select value={installPackId} onChange={(e) => setInstallPackId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-sm text-slate-800 focus:outline-none cursor-pointer">
+                <select value={installPackId} onChange={(e) => { setInstallPackId(e.target.value); setInstallTemplateKeys([]); }} className="w-full bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-sm text-slate-800 focus:outline-none cursor-pointer">
                   {availablePacks.map((p) => (
                     <option key={p.id} value={p.id} disabled={p.templates.length === 0}>
                       {p.label}{p.templates.length === 0 ? " — provisioned at onboarding" : ` (${p.templates.length})`}
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Template(s) <span className="text-slate-400 normal-case font-medium">— pick one or more; different templates can go to different staff</span></label>
+                  {installPack && installPack.templates.length > 0 && (
+                    <button type="button" onClick={() => setInstallTemplateKeys(installTemplateKeys.length === installPack.templates.length ? [] : installPack.templates.map((t) => t.key))} className="text-[11px] font-bold text-indigo-600 cursor-pointer shrink-0">
+                      {installTemplateKeys.length === installPack.templates.length ? "Clear" : "Select all"}
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                  {(installPack?.templates || []).map((t) => (
+                    <label key={t.key} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 cursor-pointer hover:bg-slate-50">
+                      <input type="checkbox" checked={installTemplateKeys.includes(t.key)}
+                        onChange={(e) => setInstallTemplateKeys((prev) => e.target.checked ? [...prev, t.key] : prev.filter((x) => x !== t.key))} />
+                      {t.title}
+                    </label>
+                  ))}
+                  {installPack && installPack.templates.length === 0 && (
+                    <p className="px-3 py-2 text-[10px] text-slate-400 italic">This pack has no templates yet.</p>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -1922,10 +2106,10 @@ export default function ClientAdminPanel({
 
               {installNote && <p className="text-xs text-slate-600">{installNote}</p>}
 
-              <button onClick={doInstallPack} disabled={installing || !installPackId || installTenantIds.length === 0}
+              <button onClick={doInstallPack} disabled={installing || !installPackId || installTenantIds.length === 0 || installTemplateKeys.length === 0}
                 className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-sm font-bold bg-slate-900 hover:bg-slate-800 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
                 {installing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                Install into {installTenantIds.length || 0} outlet{installTenantIds.length === 1 ? "" : "s"}
+                Install {installTemplateKeys.length || 0} template{installTemplateKeys.length === 1 ? "" : "s"} into {installTenantIds.length || 0} outlet{installTenantIds.length === 1 ? "" : "s"}
               </button>
             </div>
           </div>

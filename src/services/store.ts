@@ -1473,12 +1473,17 @@ export class StoreService {
         return true;
       }
       // Compliance checklists assigned to specific individuals are visible only to
-      // those staff (station-only / unassigned ones fall through to the outlet-wide
-      // dept/role check below, which is "All/All" for pack + custom checklists).
+      // those staff (an explicit assignment can legitimately cross outlets, e.g. an
+      // area manager covering another outlet). An unassigned compliance checklist
+      // is scoped to its OWN outlet only — dept/role default to "All/All" for pack
+      // + custom checklists, so without this it would leak to every outlet client-wide.
       const asg = (checklist as any).assignment;
       const isCompliance = !!((checklist as any).packId || (checklist as any).frequency);
-      if (isCompliance && Array.isArray(asg?.userIds) && asg.userIds.length > 0) {
-        return asg.userIds.includes(curUser.id);
+      if (isCompliance) {
+        if (Array.isArray(asg?.userIds) && asg.userIds.length > 0) {
+          return asg.userIds.includes(curUser.id);
+        }
+        return checklist.tenantId === curUser.tenantId;
       }
       const matchDept = isTargetMatched(checklist.department, curUser.department, Department.ALL);
       const matchRole = isTargetMatched(checklist.role, curUser.role, Role.ALL);

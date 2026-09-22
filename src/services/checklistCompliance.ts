@@ -270,6 +270,9 @@ export interface InstallPackResult {
 
 /** Admin-only. Seeds a pack's templates as `checklists` + typed `checklist_items`
  *  for one or more outlets, optionally scoped to specific staff (assignment).
+ *  `templateKeys`, when given, installs only that subset of the pack's
+ *  templates — each template can be installed on its own, with its own
+ *  outlets + assignment, rather than the whole pack landing as one bundle.
  *  Idempotent per (tenant, template): a template already installed for an
  *  outlet is skipped rather than duplicated — safe to click repeatedly. */
 export async function installChecklistPack(
@@ -277,9 +280,14 @@ export async function installChecklistPack(
   tenantIds: string[],
   createdBy: { userId: string; name: string; role: string },
   assign?: { userIds?: string[]; notifyUserIds?: string[] },
+  templateKeys?: string[],
 ): Promise<InstallPackResult> {
   const pack = getPack(packId);
   if (!pack || pack.templates.length === 0 || tenantIds.length === 0) return { installed: 0, skipped: 0 };
+  const templates = templateKeys && templateKeys.length
+    ? pack.templates.filter((t) => templateKeys.includes(t.key))
+    : pack.templates;
+  if (templates.length === 0) return { installed: 0, skipped: 0 };
 
   // Idempotency guard: don't re-install a (tenant, template) pair that's
   // already present — this is what made repeated "+ Templates" clicks pile up
@@ -306,7 +314,7 @@ export async function installChecklistPack(
   let skipped = 0;
 
   for (const tId of tenantIds) {
-    for (const tpl of pack.templates) {
+    for (const tpl of templates) {
       if (alreadyInstalled.has(`${tId}::${tpl.key}`)) { skipped++; continue; }
 
       const flat = tpl.sections.flatMap((s) => s.items);
@@ -454,6 +462,55 @@ export async function getChecklistRuns(opts: {
     items: Array.isArray(r.items) ? r.items : [],
     createdAt: r.created_at,
   }));
+}
+
+export interface ChecklistComplianceSummary {
+  /** Number of runs recorded in the requested window (all-time if no from/to). */
+  runCount: number;
+  /** The single most recent run for this checklist in the window. */
+  latest: ChecklistRun;
+}
+
+/** Real submission data for a set of checklists, straight from `checklist_runs`
+ *  (never the per-viewer `checklist_items[].completed` flags getChecklists
+ *  computes — those only reflect the CURRENT viewer's own runs, so an admin
+ *  who never personally submits a checklist sees it as permanently "pending"
+ *  even when staff have been submitting it daily). Keyed by checklistId. */
+export async function getChecklistComplianceSummary(
+  checklistIds: string[],
+  opts?: { from?: string; to?: string },
+): Promise<Record<string, ChecklistComplianceSummary>> {
+  if (!checklistIds.length) return {};
+  let q = supabase.from("checklist_runs").select("*").in("checklist_id", checklistIds);
+  if (opts?.from) q = q.gte("completed_at", opts.from);
+  if (opts?.to) q = q.lte("completed_at", opts.to);
+  q = q.order("completed_at", { ascending: false });
+  const { data } = await q;
+
+  const summary: Record<string, ChecklistComplianceSummary> = {};
+  (data || []).forEach((r: any) => {
+    const run: ChecklistRun = {
+      id: r.id,
+      checklistId: r.checklist_id,
+      tenantId: r.tenant_id,
+      stationId: r.station_id,
+      performer: { userId: r.performer_user_id ?? undefined, name: r.performer_name },
+      startedAt: r.started_at,
+      completedAt: r.completed_at,
+      status: r.status,
+      score: r.score,
+      compliancePct: r.compliance_pct,
+      items: Array.isArray(r.items) ? r.items : [],
+      createdAt: r.created_at,
+    };
+    const existing = summary[run.checklistId];
+    if (!existing) {
+      summary[run.checklistId] = { runCount: 1, latest: run };
+    } else {
+      existing.runCount++;
+    }
+  });
+  return summary;
 }
 
 // ─── Evidence photos ─────────────────────────────────────────────────────────
