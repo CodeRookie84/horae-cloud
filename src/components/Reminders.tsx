@@ -29,9 +29,12 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
   const [items, setItems] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Also doubles as the add-form's default kind — whichever list you're
+  // looking at is what a new entry gets added as.
+  const [activeKind, setActiveKind] = useState<"reminder" | "meeting">("reminder");
+
   const [text, setText] = useState("");
   const [when, setWhen] = useState("");
-  const [kind, setKind] = useState<"reminder" | "meeting">("reminder");
   const [saving, setSaving] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -50,8 +53,8 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
     if (!text.trim()) return;
     setSaving(true);
     try {
-      await store.addReminder(text.trim(), when ? new Date(when).toISOString() : undefined, kind);
-      setText(""); setWhen(""); setKind("reminder");
+      await store.addReminder(text.trim(), when ? new Date(when).toISOString() : undefined, activeKind);
+      setText(""); setWhen("");
       await load();
     } finally { setSaving(false); }
   };
@@ -81,9 +84,10 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
   };
 
   // Pending only — handled ones are decluttered by removing them, not by a
-  // separate done/hidden state this screen has to track.
+  // separate done/hidden state this screen has to track. Scoped to whichever
+  // kind is toggled at the top — reminders and meetings never mix in one list.
   const pending = items
-    .filter(r => r.status === "pending")
+    .filter(r => r.status === "pending" && (r.kind || "reminder") === activeKind)
     .sort((a, b) => {
       if (a.remindAt && b.remindAt) return new Date(a.remindAt).getTime() - new Date(b.remindAt).getTime();
       if (a.remindAt) return -1;
@@ -106,28 +110,31 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
         </p>
       </div>
 
+      {/* Reminders / Meetings toggle — filters the list below AND sets what
+          the add form creates. */}
+      <div className="flex rounded-xl border border-[var(--color-line)] overflow-hidden w-fit">
+        {(["reminder", "meeting"] as const).map((k) => (
+          <button
+            key={k} type="button" onClick={() => setActiveKind(k)}
+            className={`px-4 py-2 text-sm font-bold capitalize cursor-pointer transition-colors ${
+              activeKind === k ? "bg-[var(--color-brand)] text-white" : "bg-white text-[var(--color-ink-soft)] hover:bg-[var(--color-cream)]"
+            }`}
+          >
+            {k}s
+          </button>
+        ))}
+      </div>
+
       {/* Add form */}
       <form onSubmit={add} className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm p-4 space-y-3">
         <input
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="What do you want to remember?"
+          placeholder={activeKind === "meeting" ? "What's the meeting about?" : "What do you want to remember?"}
           className="w-full px-3.5 py-2.5 bg-[var(--color-cream)] border border-[var(--color-line)] rounded-xl text-sm text-[var(--color-ink)] placeholder-[var(--color-ink-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]/30"
         />
         <div className="flex flex-col sm:flex-row gap-2">
-          <div className="flex rounded-xl border border-[var(--color-line)] overflow-hidden shrink-0">
-            {(["reminder", "meeting"] as const).map((k) => (
-              <button
-                key={k} type="button" onClick={() => setKind(k)}
-                className={`px-3 py-2 text-xs font-bold capitalize cursor-pointer transition-colors ${
-                  kind === k ? "bg-[var(--color-brand)] text-white" : "bg-white text-[var(--color-ink-soft)] hover:bg-[var(--color-cream)]"
-                }`}
-              >
-                {k}
-              </button>
-            ))}
-          </div>
           <input
             type="datetime-local"
             value={when}
@@ -139,7 +146,7 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
             disabled={!text.trim() || saving}
             className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-white text-sm font-bold bg-[var(--color-brand)] hover:bg-[color-mix(in_srgb,var(--color-brand)_88%,var(--color-ink))] shadow-warm cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Plus className="w-4 h-4" /> Add
+            <Plus className="w-4 h-4" /> Add {activeKind === "meeting" ? "Meeting" : "Reminder"}
           </button>
         </div>
         <p className="text-[11px] text-[var(--color-ink-soft)]">The time is optional — it's just for your reference, not an alert.</p>
@@ -149,14 +156,14 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
         <div className="flex items-center justify-center py-12"><RefreshCw className="w-5 h-5 animate-spin text-[var(--color-brand)]" /></div>
       ) : pending.length === 0 ? (
         <div className="bg-white rounded-2xl border border-[var(--color-line)] p-6 text-center text-sm text-[var(--color-ink-soft)]">
-          Nothing pending. 🎉
+          {activeKind === "meeting" ? "No meetings pending." : "Nothing pending."} 🎉
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[520px]">
             <thead>
               <tr className="border-b border-[var(--color-line)] text-[10px] uppercase font-bold text-[var(--color-ink-soft)] tracking-wider">
-                <th className="py-2.5 px-4">Reminder / Meeting</th>
+                <th className="py-2.5 px-4">{activeKind === "meeting" ? "Meeting" : "Reminder"}</th>
                 <th className="py-2.5 px-4">Date &amp; Time</th>
                 <th className="py-2.5 px-4 text-right sticky right-0 bg-white">Actions</th>
               </tr>
@@ -173,12 +180,7 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
                           className="w-full px-2.5 py-1.5 bg-[var(--color-cream)] border border-[var(--color-line)] rounded-lg text-sm focus:outline-none"
                         />
                       ) : (
-                        <>
-                          <span className="break-words">{r.text}</span>
-                          {r.kind === "meeting" && (
-                            <span className="ml-2 text-[9px] font-bold uppercase tracking-wide text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded align-middle">Meeting</span>
-                          )}
-                        </>
+                        <span className="break-words">{r.text}</span>
                       )}
                     </td>
                     <td className="py-2.5 px-4 align-top whitespace-nowrap">
