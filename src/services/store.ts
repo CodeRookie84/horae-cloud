@@ -1466,7 +1466,10 @@ export class StoreService {
     });
 
     return combined.filter(checklist => {
-      if (curUser.role === Role.ADMIN || curUser.role === Role.MANAGER || curUser.role === Role.SUPER_ADMIN) {
+      // Only the Client Admin (and Horae's own Super Admin) see every checklist
+      // unfiltered — Manager is an ordinary outlet-level staff role and, like
+      // everyone else, only sees what's actually assigned/targeted to them.
+      if (curUser.role === Role.ADMIN || curUser.role === Role.SUPER_ADMIN) {
         return true;
       }
       // Compliance checklists assigned to specific individuals are visible only to

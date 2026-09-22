@@ -262,20 +262,53 @@ export function getPack(packId: string): ChecklistPack | undefined {
 }
 
 // ─── Install a pack (seed checklists + typed items) ──────────────────────────
+export interface InstallPackResult {
+  installed: number;
+  /** (tenant, template) pairs that already existed — not re-inserted. */
+  skipped: number;
+}
+
+/** Admin-only. Seeds a pack's templates as `checklists` + typed `checklist_items`
+ *  for one or more outlets, optionally scoped to specific staff (assignment).
+ *  Idempotent per (tenant, template): a template already installed for an
+ *  outlet is skipped rather than duplicated — safe to click repeatedly. */
 export async function installChecklistPack(
   packId: string,
   tenantIds: string[],
   createdBy: { userId: string; name: string; role: string },
-): Promise<number> {
+  assign?: { userIds?: string[]; notifyUserIds?: string[] },
+): Promise<InstallPackResult> {
   const pack = getPack(packId);
-  if (!pack || pack.templates.length === 0 || tenantIds.length === 0) return 0;
+  if (!pack || pack.templates.length === 0 || tenantIds.length === 0) return { installed: 0, skipped: 0 };
+
+  // Idempotency guard: don't re-install a (tenant, template) pair that's
+  // already present — this is what made repeated "+ Templates" clicks pile up
+  // duplicate copies of the whole pack.
+  const { data: existingRows } = await supabase
+    .from("checklists")
+    .select("tenant_id, description")
+    .in("tenant_id", tenantIds);
+  const alreadyInstalled = new Set<string>();
+  (existingRows || []).forEach((r: any) => {
+    try {
+      if (r.description && r.description.startsWith("{")) {
+        const obj = JSON.parse(r.description);
+        if (obj.packId === packId && obj.templateKey) {
+          alreadyInstalled.add(`${r.tenant_id}::${obj.templateKey}`);
+        }
+      }
+    } catch { /* ignore malformed rows */ }
+  });
 
   const checklistRows: any[] = [];
   const itemRows: any[] = [];
   const stationRows: any[] = [];
+  let skipped = 0;
 
   for (const tId of tenantIds) {
     for (const tpl of pack.templates) {
+      if (alreadyInstalled.has(`${tId}::${tpl.key}`)) { skipped++; continue; }
+
       const flat = tpl.sections.flatMap((s) => s.items);
       const checklistId = `checklist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const stationId = `cstn-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -304,7 +337,12 @@ export async function installChecklistPack(
           // compliance meta
           frequency: tpl.frequency,
           packId: pack.id,
-          assignment: { stationIds: [stationId], userIds: [] },
+          templateKey: tpl.key,
+          assignment: {
+            stationIds: [stationId],
+            userIds: assign?.userIds || [],
+            notifyUserIds: assign?.notifyUserIds || [],
+          },
         }),
         department: "All Departments",
         role: "All Roles",
@@ -333,7 +371,7 @@ export async function installChecklistPack(
   if (stationRows.length) await supabase.from("checklist_stations").insert(stationRows);
   if (checklistRows.length) await supabase.from("checklists").insert(checklistRows);
   if (itemRows.length) await supabase.from("checklist_items").insert(itemRows);
-  return checklistRows.length;
+  return { installed: checklistRows.length, skipped };
 }
 
 // ─── Stations ────────────────────────────────────────────────────────────────

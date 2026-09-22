@@ -6,15 +6,16 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  ShieldCheck, Megaphone, ClipboardCheck, MessageSquare, BookOpen, FileText, 
+  ShieldCheck, Megaphone, ClipboardCheck, MessageSquare, BookOpen, FileText,
   Plus, Trash2, BellRing, Bell, Download, Search, Check, ChevronRight, X, Filter, Users, AlertTriangle, ArrowRight,
-  Building2, UserPlus, Edit2, Copy, Languages, ArrowLeft, KeyRound, Eye, EyeOff, MessageCircle
+  Building2, UserPlus, Edit2, Copy, Languages, ArrowLeft, KeyRound, Eye, EyeOff, MessageCircle, Loader2
 } from "lucide-react";
 import {
   Notice, Checklist, Task, User as AppUser, Tenant, Department, Role, SOP, SOPReadStatus, Client, WhatsAppEngagementRow, ChecklistStation
 } from "../types";
 import { store, translateText } from "../services/store";
-import { getChecklistStations, saveCustomComplianceChecklist, serializeChecklistItem } from "../services/checklistCompliance";
+import { getChecklistStations, saveCustomComplianceChecklist, serializeChecklistItem, installChecklistPack, packsForPlan } from "../services/checklistCompliance";
+import ChecklistRegister from "./ChecklistRegister";
 
 const CHECKLIST_FREQUENCIES = ["opening", "closing", "shift", "daily", "weekly", "monthly", "audit"];
 
@@ -466,6 +467,46 @@ export default function ClientAdminPanel({
   const [newStationLabels, setNewStationLabels] = useState<string>("");
   const [availableStations, setAvailableStations] = useState<ChecklistStation[]>([]);
   const [savingChecklist, setSavingChecklist] = useState(false);
+
+  // ── Food-safety register + template-pack install (Client Admin only) ──────
+  const [showChecklistRegister, setShowChecklistRegister] = useState(false);
+  const [installOpen, setInstallOpen] = useState(false);
+  const [installPackId, setInstallPackId] = useState("");
+  const [installTenantIds, setInstallTenantIds] = useState<string[]>([]);
+  const [installUserIds, setInstallUserIds] = useState<string[]>([]);
+  const [installNotifyUserIds, setInstallNotifyUserIds] = useState<string[]>([]);
+  const [installing, setInstalling] = useState(false);
+  const [installNote, setInstallNote] = useState("");
+  const availablePacks = packsForPlan(activeClient?.plan || "");
+
+  const doInstallPack = async () => {
+    if (!installPackId || installTenantIds.length === 0) return;
+    setInstalling(true); setInstallNote("");
+    try {
+      const result = await installChecklistPack(
+        installPackId,
+        installTenantIds,
+        { userId: activeUser.id, name: activeUser.name, role: activeUser.role as string },
+        { userIds: installUserIds, notifyUserIds: installNotifyUserIds },
+      );
+      if (result.installed > 0 || result.skipped > 0) {
+        const parts = [];
+        if (result.installed > 0) parts.push(`Installed ${result.installed} checklist${result.installed === 1 ? "" : "s"}`);
+        if (result.skipped > 0) parts.push(`${result.skipped} already existed and ${result.skipped === 1 ? "was" : "were"} skipped`);
+        setInstallNote(parts.join(" — ") + ".");
+        await onComplianceSaved?.();
+        if (result.installed > 0) {
+          setTimeout(() => { setInstallOpen(false); setInstallNote(""); setInstallUserIds([]); setInstallNotifyUserIds([]); }, 1500);
+        }
+      } else {
+        setInstallNote("This pack has no templates yet — it's provisioned during onboarding.");
+      }
+    } catch (e: any) {
+      setInstallNote(e?.message || "Install failed. Please retry.");
+    } finally {
+      setInstalling(false);
+    }
+  };
 
   // Load existing stations for the selected outlet (station reuse only makes sense
   // for a single outlet — for "ALL" the admin can only add new ones per outlet).
@@ -1304,7 +1345,16 @@ export default function ClientAdminPanel({
         {/* ========================================================
             TAB 2: MANAGING CHECKLISTS & REPORTS
             ======================================================== */}
-        {activeSubTab === "checklists" && (
+        {activeSubTab === "checklists" && showChecklistRegister && (
+          <ChecklistRegister
+            tenants={tenants}
+            clientId={activeClient?.id}
+            checklists={checklists}
+            onBack={() => setShowChecklistRegister(false)}
+          />
+        )}
+
+        {activeSubTab === "checklists" && !showChecklistRegister && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* CHECKLIST CREATOR */}
             <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm space-y-4 h-fit" id="checklist-creator-form-panel">
@@ -1646,10 +1696,30 @@ export default function ClientAdminPanel({
 
             {/* CHECKLIST LISTS & COMPLIANCE REPORT */}
             <div className="lg:col-span-2 space-y-6">
-              
+
               {/* Checklists List */}
               <div className="space-y-3">
-                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider block mb-1">Deployed Checklists ({filteredChecklists.length})</h3>
+                <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider block">Deployed Checklists ({filteredChecklists.length})</h3>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowChecklistRegister(true)}
+                      className="px-3 py-1.5 rounded-xl text-[10px] font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5" /> Register
+                    </button>
+                    {availablePacks.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => { setInstallOpen(true); setInstallNote(""); setInstallTenantIds([]); setInstallUserIds([]); setInstallNotifyUserIds([]); setInstallPackId(availablePacks.find(p => p.templates.length > 0)?.id || ""); }}
+                        className="px-3 py-1.5 rounded-xl text-[10px] font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Templates
+                      </button>
+                    )}
+                  </div>
+                </div>
                 {filteredChecklists.length === 0 ? (
                   <div className="bg-white rounded-2xl border border-dashed border-slate-200 py-8 text-center text-slate-400 text-xs">
                     No checklists currently active.
@@ -1772,6 +1842,91 @@ export default function ClientAdminPanel({
                 </div>
               </div>
 
+            </div>
+          </div>
+        )}
+
+        {/* Install template pack (Client Admin only) */}
+        {activeSubTab === "checklists" && !showChecklistRegister && installOpen && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4" onClick={() => !installing && setInstallOpen(false)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-slate-800">Install food-safety templates</h3>
+                <button onClick={() => !installing && setInstallOpen(false)} className="text-slate-400 hover:text-slate-700 cursor-pointer"><X className="w-4 h-4" /></button>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Pack</label>
+                <select value={installPackId} onChange={(e) => setInstallPackId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-sm text-slate-800 focus:outline-none cursor-pointer">
+                  {availablePacks.map((p) => (
+                    <option key={p.id} value={p.id} disabled={p.templates.length === 0}>
+                      {p.label}{p.templates.length === 0 ? " — provisioned at onboarding" : ` (${p.templates.length})`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Outlets</label>
+                  <button type="button" onClick={() => setInstallTenantIds(installTenantIds.length === tenants.length ? [] : tenants.map((t) => t.id))} className="text-[11px] font-bold text-indigo-600 cursor-pointer">
+                    {installTenantIds.length === tenants.length ? "Clear" : "Select all"}
+                  </button>
+                </div>
+                <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                  {tenants.map((t) => (
+                    <label key={t.id} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 cursor-pointer hover:bg-slate-50">
+                      <input type="checkbox" checked={installTenantIds.includes(t.id)}
+                        onChange={(e) => setInstallTenantIds((prev) => e.target.checked ? [...prev, t.id] : prev.filter((x) => x !== t.id))} />
+                      {t.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Assign to individuals <span className="text-slate-400 normal-case font-medium">(optional — empty = everyone at the selected outlet(s))</span></label>
+                <div className="max-h-28 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                  {clientUsers.filter((u) => u.role !== Role.SUPER_ADMIN).map((u) => {
+                    const on = installUserIds.includes(u.id);
+                    const outletName = tenants.find((t) => t.id === u.tenantId)?.name;
+                    return (
+                      <label key={u.id} className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 cursor-pointer hover:bg-slate-50">
+                        <input type="checkbox" checked={on}
+                          onChange={(e) => setInstallUserIds((prev) => e.target.checked ? [...prev, u.id] : prev.filter((x) => x !== u.id))} />
+                        <span>{u.name}{outletName ? <span className="text-slate-400"> · {outletName}</span> : null}</span>
+                      </label>
+                    );
+                  })}
+                  {clientUsers.length === 0 && <p className="px-3 py-2 text-[10px] text-slate-400 italic">No staff onboarded yet.</p>}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Notify on submission <span className="text-slate-400 normal-case font-medium">(managers/chefs — app push only)</span></label>
+                <div className="max-h-28 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                  {clientUsers.filter((u) => u.role !== Role.SUPER_ADMIN).map((u) => {
+                    const on = installNotifyUserIds.includes(u.id);
+                    const outletName = tenants.find((t) => t.id === u.tenantId)?.name;
+                    return (
+                      <label key={u.id} className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 cursor-pointer hover:bg-slate-50">
+                        <input type="checkbox" checked={on}
+                          onChange={(e) => setInstallNotifyUserIds((prev) => e.target.checked ? [...prev, u.id] : prev.filter((x) => x !== u.id))} />
+                        <span>{u.name}{outletName ? <span className="text-slate-400"> · {outletName}</span> : null}</span>
+                      </label>
+                    );
+                  })}
+                  {clientUsers.length === 0 && <p className="px-3 py-2 text-[10px] text-slate-400 italic">No staff onboarded yet.</p>}
+                </div>
+              </div>
+
+              {installNote && <p className="text-xs text-slate-600">{installNote}</p>}
+
+              <button onClick={doInstallPack} disabled={installing || !installPackId || installTenantIds.length === 0}
+                className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-sm font-bold bg-slate-900 hover:bg-slate-800 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                {installing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                Install into {installTenantIds.length || 0} outlet{installTenantIds.length === 1 ? "" : "s"}
+              </button>
             </div>
           </div>
         )}

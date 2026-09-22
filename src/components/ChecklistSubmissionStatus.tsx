@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * ChecklistSubmissionStatus.tsx — a lightweight "who's submitted / who hasn't"
- * board for a checklist's tagged watchers (assignment.notifyUserIds) plus any
- * Admin/Manager/Super Admin. This is deliberately NOT the full Register (that
- * stays Admin/Manager-only) — it's a narrow, per-checklist exception so a QC
- * person or chef can track their own checklist's roster without gaining any
- * broader role or access elsewhere in the app.
+ * board for a checklist's tagged watchers (assignment.notifyUserIds) plus the
+ * Client Admin / Super Admin. This is deliberately NOT the full Register (that
+ * stays in the Client Admin Panel) — it's a narrow, per-checklist exception so
+ * a QC person or chef can track their own checklist's roster without gaining
+ * any broader role or access elsewhere in the app.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Loader2, CheckCircle2, Clock } from "lucide-react";
@@ -24,19 +24,19 @@ export default function ChecklistSubmissionStatus({
   activeUser: { id: string; name: string; role?: string };
   onBack: () => void;
 }) {
-  const isManager = activeUser.role === Role.ADMIN || activeUser.role === Role.MANAGER || activeUser.role === Role.SUPER_ADMIN;
+  const isAdmin = activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN;
 
   // Checklists the viewer may see status for: a fixed assigned roster, and the
-  // viewer is either a full manager or explicitly tagged as this one's watcher.
+  // viewer is either the Client Admin or explicitly tagged as this one's watcher.
   const visible = useMemo(() => checklists.filter((c) => {
     const isCompliance = !!((c as any).packId || (c as any).frequency);
     if (!isCompliance) return false;
     const asg = (c as any).assignment;
     const roster: string[] = asg?.userIds || [];
     if (!roster.length) return false;
-    if (isManager) return true;
+    if (isAdmin) return true;
     return (asg?.notifyUserIds || []).includes(activeUser.id);
-  }), [checklists, isManager, activeUser.id]);
+  }), [checklists, isAdmin, activeUser.id]);
 
   const [runsByChecklist, setRunsByChecklist] = useState<Record<string, { userId: string; completedAt: string }[]>>({});
   const [loading, setLoading] = useState(true);
