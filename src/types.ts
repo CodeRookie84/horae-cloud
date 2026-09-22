@@ -262,6 +262,8 @@ export interface Reminder {
   remindAt?: string;   // optional ISO "when" (display/sort only — never pushed)
   status: "pending" | "done";
   createdAt: string;
+  /** Same table backs WhatsApp "rem" (reminder) and "meet" (meeting) — absent ⇒ reminder. */
+  kind?: "reminder" | "meeting";
 }
 
 export interface OperationalNotification {

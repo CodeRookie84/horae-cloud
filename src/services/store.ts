@@ -2208,32 +2208,33 @@ export class StoreService {
   }
 
   // ── Personal reminders / notes (pull-only; created here or from WhatsApp) ──────
+  // Both WhatsApp "rem" (reminder) and "meet" (meeting) live in the same table,
+  // distinguished by `kind` — the app surfaces both in one list.
   public async getReminders(): Promise<Reminder[]> {
     const me = await this.getActiveUser();
     const map = (rows: any[] | null) => (rows || []).map((r: any) => ({
       id: r.id, userId: r.user_id, tenantId: r.tenant_id, text: r.text,
       remindAt: r.remind_at || undefined, status: r.status, createdAt: r.created_at,
+      kind: (r.kind === 'meeting' ? 'meeting' : 'reminder') as 'reminder' | 'meeting',
     }));
-    // Reminders only — the same table also holds WhatsApp "meet" meetings
-    // (kind = 'meeting'), which must not appear on the Reminders screen. If the
-    // `kind` column isn't present yet (migration not applied), the filtered query
-    // errors; fall back to returning all rows so the screen still works.
-    const { data, error } = await supabase.from('reminders').select('*')
-      .eq('user_id', me.id).eq('kind', 'reminder').order('created_at', { ascending: false });
-    if (error) {
-      const { data: all } = await supabase.from('reminders').select('*')
-        .eq('user_id', me.id).order('created_at', { ascending: false });
-      return map(all);
-    }
+    const { data } = await supabase.from('reminders').select('*')
+      .eq('user_id', me.id).order('created_at', { ascending: false });
     return map(data);
   }
 
-  public async addReminder(text: string, remindAt?: string): Promise<void> {
+  public async addReminder(text: string, remindAt?: string, kind: 'reminder' | 'meeting' = 'reminder'): Promise<void> {
     const me = await this.getActiveUser();
     await supabase.from('reminders').insert([{
       id: 'rem-' + Date.now(), user_id: me.id, tenant_id: me.tenantId,
-      text: text.slice(0, 300), remind_at: remindAt || null, status: 'pending', kind: 'reminder',
+      text: text.slice(0, 300), remind_at: remindAt || null, status: 'pending', kind,
     }]);
+  }
+
+  public async updateReminder(id: string, updates: { text?: string; remindAt?: string | null }): Promise<void> {
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (updates.text !== undefined) patch.text = updates.text.slice(0, 300);
+    if (updates.remindAt !== undefined) patch.remind_at = updates.remindAt || null;
+    await supabase.from('reminders').update(patch).eq('id', id);
   }
 
   public async completeReminder(id: string): Promise<void> {

@@ -439,6 +439,22 @@ export default function Sidebar({
               )}
 
 
+              {/* Personal, zero-cost (pull-only) — available regardless of plan. */}
+              <button
+                id="btn-reminders"
+                onClick={() => handleTabClick("reminders")}
+                className={`w-full flex items-center justify-between px-2.5 py-1.8 rounded-md text-sm font-medium transition-all cursor-pointer ${
+                  activeTab === "reminders"
+                    ? "bg-blue-50 text-blue-700 font-semibold rounded-xl"
+                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Bell className="w-3.5 h-3.5" />
+                  <span>Reminders</span>
+                </div>
+              </button>
+
               {showSOPs && (
                 <button
                   id="btn-sops"

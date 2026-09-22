@@ -2,22 +2,42 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Reminders.tsx — the personal "Notes" view (renamed from Reminders in the UI;
- * file/route/tab id stay "reminders" for back-compat). Pull-only: nothing is ever
- * pushed (no notifications), so it adds zero messaging cost. Staff add notes here
- * or from WhatsApp ("/note <what> # <time>") and check them anytime.
+ * Reminders.tsx — personal reminders + meetings, managed from the app. Both
+ * WhatsApp keywords ("/note"/"rem" and "meet") write into the same `reminders`
+ * table (kind = 'reminder' | 'meeting'); this screen is the in-app counterpart
+ * for reviewing and decluttering that list once entries pile up, instead of
+ * only being able to see them via WhatsApp or the database. Pull-only:
+ * nothing here is ever pushed (no notifications), zero messaging cost.
  */
 import React, { useEffect, useState } from "react";
-import { ArrowLeft, Plus, Check, Trash2, Clock, RefreshCw } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Pencil, Check, X, RefreshCw } from "lucide-react";
 import { store } from "../services/store";
 import { Reminder } from "../types";
+
+const toLocalInput = (iso?: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const fmt = (iso?: string) => iso
+  ? new Date(iso).toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+  : "—";
+const overdue = (iso?: string) => !!iso && new Date(iso).getTime() < Date.now();
 
 export default function Reminders({ onBack }: { onBack?: () => void }) {
   const [items, setItems] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
+
   const [text, setText] = useState("");
   const [when, setWhen] = useState("");
+  const [kind, setKind] = useState<"reminder" | "meeting">("reminder");
   const [saving, setSaving] = useState(false);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [editWhen, setEditWhen] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -30,24 +50,49 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
     if (!text.trim()) return;
     setSaving(true);
     try {
-      await store.addReminder(text.trim(), when ? new Date(when).toISOString() : undefined);
-      setText(""); setWhen("");
+      await store.addReminder(text.trim(), when ? new Date(when).toISOString() : undefined, kind);
+      setText(""); setWhen(""); setKind("reminder");
       await load();
     } finally { setSaving(false); }
   };
-  const markDone = async (id: string) => { await store.completeReminder(id); await load(); };
-  const remove   = async (id: string) => { await store.deleteReminder(id); await load(); };
 
-  const pending = items.filter(r => r.status === "pending");
-  const doneItems = items.filter(r => r.status === "done").slice(0, 20);
+  const startEdit = (r: Reminder) => {
+    setEditingId(r.id);
+    setEditText(r.text);
+    setEditWhen(toLocalInput(r.remindAt));
+  };
+  const cancelEdit = () => setEditingId(null);
+  const saveEdit = async (id: string) => {
+    if (!editText.trim()) return;
+    setEditSaving(true);
+    try {
+      await store.updateReminder(id, {
+        text: editText.trim(),
+        remindAt: editWhen ? new Date(editWhen).toISOString() : null,
+      });
+      setEditingId(null);
+      await load();
+    } finally { setEditSaving(false); }
+  };
 
-  const fmt = (iso?: string) => iso
-    ? new Date(iso).toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
-    : null;
-  const overdue = (iso?: string) => !!iso && new Date(iso).getTime() < Date.now();
+  const remove = async (id: string) => {
+    await store.deleteReminder(id);
+    await load();
+  };
+
+  // Pending only — handled ones are decluttered by removing them, not by a
+  // separate done/hidden state this screen has to track.
+  const pending = items
+    .filter(r => r.status === "pending")
+    .sort((a, b) => {
+      if (a.remindAt && b.remindAt) return new Date(a.remindAt).getTime() - new Date(b.remindAt).getTime();
+      if (a.remindAt) return -1;
+      if (b.remindAt) return 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
 
   return (
-    <div className="space-y-5 pb-10 max-w-2xl mx-auto">
+    <div className="space-y-5 pb-10 max-w-3xl mx-auto">
       {onBack && (
         <button onClick={onBack} className="flex items-center gap-1.5 text-sm font-medium text-[var(--color-ink-soft)] hover:text-[var(--color-ink)] transition-colors cursor-pointer">
           <ArrowLeft className="w-4 h-4" /> Back
@@ -55,9 +100,9 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
       )}
 
       <div>
-        <h2 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Notes</h2>
+        <h2 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Reminders &amp; Meetings</h2>
         <p className="text-sm text-[var(--color-ink-soft)] mt-1">
-          Your personal notes. Add one here, or from WhatsApp — send <span className="font-mono bg-[var(--color-cream-deep)] px-1.5 py-0.5 rounded">/note &lt;what&gt; # &lt;time&gt;</span>. Nothing is pushed; check them whenever you like.
+          Add one here, or from WhatsApp — <span className="font-mono bg-[var(--color-cream-deep)] px-1.5 py-0.5 rounded">/note &lt;what&gt; # &lt;time&gt;</span> or <span className="font-mono bg-[var(--color-cream-deep)] px-1.5 py-0.5 rounded">meet &lt;what&gt; # &lt;time&gt;</span>. Nothing is pushed; manage the list here whenever it needs a clean-up.
         </p>
       </div>
 
@@ -71,15 +116,24 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
           className="w-full px-3.5 py-2.5 bg-[var(--color-cream)] border border-[var(--color-line)] rounded-xl text-sm text-[var(--color-ink)] placeholder-[var(--color-ink-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]/30"
         />
         <div className="flex flex-col sm:flex-row gap-2">
-          <label className="flex-1 flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
-            <Clock className="w-4 h-4 shrink-0" />
-            <input
-              type="datetime-local"
-              value={when}
-              onChange={(e) => setWhen(e.target.value)}
-              className="flex-1 px-3 py-2 bg-[var(--color-cream)] border border-[var(--color-line)] rounded-xl text-sm text-[var(--color-ink)] focus:outline-none"
-            />
-          </label>
+          <div className="flex rounded-xl border border-[var(--color-line)] overflow-hidden shrink-0">
+            {(["reminder", "meeting"] as const).map((k) => (
+              <button
+                key={k} type="button" onClick={() => setKind(k)}
+                className={`px-3 py-2 text-xs font-bold capitalize cursor-pointer transition-colors ${
+                  kind === k ? "bg-[var(--color-brand)] text-white" : "bg-white text-[var(--color-ink-soft)] hover:bg-[var(--color-cream)]"
+                }`}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+          <input
+            type="datetime-local"
+            value={when}
+            onChange={(e) => setWhen(e.target.value)}
+            className="flex-1 px-3 py-2 bg-[var(--color-cream)] border border-[var(--color-line)] rounded-xl text-sm text-[var(--color-ink)] focus:outline-none"
+          />
           <button
             type="submit"
             disabled={!text.trim() || saving}
@@ -93,57 +147,81 @@ export default function Reminders({ onBack }: { onBack?: () => void }) {
 
       {loading ? (
         <div className="flex items-center justify-center py-12"><RefreshCw className="w-5 h-5 animate-spin text-[var(--color-brand)]" /></div>
+      ) : pending.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-[var(--color-line)] p-6 text-center text-sm text-[var(--color-ink-soft)]">
+          Nothing pending. 🎉
+        </div>
       ) : (
-        <>
-          {/* Pending */}
-          <div className="space-y-2">
-            <span className="text-xs font-bold tracking-wider uppercase text-[var(--color-ink-soft)] px-1">To remember ({pending.length})</span>
-            {pending.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-[var(--color-line)] p-6 text-center text-sm text-[var(--color-ink-soft)]">
-                Nothing pending. 🎉
-              </div>
-            ) : (
-              <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm divide-y divide-[var(--color-line)] overflow-hidden">
-                {pending.map(r => (
-                  <div key={r.id} className="flex items-start gap-3 px-4 py-3">
-                    <button onClick={() => markDone(r.id)} title="Mark done" className="mt-0.5 w-6 h-6 rounded-full border-2 border-[var(--color-line)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-tint)] flex items-center justify-center shrink-0 cursor-pointer transition-all">
-                      <Check className="w-3.5 h-3.5 text-[var(--color-accent)] opacity-0 hover:opacity-100" />
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-[var(--color-ink)] break-words">{r.text}</div>
-                      {r.remindAt && (
-                        <div className={`text-xs mt-0.5 flex items-center gap-1 ${overdue(r.remindAt) ? "text-rose-600 font-semibold" : "text-[var(--color-ink-soft)]"}`}>
-                          <Clock className="w-3 h-3" /> {fmt(r.remindAt)}{overdue(r.remindAt) ? " · passed" : ""}
-                        </div>
+        <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-warm overflow-x-auto">
+          <table className="w-full text-left border-collapse min-w-[520px]">
+            <thead>
+              <tr className="border-b border-[var(--color-line)] text-[10px] uppercase font-bold text-[var(--color-ink-soft)] tracking-wider">
+                <th className="py-2.5 px-4">Reminder / Meeting</th>
+                <th className="py-2.5 px-4">Date &amp; Time</th>
+                <th className="py-2.5 px-4 text-right sticky right-0 bg-white">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="text-sm text-[var(--color-ink)]">
+              {pending.map((r) => {
+                const isEditing = editingId === r.id;
+                return (
+                  <tr key={r.id} className="border-b border-[var(--color-line)] last:border-0 hover:bg-[var(--color-cream)]/40 group">
+                    <td className="py-2.5 px-4 align-top">
+                      {isEditing ? (
+                        <input
+                          type="text" value={editText} onChange={(e) => setEditText(e.target.value)} autoFocus
+                          className="w-full px-2.5 py-1.5 bg-[var(--color-cream)] border border-[var(--color-line)] rounded-lg text-sm focus:outline-none"
+                        />
+                      ) : (
+                        <>
+                          <span className="break-words">{r.text}</span>
+                          {r.kind === "meeting" && (
+                            <span className="ml-2 text-[9px] font-bold uppercase tracking-wide text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded align-middle">Meeting</span>
+                          )}
+                        </>
                       )}
-                    </div>
-                    <button onClick={() => remove(r.id)} title="Delete" className="text-[var(--color-ink-soft)] hover:text-rose-500 shrink-0 cursor-pointer p-1">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Done */}
-          {doneItems.length > 0 && (
-            <div className="space-y-2">
-              <span className="text-xs font-bold tracking-wider uppercase text-[var(--color-ink-soft)] px-1">Done</span>
-              <div className="bg-white rounded-2xl border border-[var(--color-line)] divide-y divide-[var(--color-line)] overflow-hidden">
-                {doneItems.map(r => (
-                  <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
-                    <Check className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
-                    <span className="flex-1 min-w-0 text-sm text-[var(--color-ink-soft)] line-through break-words">{r.text}</span>
-                    <button onClick={() => remove(r.id)} title="Delete" className="text-[var(--color-ink-soft)] hover:text-rose-500 shrink-0 cursor-pointer p-1">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
+                    </td>
+                    <td className="py-2.5 px-4 align-top whitespace-nowrap">
+                      {isEditing ? (
+                        <input
+                          type="datetime-local" value={editWhen} onChange={(e) => setEditWhen(e.target.value)}
+                          className="px-2.5 py-1.5 bg-[var(--color-cream)] border border-[var(--color-line)] rounded-lg text-sm focus:outline-none"
+                        />
+                      ) : (
+                        <span className={overdue(r.remindAt) ? "text-rose-600 font-semibold" : "text-[var(--color-ink-soft)]"}>
+                          {fmt(r.remindAt)}{overdue(r.remindAt) ? " · passed" : ""}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-4 align-top sticky right-0 bg-white group-hover:bg-[var(--color-cream)]/40">
+                      <div className="flex items-center gap-1 justify-end">
+                        {isEditing ? (
+                          <>
+                            <button onClick={() => saveEdit(r.id)} disabled={!editText.trim() || editSaving} title="Save" className="p-1 text-emerald-600 hover:text-emerald-700 disabled:opacity-50 cursor-pointer">
+                              <Check className="w-4 h-4" />
+                            </button>
+                            <button onClick={cancelEdit} title="Cancel" className="p-1 text-[var(--color-ink-soft)] hover:text-[var(--color-ink)] cursor-pointer">
+                              <X className="w-4 h-4" />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={() => startEdit(r)} title="Edit" className="p-1 text-[var(--color-ink-soft)] hover:text-[var(--color-ink)] cursor-pointer">
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => remove(r.id)} title="Remove" className="p-1 text-[var(--color-ink-soft)] hover:text-rose-500 cursor-pointer">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
