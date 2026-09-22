@@ -52,7 +52,6 @@ export default function ChecklistsWorkflows({
 }: ChecklistsWorkflowsProps) {
   const pickerLangs = (resolveLanguages(languages).length ? resolveLanguages(languages) : resolveLanguages(DEFAULT_LANG_CODES));
   const [selectedTenantId, setSelectedTenantId] = useState<string>("ALL");
-  const [showCompleted, setShowCompleted] = useState<boolean>(false);
   const [customInputsState, setCustomInputsState] = useState<{ [checklistId: string]: { [fieldName: string]: string } }>({});
 
   const [localChecked, setLocalChecked] = useState<{ [itemId: string]: boolean }>(() => {
@@ -236,11 +235,14 @@ export default function ChecklistsWorkflows({
     (c) => ((c as any).assignment?.notifyUserIds || []).includes(activeUser.id)
   );
 
+  // This page is the staff to-do list, not an audit trail — only what's still
+  // due this cycle belongs here. Anything already submitted stays out until it
+  // comes due again (or forever, for a one-time checklist); reviewing past
+  // submissions is what the Admin Panel's Register/Compliance Report are for.
   const checklists = (selectedTenantId === "ALL"
-    ? rawChecklists 
+    ? rawChecklists
     : rawChecklists.filter(c => c.tenantId === selectedTenantId)
   ).filter(c => {
-    if (showCompleted) return true;
     const isCompleted = c.items.length > 0 && c.items.every(i => i.completed);
     return !isCompleted;
   });
@@ -632,7 +634,7 @@ export default function ChecklistsWorkflows({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {(isAdmin || isWatcherAnywhere) && (
+          {isWatcherAnywhere && (
             <button
               type="button"
               onClick={() => setShowStatus(true)}
@@ -641,18 +643,6 @@ export default function ChecklistsWorkflows({
               <ListChecks className="w-3.5 h-3.5" /> Status
             </button>
           )}
-          {/* Hide/Show Completed Toggle */}
-          <button
-            type="button"
-            onClick={() => setShowCompleted(!showCompleted)}
-            className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border flex items-center gap-1.5 select-none ${
-              showCompleted 
-                ? "bg-slate-900 border-slate-900 text-white" 
-                : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            <span>{showCompleted ? "Show Completed" : "Hide Completed"}</span>
-          </button>
 
           {/* Outlet Filter Dropdown */}
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700">

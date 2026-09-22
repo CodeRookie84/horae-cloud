@@ -167,6 +167,20 @@ export default function ClientAdminPanel({
 
   const clientUsers = allUsers?.filter(u => tenants.some(t => t.id === u.tenantId)) || tenantUsers;
 
+  // The `checklists` prop is the viewer's OWN personal-scope list (same data
+  // their regular staff Checklists screen gets — own outlet + what's actually
+  // assigned to them). The Admin Panel's management views need every outlet's
+  // checklists regardless of the admin's own outlet, so it fetches its own
+  // cross-outlet copy here rather than reusing that scoped prop. Re-fetches
+  // whenever the personal list changes (i.e. after any save/install/delete
+  // triggers a refresh upstream).
+  const [allChecklists, setAllChecklists] = useState<Checklist[]>(checklists);
+  useEffect(() => {
+    let alive = true;
+    store.getChecklists(undefined, { scope: "all" }).then((list) => { if (alive) setAllChecklists(list); }).catch(() => {});
+    return () => { alive = false; };
+  }, [checklists]);
+
   // ----------------------------------------------------
   // SUB-TAB 6: Outlets State & Logic
   // ----------------------------------------------------
@@ -382,7 +396,7 @@ export default function ClientAdminPanel({
   // Filtered lists based on outlet filter
   const filteredOutletTenants = selectedOutletFilter === "ALL" ? tenants : tenants.filter(t => t.id === selectedOutletFilter);
   const filteredNotices = selectedOutletFilter === "ALL" ? notices : notices.filter(n => n.tenantId === selectedOutletFilter);
-  const filteredChecklists = selectedOutletFilter === "ALL" ? checklists : checklists.filter(c => c.tenantId === selectedOutletFilter);
+  const filteredChecklists = selectedOutletFilter === "ALL" ? allChecklists : allChecklists.filter(c => c.tenantId === selectedOutletFilter);
   const filteredTasks = selectedOutletFilter === "ALL" ? tasks : tasks.filter(t => t.tenantId === selectedOutletFilter);
   const filteredSOPs = selectedOutletFilter === "ALL" ? sops : sops.filter(s => s.tenantId === selectedOutletFilter || s.tenantId === "ALL");
 
@@ -477,6 +491,7 @@ export default function ClientAdminPanel({
   const [installTenantIds, setInstallTenantIds] = useState<string[]>([]);
   const [installUserIds, setInstallUserIds] = useState<string[]>([]);
   const [installNotifyUserIds, setInstallNotifyUserIds] = useState<string[]>([]);
+  const [installRecurrence, setInstallRecurrence] = useState<string>("Daily");
   const [installing, setInstalling] = useState(false);
   const [installNote, setInstallNote] = useState("");
   const availablePacks = packsForPlan(activeClient?.plan || "");
@@ -490,7 +505,7 @@ export default function ClientAdminPanel({
         installPackId,
         installTenantIds,
         { userId: activeUser.id, name: activeUser.name, role: activeUser.role as string },
-        { userIds: installUserIds, notifyUserIds: installNotifyUserIds },
+        { userIds: installUserIds, notifyUserIds: installNotifyUserIds, recurrence: installRecurrence },
         installTemplateKeys,
       );
       if (result.installed > 0 || result.skipped > 0) {
@@ -528,8 +543,8 @@ export default function ClientAdminPanel({
 
   const isCompliance = (c: Checklist) => !!(c.packId || c.frequency);
   const complianceIdsKey = useMemo(
-    () => checklists.filter(isCompliance).map((c) => c.id).join(","),
-    [checklists]
+    () => allChecklists.filter(isCompliance).map((c) => c.id).join(","),
+    [allChecklists]
   );
 
   useEffect(() => {
@@ -1486,7 +1501,7 @@ export default function ClientAdminPanel({
           <ChecklistRegister
             tenants={tenants}
             clientId={activeClient?.id}
-            checklists={checklists}
+            checklists={allChecklists}
             onBack={() => setShowChecklistRegister(false)}
           />
         )}
@@ -1849,7 +1864,7 @@ export default function ClientAdminPanel({
                     {availablePacks.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => { setInstallOpen(true); setInstallNote(""); setInstallTenantIds([]); setInstallUserIds([]); setInstallNotifyUserIds([]); setInstallTemplateKeys([]); setInstallPackId(availablePacks.find(p => p.templates.length > 0)?.id || ""); }}
+                        onClick={() => { setInstallOpen(true); setInstallNote(""); setInstallTenantIds([]); setInstallUserIds([]); setInstallNotifyUserIds([]); setInstallTemplateKeys([]); setInstallRecurrence("Daily"); setInstallPackId(availablePacks.find(p => p.templates.length > 0)?.id || ""); }}
                         className="px-3 py-1.5 rounded-xl text-[10px] font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" /> Templates
@@ -1896,14 +1911,14 @@ export default function ClientAdminPanel({
                           <th className="py-2.5 px-3">Assigned To</th>
                           <th className="py-2.5 px-3">Last Submission</th>
                           <th className="py-2.5 px-3">Status</th>
-                          <th className="py-2.5 px-3"></th>
+                          <th className="py-2.5 px-3 sticky right-0 bg-white">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="text-[11px] font-medium text-slate-600">
                         {deployedRows.map((chk) => {
                           const st = checklistStatus(chk, complianceSummary);
                           return (
-                            <tr key={chk.id} className="border-b border-slate-50 hover:bg-slate-50/50">
+                            <tr key={chk.id} className="border-b border-slate-50 hover:bg-slate-50/50 group">
                               <td className="py-2 px-3 font-semibold text-slate-800 max-w-[180px] truncate" title={chk.title}>{chk.title}</td>
                               <td className="py-2 px-3">{tenants.find((t) => t.id === chk.tenantId)?.name || chk.tenantId}</td>
                               <td className="py-2 px-3 capitalize">{chk.frequency || "—"}</td>
@@ -1916,7 +1931,7 @@ export default function ClientAdminPanel({
                                   {st.submitted ? "Submitted" : "Pending"}
                                 </span>
                               </td>
-                              <td className="py-2 px-3">
+                              <td className="py-2 px-3 sticky right-0 bg-white group-hover:bg-slate-50/50">
                                 <div className="flex items-center gap-1 justify-end">
                                   <button onClick={() => handleStartEditChecklist(chk)} className="p-1 text-slate-400 hover:text-slate-800 rounded-lg cursor-pointer transition-colors" title="Edit Checklist">
                                     <Edit2 className="w-3.5 h-3.5" />
@@ -2048,6 +2063,16 @@ export default function ClientAdminPanel({
                     <p className="px-3 py-2 text-[10px] text-slate-400 italic">This pack has no templates yet.</p>
                   )}
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Recurrence Schedule</label>
+                <select value={installRecurrence} onChange={(e) => setInstallRecurrence(e.target.value)} className="w-full bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-sm text-slate-800 focus:outline-none cursor-pointer">
+                  <option value="One-time">One-time / Manual Reset</option>
+                  <option value="Daily">Daily Reset</option>
+                  <option value="Weekly">Weekly Reset</option>
+                  <option value="Custom">Custom (Every 3 Days)</option>
+                </select>
               </div>
 
               <div className="space-y-1.5">

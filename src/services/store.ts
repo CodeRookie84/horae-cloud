@@ -1232,7 +1232,14 @@ export class StoreService {
   }
 
   // Checklist Routines
-  public async getChecklists(since?: string): Promise<Checklist[]> {
+  /** `scope: "all"` (Admin/Super Admin only — silently falls back to "mine" for
+   *  anyone else) returns every checklist across every outlet of the client,
+   *  unfiltered — for the Client Admin Panel's management views. The default
+   *  "mine" scope is what EVERY role sees on their own personal checklist
+   *  screen, admin included: an unassigned compliance checklist scoped to its
+   *  own outlet, an explicitly-assigned one to just that roster, and classic
+   *  checklists by dept/role as before. */
+  public async getChecklists(since?: string, opts?: { scope?: "mine" | "all" }): Promise<Checklist[]> {
     const curUser = await this.getActiveUser();
     const tenants = await this.getTenantsByClient(this.activeClientId);
     const tenantIds = tenants.map(t => t.id);
@@ -1465,11 +1472,15 @@ export class StoreService {
       } as any;
     });
 
+    const wantsAll = opts?.scope === "all" && (curUser.role === Role.ADMIN || curUser.role === Role.SUPER_ADMIN);
+
     return combined.filter(checklist => {
-      // Only the Client Admin (and Horae's own Super Admin) see every checklist
-      // unfiltered — Manager is an ordinary outlet-level staff role and, like
-      // everyone else, only sees what's actually assigned/targeted to them.
-      if (curUser.role === Role.ADMIN || curUser.role === Role.SUPER_ADMIN) {
+      // "all" scope (Admin Panel management views only) sees every checklist
+      // unfiltered. Everyone else — including Admin/Manager on their OWN
+      // personal checklist screen — only sees what's actually
+      // assigned/targeted to them; being able to manage every outlet from the
+      // Admin Panel doesn't mean every outlet belongs on your personal list.
+      if (wantsAll) {
         return true;
       }
       // Compliance checklists assigned to specific individuals are visible only to

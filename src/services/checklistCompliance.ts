@@ -279,7 +279,7 @@ export async function installChecklistPack(
   packId: string,
   tenantIds: string[],
   createdBy: { userId: string; name: string; role: string },
-  assign?: { userIds?: string[]; notifyUserIds?: string[] },
+  assign?: { userIds?: string[]; notifyUserIds?: string[]; recurrence?: string },
   templateKeys?: string[],
 ): Promise<InstallPackResult> {
   const pack = getPack(packId);
@@ -329,7 +329,7 @@ export async function installChecklistPack(
         title: tpl.title,
         description: JSON.stringify({
           desc: "",
-          recurrence: "One-time",
+          recurrence: assign?.recurrence || "One-time",
           recurrenceDay: "",
           attachment: "",
           customInputFields: [],
