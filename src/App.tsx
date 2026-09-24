@@ -55,6 +55,7 @@ const Training = lazy(() => import("./components/Training"));
 const TrainingAdmin = lazy(() => import("./components/TrainingAdmin"));
 const AppLauncher = lazy(() => import("./components/AppLauncher"));
 const Reminders = lazy(() => import("./components/Reminders"));
+const ProjectsHub = lazy(() => import("./components/projects/ProjectsHub"));
 // [KOT] Isolated cake-order tracking module. Kiosk = shared-tablet QR entry;
 // KotApp = the manager-facing tab. Lazy so neither costs anything until opened.
 const KotKiosk = lazy(() => import("./kot/KotKiosk"));
@@ -194,7 +195,7 @@ function AppInner() {
       home: '/home', dashboard: '/dashboard', notices: '/notices', checklists: '/checklists',
       tasks: '/tasks', sops: '/sops', 'admin-panel': '/admin',
       'horae-admin': '/horae-admin', 'checklist-report': '/checklist-report',
-      maintenance: '/maintenance', training: '/training', reminders: '/reminders',
+      maintenance: '/maintenance', training: '/training', reminders: '/reminders', projects: '/projects',
     };
     if (urlMap[tab] && location.pathname !== urlMap[tab]) {
       navigate(urlMap[tab]);
@@ -226,7 +227,7 @@ function AppInner() {
       '/home': 'home', '/dashboard': 'dashboard', '/notices': 'notices', '/checklists': 'checklists',
       '/tasks': 'tasks', '/sops': 'sops', '/admin': 'admin-panel',
       '/horae-admin': 'horae-admin', '/checklist-report': 'checklist-report',
-      '/maintenance': 'maintenance', '/training': 'training', '/reminders': 'reminders',
+      '/maintenance': 'maintenance', '/training': 'training', '/reminders': 'reminders', '/projects': 'projects',
     };
 
     const targetTab = reverseMap[mainRoute];
@@ -1399,6 +1400,15 @@ function AppInner() {
 
                   {activeTab === "reminders" && (
                     <Reminders onBack={backToDashboard} />
+                  )}
+
+                  {activeTab === "projects" && hasFeature("projects") && (
+                    <ProjectsHub
+                      activeUser={activeUser}
+                      clientId={activeClient?.id || activeTenant.clientId}
+                      clientUsers={allUsers.filter(u => tenants.some(t => t.id === u.tenantId))}
+                      onBack={backToDashboard}
+                    />
                   )}
 
                   {effectiveTab === "training" && hasFeature("training") && (

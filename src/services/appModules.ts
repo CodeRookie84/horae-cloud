@@ -13,6 +13,7 @@ import {
   GraduationCap, BookOpen, FileText, Wrench, ShieldCheck, Bell,
   Cake, // [KOT] launcher icon
   Languages, // [MSG] translation launcher icon
+  FolderKanban,
 } from 'lucide-react';
 
 export interface AppModule {
@@ -57,6 +58,7 @@ export function getAppModules(ctx: ModuleGateContext): AppModule[] {
   if (has('notices')) push({ id: 'notices', label: 'Notices', icon: Megaphone, accent: 'bg-amber-100 text-amber-600' });
   if (has('checklists')) push({ id: 'checklists', label: 'Checklists', icon: ClipboardCheck, accent: 'bg-emerald-100 text-emerald-600' });
   if (has('tasks')) push({ id: 'tasks', label: 'Tasks', icon: MessageSquare, accent: 'bg-indigo-100 text-indigo-600' });
+  if (has('projects')) push({ id: 'projects', label: 'Projects', icon: FolderKanban, accent: 'bg-fuchsia-100 text-fuchsia-600' });
   if (has('maintenance') && (clitAccess || isAdmin(role))) push({ id: 'maintenance', label: 'Maintenance', icon: Wrench, accent: 'bg-slate-200 text-slate-700' });
   if (has('training')) push({ id: 'training', label: 'Training', icon: GraduationCap, accent: 'bg-violet-100 text-violet-600' });
   if (has('sops')) push({ id: 'sops', label: 'SOPs', icon: FileText, accent: 'bg-teal-100 text-teal-600' });

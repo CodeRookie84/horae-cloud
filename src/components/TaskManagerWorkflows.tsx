@@ -130,11 +130,12 @@ export default function TaskManagerWorkflows({
   const [description, setDescription] = useState<string>("");
   const [urgent, setUrgent] = useState<boolean>(false);
   const [dueDate, setDueDate] = useState<string>(new Date().toLocaleDateString('en-CA'));
-  // Priority follows the due date automatically (see computeTaskPriority); the
-  // only manual lever is the Urgent toggle, and that only applies when the task
-  // is due today. Never set priority by hand.
+  // Priority follows the due date automatically (see computeTaskPriority). The
+  // creator may override it (e.g. a task due in 5 days that is still High), and
+  // the Urgent toggle still wins for a task due today. "" = auto.
   const dueToday = isDueToday(dueDate);
-  const priority = computeTaskPriority(dueDate, urgent && dueToday);
+  const [priorityOverride, setPriorityOverride] = useState<string>("");
+  const priority = (urgent && dueToday) ? "Critical" : (priorityOverride || computeTaskPriority(dueDate, false));
   const [assigneePicked, setAssigneePicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
   const assignedUserIds = resolveMemberIds(assigneePicked, tenantUsers, tenants);
   const [ccPicked, setCcPicked] = useState<MemberPickerSelection>(EMPTY_SELECTION);
@@ -636,6 +637,7 @@ export default function TaskManagerWorkflows({
     setDescription("");
     setDescNativeSource("");
     setUrgent(false);
+    setPriorityOverride("");
     setDueDate(new Date().toLocaleDateString('en-CA'));
     setAssigneePicked(EMPTY_SELECTION);
     setCcPicked(EMPTY_SELECTION);
@@ -905,7 +907,7 @@ export default function TaskManagerWorkflows({
   // Two-line priority badge for the create-task form's Priority Rank box, where the
   // narrow column would otherwise clip the descriptor ("…EOD Tomorrow"). The main
   // word sits on line 1, the timing note on line 2 — nothing gets cut.
-  const renderPriorityBadgeStacked = (p: string) => {
+  const renderPriorityBadgeStacked = (p: string, subOverride?: string) => {
     const meta: Record<string, { dot: string; main: string; sub: string; box: string; text: string }> = {
       Critical: { dot: "🔴", main: "Critical", sub: "Within 2 Hrs", box: "bg-red-50 border-red-200",       text: "text-red-750" },
       High:     { dot: "🟠", main: "High",     sub: "EOD",          box: "bg-orange-50 border-orange-200", text: "text-orange-750" },
@@ -919,7 +921,7 @@ export default function TaskManagerWorkflows({
           {p === "Critical" && <span className="h-1.5 w-1.5 rounded-full bg-red-600 animate-ping" />}
           <span>{m.dot} {m.main}</span>
         </span>
-        <span className="text-[10px] opacity-70 tracking-wide">{m.sub}</span>
+        <span className="text-[10px] opacity-70 tracking-wide">{subOverride || m.sub}</span>
       </span>
     );
   };
@@ -2715,12 +2717,27 @@ export default function TaskManagerWorkflows({
                   </div>
                   <div className="space-y-0.5">
                     <label className="text-sm text-slate-700 font-semibold tracking-wider block">Priority Rank</label>
-                    {/* Auto-derived from the Due Shift Date (single source of truth) —
-                        read-only so it can never drift out of sync. */}
+                    {/* Auto-derived from the Due Shift Date unless the creator
+                        picks one below. */}
                     <div className="w-full px-2.5 min-h-[42px] bg-slate-500/10 border border-slate-200 rounded-xl flex items-center">
-                      {renderPriorityBadgeStacked(priority)}
+                      {renderPriorityBadgeStacked(priority, priorityOverride && !(urgent && dueToday) ? "Set manually" : undefined)}
                     </div>
                   </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] font-medium text-slate-600 shrink-0">Change priority</span>
+                  <select
+                    value={priorityOverride}
+                    disabled={urgent && dueToday}
+                    onChange={(e) => setPriorityOverride(e.target.value)}
+                    className="flex-1 bg-slate-50 border border-slate-200 text-slate-700 text-[12px] font-medium px-2 py-1.5 rounded-lg focus:outline-none cursor-pointer disabled:opacity-50"
+                  >
+                    <option value="">Auto (by due date)</option>
+                    <option value="Low">🟢 Low</option>
+                    <option value="Medium">🟡 Medium</option>
+                    <option value="High">🟠 High</option>
+                    <option value="Critical">🔴 Critical</option>
+                  </select>
                 </div>
                 {/* Urgent is the one manual override — a within-2-hours emergency —
                     and only meaningful for a task due today. */}

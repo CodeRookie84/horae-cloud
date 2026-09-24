@@ -14,21 +14,21 @@ export type PlanId = "Free" | "Essential" | "Pro" | "Enterprise" | "Training" | 
 /** Canonical feature keys used across the sidebar + tab gating. */
 export type FeatureKey =
   | "tasks" | "notices" | "checklists"
-  | "maintenance" | "training" | "sops";
+  | "maintenance" | "training" | "sops" | "projects";
 
 export const TRIAL_DAYS = 15;
 const TRIAL_MS = TRIAL_DAYS * 24 * 60 * 60 * 1000;
 
 /** Every feature — the active Free trial grants all of these. */
 const ALL_FEATURES: FeatureKey[] = [
-  "tasks", "notices", "checklists", "maintenance", "training", "sops",
+  "tasks", "notices", "checklists", "maintenance", "training", "sops", "projects",
 ];
 
 /** Base feature set per paid plan (before the Training add-on is applied). */
 const PLAN_BASE: Record<Exclude<PlanId, "Free">, FeatureKey[]> = {
   Essential: ["tasks"],
-  Pro: ["tasks", "checklists", "maintenance", "notices"],
-  Enterprise: ["tasks", "checklists", "maintenance", "notices", "training", "sops"],
+  Pro: ["tasks", "checklists", "maintenance", "notices", "projects"],
+  Enterprise: ["tasks", "checklists", "maintenance", "notices", "training", "sops", "projects"],
   Training: ["training"],
   // Assistant = WhatsApp-only productivity (Reminders + Meetings + Translate).
   // Those three live entirely in the WhatsApp bot and aren't app FeatureKeys, so
@@ -54,6 +54,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   maintenance: "Equipment Maintenance",
   training: "Training",
   sops: "SOPs",
+  projects: "Projects",
 };
 
 /** Whether the Training add-on is meaningful for this plan (Essential/Pro only). */

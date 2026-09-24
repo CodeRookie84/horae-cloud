@@ -25,6 +25,7 @@ import {
   Wrench,
   GraduationCap,
   LayoutGrid, // Home / app hub
+  FolderKanban,
 } from "lucide-react";
 import { Client, Tenant, User as AppUser, Role, Department } from "../types";
 import { store } from "../services/store";
@@ -144,6 +145,7 @@ export default function Sidebar({
   const showChecklists = clientServices.includes("checklists");
   const showTasks = clientServices.includes("tasks");
   const showSOPs = clientServices.includes("sops");
+  const showProjects = clientServices.includes("projects");
   const showTraining = clientServices.includes("training");
   const showMaintenance = clientServices.includes("maintenance") &&
     (activeUser.clitAccess || activeUser.role === Role.ADMIN || activeUser.role === Role.SUPER_ADMIN);
@@ -438,6 +440,23 @@ export default function Sidebar({
                 </button>
               )}
 
+
+              {showProjects && (
+                <button
+                  id="btn-projects"
+                  onClick={() => handleTabClick("projects")}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.8 rounded-md text-sm font-medium transition-all cursor-pointer ${
+                    activeTab === "projects"
+                      ? "bg-blue-50 text-blue-700 font-semibold rounded-xl"
+                      : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <FolderKanban className="w-3.5 h-3.5" />
+                    <span>Projects</span>
+                  </div>
+                </button>
+              )}
 
               {/* Personal, zero-cost (pull-only) — available regardless of plan. */}
               <button
