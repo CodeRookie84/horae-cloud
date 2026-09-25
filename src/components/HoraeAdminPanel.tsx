@@ -23,10 +23,12 @@ import {
   Trash2,
   KeyRound,
   Eye,
-  EyeOff
+  EyeOff,
+  IndianRupee
 } from "lucide-react";
 import { Client, Tenant, User, Role, Department } from "../types";
 import HoraeLogoIcon from "./HoraeLogoIcon";
+import WhatsAppBillingReport from "./WhatsAppBillingReport";
 import ChangePasswordModal from "./ChangePasswordModal";
 import { store } from "../services/store";
 import * as plans from "../services/plans";
@@ -124,7 +126,7 @@ export default function HoraeAdminPanel({
   onDeleteUser
 }: HoraeAdminPanelProps) {
   const clients = rawClients.filter(c => c.id !== "client-system" && c.id !== "client-hq");
-  const [activeTab, setActiveTab] = useState<"clients" | "outlets" | "staff">("clients");
+  const [activeTab, setActiveTab] = useState<"clients" | "outlets" | "staff" | "billing">("clients");
   const [showChangePwd, setShowChangePwd] = useState(false);
 
   // State for adding a client
@@ -429,7 +431,8 @@ export default function HoraeAdminPanel({
         {[
           { id: "clients", label: "Clients Onboarding", icon: Briefcase },
           { id: "outlets", label: "Outlet Provisioning", icon: Building2 },
-          { id: "staff", label: "Staff Directory", icon: Users }
+          { id: "staff", label: "Staff Directory", icon: Users },
+          { id: "billing", label: "WhatsApp Billing", icon: IndianRupee }
         ].map(t => {
           const Icon = t.icon;
           return (
@@ -1187,6 +1190,17 @@ export default function HoraeAdminPanel({
                   )}
                 </div>
               </div>
+            </motion.div>
+          )}
+
+          {activeTab === "billing" && (
+            <motion.div
+              key="billing"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <WhatsAppBillingReport clients={clients} tenants={tenants} users={users} />
             </motion.div>
           )}
         </AnimatePresence>

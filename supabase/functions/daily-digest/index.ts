@@ -95,6 +95,7 @@ serve(async (req) => {
     // ── Per-outlet data shared across its users (each section plan-gated) ────
     // Pending checklists (SOP/quiz rows that share the table are filtered out).
     let checklists: any[] = [];
+    let checklistTotal = 0; // unsliced count, for the morning briefing
     if (feat.has("checklists")) {
       const { data: tenantChecklists } = await supabase
         .from("checklists")
@@ -108,7 +109,9 @@ serve(async (req) => {
           }
         } catch { /* plain-text description = real checklist */ }
         return true;
-      }).slice(0, 3);
+      });
+      checklistTotal = checklists.length;
+      checklists = checklists.slice(0, 3);
     }
 
     // Notices posted in the last 24h.
@@ -194,14 +197,15 @@ serve(async (req) => {
 
       // Pending trainings targeted to this user.
       const passed = passedByUser[user.id] || new Set<string>();
-      const training = (clientTrainings || []).filter((t: any) => {
+      const pendingTraining = (clientTrainings || []).filter((t: any) => {
         if (!(t.questions?.length)) return false;
         if (passed.has(t.id)) return false;
         const outletOk = !Array.isArray(t.outlets) || t.outlets.length === 0 || t.outlets.includes(user.tenant_id);
         const deptOk = String(t.department || "All Departments") === "All Departments" || String(t.department) === String(user.department);
         const roleOk = String(t.role || "All Roles") === "All Roles" || String(t.role) === String(user.role);
         return outletOk && deptOk && roleOk;
-      }).slice(0, 3);
+      });
+      const training = pendingTraining.slice(0, 3);
 
       // New task-chat messages (last 24h) on this user's tasks — assigned to them
       // or created by them — from someone else. Chats don't push; they land here.
@@ -265,16 +269,29 @@ serve(async (req) => {
       // The digest itself is push-only; this single Utility ping earns the free
       // 24h window when they reply Hi.
       if (runMode === "morning" && user.phone_number && user.whatsapp_opted_in) {
-        // Generic action hook — deliberately NOT a list of pending counts. The user
-        // sees exactly what's pending the moment they reply Hi, so repeating it here
-        // is redundant; this line's only job is to earn that reply. It's a WhatsApp
-        // template variable, so it must stay a SINGLE line (no newlines). The nudge
-        // is already gated above to users who DO have pending items (totalItems > 0).
-        const summary = "See what's due today and update your tasks, reminders and notices in one tap.";
+        // The nudge IS the day's briefing: the same counts "Hi" used to show
+        // (ALL open tasks + overdue, checklists, pending training), each section
+        // plan-gated. The user replies Hi for the details/actions.
+        let openTasks = 0, overdueTasks = 0;
+        if (feat.has("tasks")) {
+          const { data: open } = await supabase.from("tasks")
+            .select("due_date")
+            .eq("tenant_id", tenant.id)
+            .or(mine)
+            .not("status", "in", '("Completed","Closed")');
+          openTasks = open?.length || 0;
+          overdueTasks = (open || []).filter((t: any) => (t.due_date || "").slice(0, 10) < today).length;
+        }
+        const briefing = {
+          openTasks, overdueTasks,
+          checklists: checklistTotal,
+          training: pendingTraining.length,
+          feats: { tasks: feat.has("tasks"), checklists: feat.has("checklists"), training: feat.has("training") },
+        };
         await fetch(DISPATCHER_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SUPABASE_SERVICE}` },
-          body: JSON.stringify({ type: "NUDGE", userId: user.id, tenantId: tenant.id, summary }),
+          body: JSON.stringify({ type: "NUDGE", userId: user.id, tenantId: tenant.id, briefing }),
         }).catch(() => { /* non-fatal */ });
       }
     }

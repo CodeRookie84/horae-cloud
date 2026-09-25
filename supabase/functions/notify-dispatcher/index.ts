@@ -54,6 +54,16 @@ const SINGLE_FIRE_EVENTS = new Set(["task_assigned"]);
 // digest body — stays push + in-app ONLY (no waTemplate).
 const TASK_TEMPLATE_NAME   = "horae_task_alert";
 const DIGEST_TEMPLATE_NAME = "notice_alert";
+// Morning daily briefing (Utility, en_US, 4 vars), body:
+//   👋 Hi {{1}}! Here's your briefing for today:
+//
+//   📋 {{2}}
+//   ✅ {{3}}
+//   📚 {{4}}
+//
+//   Reply *Hi* to see more details.
+// Until Meta approves it, handleMorningNudge falls back to notice_alert.
+const BRIEFING_TEMPLATE_NAME = "horae_daily_briefing";
 
 // ─── Plan B: push-first, WhatsApp only as last-mile fallback ───────────────────
 // WhatsApp is paid; web push is free. So paid WhatsApp is sent ONLY for:
@@ -132,7 +142,7 @@ serve(async (req) => {
     } else if (type === "CHECKLIST_SUBMITTED") {
       await handleChecklistSubmitted(body.record, body.userIds, body.tenantId, body.runId, body.submitterName, body.compliancePct, body.status);
     } else if (type === "NUDGE") {
-      await handleMorningNudge(body.userId, body.tenantId, body.summary);
+      await handleMorningNudge(body.userId, body.tenantId, body.briefing);
     }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
@@ -377,18 +387,23 @@ async function getTrainingAudience(training: any): Promise<any[]> {
   );
 }
 
+type Briefing = {
+  openTasks: number; overdueTasks: number; checklists: number; training: number;
+  feats: { tasks: boolean; checklists: boolean; training: boolean };
+};
+
 /**
- * Morning "reply Hi" nudge — a single Utility WhatsApp on the generic
- * notice_alert template that prompts the staff member to reply Hi and get their
- * full briefing FREE inside the window they open by replying. (Its wording is
- * more generic than horae_task_alert, which we reserve for real task alerts.)
- * Sent by daily-digest's morning run ONLY to users who actually have pending
- * items (so it's genuinely transactional, not a blast). Respects opt-in + the
- * daily cap. This is the only scheduled paid ping.
+ * Morning daily briefing — the day's pending counts (tasks open/overdue,
+ * checklists, training), prompting "Reply Hi" for details. Sent by daily-digest's
+ * morning run ONLY to users with pending items. Respects opt-in + the daily cap.
+ *   • 24h window already open (user messaged us in the last ~23h) → free-form
+ *     text, which is FREE and shows only the relevant lines.
+ *   • Window closed → the horae_daily_briefing Utility template (paid); if that
+ *     template isn't approved yet, notice_alert with a one-line summary.
  */
-async function handleMorningNudge(userId: string, tenantId: string, summary: string) {
+async function handleMorningNudge(userId: string, tenantId: string, briefing: Briefing) {
   const user = await getUser(userId);
-  if (!user || !user.phone_number || !user.whatsapp_opted_in || DISABLE_WHATSAPP) return;
+  if (!user || !user.phone_number || !user.whatsapp_opted_in || DISABLE_WHATSAPP || !briefing) return;
 
   // Daily WhatsApp cap (real sends only) — never exceed it with the nudge.
   const today = new Date().toISOString().slice(0, 10);
@@ -398,16 +413,49 @@ async function handleMorningNudge(userId: string, tenantId: string, summary: str
     .neq("event_type", "debug").gte("sent_at", today + "T00:00:00Z");
   if ((count || 0) >= MAX_MESSAGES_PER_USER_DAY) return;
 
-  // notice_alert renders: "Your Horae update: {{1}} / {{2}} / Reply Hi for your
-  // full briefing". {{1}} = the staff member's first name (personal greeting),
-  // {{2}} = a generic action hook (built in daily-digest). The template's static
-  // last line prompts the reply-Hi that opens the free window.
   const firstName = String(user.name || "there").split(" ")[0];
+  const { openTasks, overdueTasks, checklists, training, feats } = briefing;
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const taskText = openTasks ? `${plural(openTasks, "task")} open${overdueTasks ? ` · ${overdueTasks} overdue` : ""}` : "No open tasks";
+  const checklistText = checklists ? `${plural(checklists, "checklist")} to complete` : "No checklists pending";
+  const trainingText = training ? `${training} training pending` : "No training pending";
+
+  // 23h (not 24h) margin so a send near the edge doesn't hit a closed window.
+  const since = new Date(Date.now() - 23 * 3600000).toISOString();
+  const { count: inbound } = await supabase.from("whatsapp_inbound_messages")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id).gte("received_at", since);
+
+  const ref = `nudge-${today}`;
   try {
-    const wamid = await sendWhatsApp(user.phone_number, "", { name: DIGEST_TEMPLATE_NAME, params: [firstName, summary] });
-    await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "sent", undefined, false, wamid);
+    let wamid: string | undefined;
+    if ((inbound || 0) > 0) {
+      const lines = [
+        feats.tasks && openTasks ? `📋 ${plural(openTasks, "task")} open${overdueTasks ? ` · *${overdueTasks} overdue*` : ""}` : "",
+        feats.checklists && checklists ? `✅ ${checklistText}` : "",
+        feats.training && training ? `📚 ${trainingText}` : "",
+      ].filter(Boolean);
+      const text = lines.length
+        ? `👋 Hi ${firstName}! Here's your briefing for today:\n\n${lines.join("\n")}\n\nReply *Hi* to see more details.`
+        : `👋 Hi ${firstName}! You're all caught up for today 🎉\n\nReply *Hi* to see more details.`;
+      wamid = await sendWhatsApp(user.phone_number, text);
+    } else {
+      try {
+        wamid = await sendWhatsApp(user.phone_number, "", {
+          name: BRIEFING_TEMPLATE_NAME, params: [firstName, taskText, checklistText, trainingText],
+        });
+      } catch (e) {
+        // 132001 = template not found / not approved in en_US yet.
+        if (!String(e).includes("132001")) throw e;
+        const summary = [
+          feats.tasks ? taskText : "", feats.checklists ? checklistText : "", feats.training ? trainingText : "",
+        ].filter(Boolean).join(" · ");
+        wamid = await sendWhatsApp(user.phone_number, "", { name: DIGEST_TEMPLATE_NAME, params: [firstName, summary] });
+      }
+    }
+    await logNotif(user.id, tenantId, "morning_nudge", ref, "whatsapp", "sent", undefined, false, wamid);
   } catch (e) {
-    await logNotif(user.id, tenantId, "morning_nudge", `nudge-${today}`, "whatsapp", "failed", String(e));
+    await logNotif(user.id, tenantId, "morning_nudge", ref, "whatsapp", "failed", String(e));
   }
 }
 

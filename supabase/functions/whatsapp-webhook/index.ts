@@ -107,6 +107,9 @@ async function handleStatus(s: any) {
   if (!wamid || !status) return;
 
   const ts = s.timestamp ? new Date(Number(s.timestamp) * 1000).toISOString() : new Date().toISOString();
+  try { await recordPricing(s, wamid, status, ts); }
+  catch (e) { console.error("[whatsapp-webhook] pricing record failed:", e); }
+
   const updates: Record<string, any> = {};
   if (status === "delivered") updates.delivered_at = ts;
   if (status === "read") updates.read_at = ts;
@@ -118,6 +121,47 @@ async function handleStatus(s: any) {
     .update(updates)
     .eq("wa_message_id", wamid);
   if (error) console.error("[whatsapp-webhook] status update failed:", error);
+}
+
+/** Store Meta's per-message `pricing` (billable / category / paid-vs-free type)
+ *  in whatsapp_message_pricing, keyed by WAMID, so the super-admin WhatsApp
+ *  Billing tab can show exactly which messages were charged and to whom. The
+ *  first callback carrying pricing inserts the row (resolving the recipient's
+ *  user/outlet/client once); later callbacks only bump the status. */
+async function recordPricing(s: any, wamid: string, status: string, ts: string) {
+  const p = s?.pricing;
+  const { data: existing } = await supabase.from("whatsapp_message_pricing")
+    .select("wa_message_id, billable").eq("wa_message_id", wamid).limit(1);
+  const row = existing?.[0];
+
+  if (row) {
+    const upd: Record<string, any> = { status };
+    if (p && row.billable == null) {
+      upd.billable = !!p.billable; upd.category = p.category ?? null;
+      upd.pricing_type = p.type ?? null; upd.pricing_model = p.pricing_model ?? null;
+    }
+    await supabase.from("whatsapp_message_pricing").update(upd).eq("wa_message_id", wamid);
+    return;
+  }
+  if (!p) return; // no pricing yet (e.g. a bare 'failed') — nothing to bill
+
+  const recipient = String(s.recipient_id || "");
+  const last10 = recipient.replace(/\D/g, "").slice(-10);
+  let userId: string | null = null, tenantId: string | null = null, clientId: string | null = null;
+  if (last10.length === 10) {
+    const { data: u } = await supabase.from("users").select("id, tenant_id").eq("phone_last10", last10).limit(1);
+    userId = u?.[0]?.id ?? null;
+    tenantId = u?.[0]?.tenant_id ?? null;
+    if (tenantId) {
+      const { data: t } = await supabase.from("tenants").select("client_id").eq("id", tenantId).limit(1);
+      clientId = t?.[0]?.client_id ?? null;
+    }
+  }
+  await supabase.from("whatsapp_message_pricing").upsert({
+    wa_message_id: wamid, recipient, user_id: userId, tenant_id: tenantId, client_id: clientId,
+    billable: !!p.billable, category: p.category ?? null, pricing_type: p.type ?? null,
+    pricing_model: p.pricing_model ?? null, status, sent_at: ts,
+  }, { onConflict: "wa_message_id", ignoreDuplicates: true });
 }
 
 /** An inbound message from a staff member's phone to the Horae WhatsApp number. */
@@ -580,14 +624,12 @@ async function denyTasks(fromPhone: string) {
   );
 }
 
-/** Show the tappable action menu. The list BODY is a live personalised briefing
- *  (open tasks + overdue, new notices, pending training) so "Hi" doubles as the
- *  daily digest — all free, since it's inside the user-opened 24h window. Rows are
- *  gated by the client's plan, so a task-less plan (e.g. Assistant) shows only
- *  Notes / Meetings / Translate / Help. */
+/** Show the tappable action menu (free — it's inside the user-opened 24h window).
+ *  Rows are gated by the client's plan, so a task-less plan (e.g. Assistant)
+ *  shows only Notes / Meetings / Translate / Help. */
 async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: string | null) {
   const feats = await clientFeatureSet(tenantId ?? null);
-  const body = userId ? await buildBriefingBody(userId, tenantId ?? null)
+  const body = userId ? await buildMenuBody(userId, tenantId ?? null)
                       : "👋 *Horae* — what would you like to do?";
   const rows: ListRow[] = [];
   if (feats.has("tasks")) {
@@ -605,94 +647,23 @@ async function sendMainMenu(fromPhone: string, userId?: string, tenantId?: strin
   await sendList(fromPhone, body, "Choose", rows);
 }
 
-/** Build the personalised briefing shown as the menu's body text. Best-effort:
- *  each section is independently guarded so a query hiccup can't blank the menu. */
-async function buildBriefingBody(userId: string, tenantId: string | null): Promise<string> {
-  const today = new Date().toISOString().slice(0, 10);
-  const { data: u } = await supabase.from("users").select("name, department, role").eq("id", userId).limit(1);
-  const firstName = (String(u?.[0]?.name || "there")).split(" ")[0];
-  // The four sections are independent, so run them in PARALLEL — the briefing
-  // then costs ONE round-trip instead of four in series. Each is self-guarded so
-  // a single query hiccup can't blank the menu; each resolves to its display line
-  // ("" = nothing to show). Notices are handled separately (shown FIRST, bolded).
-  const [taskLine, checklistLine, noticeLine, trainingLine] = await Promise.all([
-    (async () => {
-      try {
-        const { data: tasks } = await supabase.from("tasks")
-          .select("due_date")
-          .or(`assigned_user_ids.cs.{${userId}},cc_user_ids.cs.{${userId}}`)
-          .not("status", "in", '("Completed","Closed")');
-        const open = tasks?.length || 0;
-        const overdue = (tasks || []).filter((t: any) => (t.due_date || "").slice(0, 10) < today).length;
-        return open ? `📋 ${open} task${open === 1 ? "" : "s"} open${overdue ? ` · *${overdue} overdue*` : ""}` : "";
-      } catch (_) { return ""; }
-    })(),
-    (async () => {
-      try {
-        if (!tenantId) return "";
-        // Real compliance checklists only — SOP/quiz rows share the table as JSON
-        // in `description` and are filtered out (mirrors daily-digest).
-        const { data: rows } = await supabase.from("checklists").select("description").eq("tenant_id", tenantId);
-        const count = (rows || []).filter((c: any) => {
-          try {
-            if (typeof c.description === "string" && c.description.startsWith("{")) {
-              const o = JSON.parse(c.description);
-              if (o.type === "sop" || o.type === "quiz") return false;
-            }
-          } catch (_) { /* plain-text description = real checklist */ }
-          return true;
-        }).length;
-        return count ? `✅ ${count} checklist${count === 1 ? "" : "s"} to complete` : "";
-      } catch (_) { return ""; }
-    })(),
-    (async () => {
-      try {
-        const since = new Date(Date.now() - 86400000).toISOString();
-        let q = supabase.from("notices").select("id", { count: "exact", head: true }).gte("created_at", since);
-        if (tenantId) q = q.eq("tenant_id", tenantId);
-        const { count } = await q;
-        return count ? `📢 *${count} NEW NOTICE${count === 1 ? "" : "S"} — PLEASE READ*\n➖➖➖➖➖➖➖➖➖` : "";
-      } catch (_) { return ""; }
-    })(),
-    (async () => {
-      try {
-        const pending = await pendingTrainingCount(userId, tenantId, u?.[0]);
-        return pending ? `📚 ${pending} training pending` : "";
-      } catch (_) { return ""; }
-    })(),
+/** Body text for the "Hi" menu. The pending-counts briefing moved to the 8 AM
+ *  daily digest, so this is just a greeting — with the unread-notices banner on
+ *  top when there are notices from the last 24h. Best-effort: a query hiccup
+ *  just drops the banner. */
+async function buildMenuBody(userId: string, tenantId: string | null): Promise<string> {
+  const since = new Date(Date.now() - 86400000).toISOString();
+  let q = supabase.from("notices").select("id", { count: "exact", head: true }).gte("created_at", since);
+  if (tenantId) q = q.eq("tenant_id", tenantId);
+  const [{ data: u }, noticeCount] = await Promise.all([
+    supabase.from("users").select("name").eq("id", userId).limit(1),
+    q.then(({ count }) => count || 0, () => 0),
   ]);
-
-  const lines: string[] = [taskLine, checklistLine, trainingLine].filter(Boolean);
-
-  // Keyword hints live in the "❓ Help" menu row / the "help" keyword now — the
-  // briefing stays clean (just the briefing + the options list).
-  if (lines.length === 0 && !noticeLine) return `👋 Hi ${firstName}! You're all caught up 🎉\n\nWhat would you like to do?`;
-  const head = noticeLine ? `${noticeLine}\n` : "";
-  return `👋 Hi ${firstName}! Here's your briefing:\n\n${head}${lines.join("\n")}\n\nWhat would you like to do?`;
-}
-
-/** Count published trainings targeted to this user that they haven't passed. */
-async function pendingTrainingCount(userId: string, tenantId: string | null, user: any): Promise<number> {
-  if (!tenantId) return 0;
-  const { data: t } = await supabase.from("tenants").select("client_id").eq("id", tenantId).single();
-  const clientId = t?.client_id;
-  if (!clientId) return 0;
-  const { data: trainings } = await supabase.from("trainings")
-    .select("id, outlets, department, role, questions")
-    .eq("client_id", clientId).eq("published", true);
-  if (!trainings?.length) return 0;
-  const { data: atts } = await supabase.from("training_attempts").select("training_id, passed").eq("user_id", userId);
-  const passed = new Set((atts || []).filter((a: any) => a.passed).map((a: any) => a.training_id));
-  const dept = String(user?.department ?? "");
-  const role = String(user?.role ?? "");
-  return (trainings || []).filter((tr: any) => {
-    if (!(tr.questions?.length)) return false;
-    if (passed.has(tr.id)) return false;
-    const outletOk = !Array.isArray(tr.outlets) || tr.outlets.length === 0 || tr.outlets.includes(tenantId);
-    const deptOk = String(tr.department || "All Departments") === "All Departments" || String(tr.department) === dept;
-    const roleOk = String(tr.role || "All Roles") === "All Roles" || String(tr.role) === role;
-    return outletOk && deptOk && roleOk;
-  }).length;
+  const firstName = (String(u?.[0]?.name || "there")).split(" ")[0];
+  const head = noticeCount
+    ? `📢 *${noticeCount} NEW NOTICE${noticeCount === 1 ? "" : "S"} — PLEASE READ*\n➖➖➖➖➖➖➖➖➖\n\n`
+    : "";
+  return `${head}👋 Hi ${firstName}! What would you like to do?`;
 }
 
 /** Dispatch a main-menu list selection. */
