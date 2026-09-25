@@ -132,7 +132,7 @@ serve(async (req) => {
     } else if (type === "CHECKLIST_SUBMITTED") {
       await handleChecklistSubmitted(body.record, body.userIds, body.tenantId, body.runId, body.submitterName, body.compliancePct, body.status);
     } else if (type === "NUDGE") {
-      await handleMorningNudge(body.userId, body.tenantId, body.briefing, !!body.forceTemplate);
+      await handleMorningNudge(body.userId, body.tenantId, body.briefing);
     }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
@@ -391,7 +391,7 @@ type Briefing = {
  *   • Window closed → the existing notice_alert Utility template (paid), items
  *     on one line (a dedicated multi-line template risked Marketing categorisation).
  */
-async function handleMorningNudge(userId: string, tenantId: string, briefing: Briefing, forceTemplate = false) {
+async function handleMorningNudge(userId: string, tenantId: string, briefing: Briefing) {
   const user = await getUser(userId);
   if (!user || !user.phone_number || !user.whatsapp_opted_in || DISABLE_WHATSAPP || !briefing) return;
 
@@ -423,8 +423,7 @@ async function handleMorningNudge(userId: string, tenantId: string, briefing: Br
   const ref = `nudge-${today}`;
   try {
     let wamid: string | undefined;
-    // forceTemplate: manual test hook to preview the paid template version.
-    if ((inbound || 0) > 0 && !forceTemplate) {
+    if ((inbound || 0) > 0) {
       // Window open → free-form text, one item per line (free).
       const text = items.length
         ? `👋 Hi ${firstName}! Here's your briefing for today:\n\n${items.join("\n")}\n\nReply *Hi* to see more details.`
