@@ -54,16 +54,6 @@ const SINGLE_FIRE_EVENTS = new Set(["task_assigned"]);
 // digest body — stays push + in-app ONLY (no waTemplate).
 const TASK_TEMPLATE_NAME   = "horae_task_alert";
 const DIGEST_TEMPLATE_NAME = "notice_alert";
-// Morning daily briefing (Utility, en_US, 4 vars), body:
-//   👋 Hi {{1}}! Here's your briefing for today:
-//
-//   📋 {{2}}
-//   ✅ {{3}}
-//   📚 {{4}}
-//
-//   Reply *Hi* to see more details.
-// Until Meta approves it, handleMorningNudge falls back to notice_alert.
-const BRIEFING_TEMPLATE_NAME = "horae_daily_briefing";
 
 // ─── Plan B: push-first, WhatsApp only as last-mile fallback ───────────────────
 // WhatsApp is paid; web push is free. So paid WhatsApp is sent ONLY for:
@@ -398,8 +388,8 @@ type Briefing = {
  * morning run ONLY to users with pending items. Respects opt-in + the daily cap.
  *   • 24h window already open (user messaged us in the last ~23h) → free-form
  *     text, which is FREE and shows only the relevant lines.
- *   • Window closed → the horae_daily_briefing Utility template (paid); if that
- *     template isn't approved yet, notice_alert with a one-line summary.
+ *   • Window closed → the existing notice_alert Utility template (paid), items
+ *     on one line (a dedicated multi-line template risked Marketing categorisation).
  */
 async function handleMorningNudge(userId: string, tenantId: string, briefing: Briefing) {
   const user = await getUser(userId);
@@ -416,9 +406,13 @@ async function handleMorningNudge(userId: string, tenantId: string, briefing: Br
   const firstName = String(user.name || "there").split(" ")[0];
   const { openTasks, overdueTasks, checklists, training, feats } = briefing;
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
-  const taskText = openTasks ? `${plural(openTasks, "task")} open${overdueTasks ? ` · ${overdueTasks} overdue` : ""}` : "No open tasks";
-  const checklistText = checklists ? `${plural(checklists, "checklist")} to complete` : "No checklists pending";
-  const trainingText = training ? `${training} training pending` : "No training pending";
+  // Only categories with something pending (and on the client's plan) appear —
+  // an empty category is left out entirely, never shown blank or as "0".
+  const items = [
+    feats.tasks && openTasks ? `📋 ${plural(openTasks, "task")} open${overdueTasks ? ` · *${overdueTasks} overdue*` : ""}` : "",
+    feats.checklists && checklists ? `✅ ${plural(checklists, "checklist")} to complete` : "",
+    feats.training && training ? `📚 ${training} training pending` : "",
+  ].filter(Boolean);
 
   // 23h (not 24h) margin so a send near the edge doesn't hit a closed window.
   const since = new Date(Date.now() - 23 * 3600000).toISOString();
@@ -430,28 +424,19 @@ async function handleMorningNudge(userId: string, tenantId: string, briefing: Br
   try {
     let wamid: string | undefined;
     if ((inbound || 0) > 0) {
-      const lines = [
-        feats.tasks && openTasks ? `📋 ${plural(openTasks, "task")} open${overdueTasks ? ` · *${overdueTasks} overdue*` : ""}` : "",
-        feats.checklists && checklists ? `✅ ${checklistText}` : "",
-        feats.training && training ? `📚 ${trainingText}` : "",
-      ].filter(Boolean);
-      const text = lines.length
-        ? `👋 Hi ${firstName}! Here's your briefing for today:\n\n${lines.join("\n")}\n\nReply *Hi* to see more details.`
-        : `👋 Hi ${firstName}! You're all caught up for today 🎉\n\nReply *Hi* to see more details.`;
+      // Window open → free-form text, one item per line (free).
+      const text = items.length
+        ? `👋 Hi ${firstName}! Here's your briefing for today:\n\n${items.join("\n")}\n\nReply *Hi* to see more details.`
+        : `👋 Hi ${firstName}! You have new updates today.\n\nReply *Hi* to see more details.`;
       wamid = await sendWhatsApp(user.phone_number, text);
     } else {
-      try {
-        wamid = await sendWhatsApp(user.phone_number, "", {
-          name: BRIEFING_TEMPLATE_NAME, params: [firstName, taskText, checklistText, trainingText],
-        });
-      } catch (e) {
-        // 132001 = template not found / not approved in en_US yet.
-        if (!String(e).includes("132001")) throw e;
-        const summary = [
-          feats.tasks ? taskText : "", feats.checklists ? checklistText : "", feats.training ? trainingText : "",
-        ].filter(Boolean).join(" · ");
-        wamid = await sendWhatsApp(user.phone_number, "", { name: DIGEST_TEMPLATE_NAME, params: [firstName, summary] });
-      }
+      // Window closed → notice_alert (paid Utility): "Your Horae update: {{1}} /
+      // {{2}} / Reply Hi for your full briefing". Template variables can't hold
+      // newlines, so the items share one line, separated by " | ".
+      const summary = items.length ? items.join(" | ") : "📢 You have new updates today";
+      wamid = await sendWhatsApp(user.phone_number, "", {
+        name: DIGEST_TEMPLATE_NAME, params: [`${firstName}, here's your briefing for today`, summary],
+      });
     }
     await logNotif(user.id, tenantId, "morning_nudge", ref, "whatsapp", "sent", undefined, false, wamid);
   } catch (e) {
