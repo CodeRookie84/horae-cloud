@@ -123,11 +123,11 @@ async function handleStatus(s: any) {
   if (error) console.error("[whatsapp-webhook] status update failed:", error);
 }
 
-/** Store Meta's per-message `pricing` (billable / category / paid-vs-free type)
- *  in whatsapp_message_pricing, keyed by WAMID, so the super-admin WhatsApp
- *  Billing tab can show exactly which messages were charged and to whom. The
- *  first callback carrying pricing inserts the row (resolving the recipient's
- *  user/outlet/client once); later callbacks only bump the status. */
+/** Store PAID messages (per Meta's `pricing` on status callbacks) in
+ *  whatsapp_message_pricing, keyed by WAMID, so the super-admin WhatsApp Billing
+ *  tab shows exactly which messages were charged and to whom. The first paid
+ *  callback inserts the row (resolving the recipient's user/outlet/client once);
+ *  later callbacks only bump the status. */
 async function recordPricing(s: any, wamid: string, status: string, ts: string) {
   const p = s?.pricing;
   const { data: existing } = await supabase.from("whatsapp_message_pricing")
@@ -143,7 +143,10 @@ async function recordPricing(s: any, wamid: string, status: string, ts: string) 
     await supabase.from("whatsapp_message_pricing").update(upd).eq("wa_message_id", wamid);
     return;
   }
-  if (!p) return; // no pricing yet (e.g. a bare 'failed') — nothing to bill
+  // Only PAID messages are recorded — free ones (inside the 24h window, entry
+  // points, service replies) are noise for pricing analysis.
+  const paid = !!p?.billable && p?.type !== "free_customer_service" && p?.type !== "free_entry_point";
+  if (!paid) return;
 
   const recipient = String(s.recipient_id || "");
   const last10 = recipient.replace(/\D/g, "").slice(-10);

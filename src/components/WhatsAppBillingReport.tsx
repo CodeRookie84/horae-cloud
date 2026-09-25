@@ -1,8 +1,8 @@
 /**
  * Super-admin "WhatsApp Billing" tab — which WhatsApp messages Meta charged for,
  * to whom, and for which client. Fed by whatsapp_message_pricing, which
- * whatsapp-webhook fills from the `pricing` object on Meta's status callbacks
- * (billable + category + paid/free type). Rupee amounts are an ESTIMATE from
+ * whatsapp-webhook fills with PAID messages only (from the `pricing` object on
+ * Meta's status callbacks). Rupee amounts are an ESTIMATE from
  * Meta's India per-message rates; Meta's own billing page is the source of truth.
  */
 import React, { useEffect, useMemo, useState } from "react";
@@ -38,7 +38,6 @@ const UNMATCHED = "__unmatched";
 export default function WhatsAppBillingReport({ clients, tenants, users }: { clients: Client[]; tenants: Tenant[]; users: User[] }) {
   const [clientFilter, setClientFilter] = useState<string>("all");
   const [days, setDays] = useState<number>(7);
-  const [paidOnly, setPaidOnly] = useState(true);
   const [rows, setRows] = useState<PricingRow[]>([]);
   const [events, setEvents] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -80,8 +79,9 @@ export default function WhatsAppBillingReport({ clients, tenants, users }: { cli
   const tenantById = useMemo(() => new Map(tenants.map(t => [t.id, t])), [tenants]);
   const clientById = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
 
+  // The table only ever holds paid messages; the filter is a belt-and-braces guard.
   const isPaid = (r: PricingRow) => r.billable === true && r.pricing_type !== "free_customer_service" && r.pricing_type !== "free_entry_point";
-  const cost = (r: PricingRow) => (isPaid(r) ? RATE_INR[r.category || ""] ?? 0 : 0);
+  const cost = (r: PricingRow) => RATE_INR[r.category || ""] ?? 0;
 
   const paid = rows.filter(isPaid);
   const totalCost = paid.reduce((s, r) => s + cost(r), 0);
@@ -91,18 +91,18 @@ export default function WhatsAppBillingReport({ clients, tenants, users }: { cli
     return acc;
   }, {});
   const byClient = useMemo(() => {
-    const m = new Map<string, { paid: number; free: number; cost: number }>();
-    for (const r of rows) {
+    const m = new Map<string, { paid: number; cost: number }>();
+    for (const r of paid) {
       const k = r.client_id || UNMATCHED;
-      const e = m.get(k) || { paid: 0, free: 0, cost: 0 };
-      if (isPaid(r)) { e.paid++; e.cost += cost(r); } else e.free++;
+      const e = m.get(k) || { paid: 0, cost: 0 };
+      e.paid++; e.cost += cost(r);
       m.set(k, e);
     }
     return [...m.entries()].sort((a, b) => b[1].cost - a[1].cost);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
 
-  const shown = paidOnly ? paid : rows;
+  const shown = paid;
   const clientName = (id: string | null) => (id ? clientById.get(id)?.name || id : "Unmatched number");
   const fmtInr = (n: number) => `₹${n.toFixed(2)}`;
 
@@ -116,7 +116,7 @@ export default function WhatsAppBillingReport({ clients, tenants, users }: { cli
               WhatsApp Billing
             </h3>
             <p className="text-[11px] text-slate-400 font-medium">
-              Paid vs free WhatsApp messages as reported by Meta. ₹ amounts are estimates at India rates.
+              Paid WhatsApp messages only, as reported by Meta. ₹ amounts are estimates at India rates.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -148,9 +148,8 @@ export default function WhatsAppBillingReport({ clients, tenants, users }: { cli
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <Stat label="Paid messages" value={String(paid.length)} />
-          <Stat label="Free messages" value={String(rows.length - paid.length)} />
           <Stat label="Approx. charges" value={fmtInr(totalCost)} />
           <Stat
             label="Paid by category"
@@ -168,7 +167,7 @@ export default function WhatsAppBillingReport({ clients, tenants, users }: { cli
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-[10px] uppercase tracking-wider text-slate-400">
-                  <th className="py-2 pr-3">Client</th><th className="py-2 pr-3">Paid</th><th className="py-2 pr-3">Free</th><th className="py-2">Approx. ₹</th>
+                  <th className="py-2 pr-3">Client</th><th className="py-2 pr-3">Paid messages</th><th className="py-2">Approx. ₹</th>
                 </tr>
               </thead>
               <tbody>
@@ -176,7 +175,6 @@ export default function WhatsAppBillingReport({ clients, tenants, users }: { cli
                   <tr key={id} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => setClientFilter(id)}>
                     <td className="py-2 pr-3 font-semibold text-slate-700">{clientName(id === UNMATCHED ? null : id)}</td>
                     <td className="py-2 pr-3">{v.paid}</td>
-                    <td className="py-2 pr-3 text-slate-400">{v.free}</td>
                     <td className="py-2 font-semibold">{fmtInr(v.cost)}</td>
                   </tr>
                 ))}
@@ -188,15 +186,11 @@ export default function WhatsAppBillingReport({ clients, tenants, users }: { cli
 
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
         <div className="flex items-center justify-between mb-3">
-          <h4 className="text-xs font-bold text-slate-700">Messages ({shown.length})</h4>
-          <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-600 cursor-pointer select-none">
-            <input type="checkbox" checked={paidOnly} onChange={e => setPaidOnly(e.target.checked)} className="w-3.5 h-3.5" />
-            Paid only
-          </label>
+          <h4 className="text-xs font-bold text-slate-700">Paid messages ({shown.length})</h4>
         </div>
         {shown.length === 0 ? (
           <p className="text-xs text-slate-400 font-medium py-6 text-center">
-            {loading ? "Loading…" : "No messages in this period. (Tracking starts from the day this feature was deployed.)"}
+            {loading ? "Loading…" : "No paid messages in this period. (Tracking started 26 Sep 2026.)"}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -208,7 +202,7 @@ export default function WhatsAppBillingReport({ clients, tenants, users }: { cli
                   <th className="py-2 pr-3">Client / Outlet</th>
                   <th className="py-2 pr-3">Message</th>
                   <th className="py-2 pr-3">Category</th>
-                  <th className="py-2 pr-3">Billing</th>
+                  <th className="py-2 pr-3">Approx. ₹</th>
                   <th className="py-2">Status</th>
                 </tr>
               </thead>
@@ -232,9 +226,7 @@ export default function WhatsAppBillingReport({ clients, tenants, users }: { cli
                       <td className="py-2 pr-3 text-slate-600">{ev ? (EVENT_LABELS[ev] || ev) : "Chat reply / other"}</td>
                       <td className="py-2 pr-3 capitalize">{r.category || "—"}</td>
                       <td className="py-2 pr-3">
-                        {isPaid(r)
-                          ? <span className="text-rose-700 bg-rose-50 border border-rose-100 px-2 py-0.5 rounded-full font-semibold">Paid · {fmtInr(cost(r))}</span>
-                          : <span className="text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full font-semibold">Free</span>}
+                        <span className="font-semibold text-slate-700">{fmtInr(cost(r))}</span>
                       </td>
                       <td className="py-2 capitalize text-slate-500">{r.status || "—"}</td>
                     </tr>
