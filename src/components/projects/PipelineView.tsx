@@ -23,6 +23,7 @@ import {
 import type { User } from "../../types";
 import * as P from "../../services/projectsService";
 import { StepRun } from "./StepRun";
+import StepGauge from "./StepGauge";
 
 type Filter = "open" | "due" | "won" | "lost" | "all";
 
@@ -80,6 +81,8 @@ export function PipelineView({ project, items, users, showOwners, canAdd, onOpen
 
   const scoped = ownerFilter ? items.filter(d => d.ownerUserId === ownerFilter) : items;
   const stats = P.pipelineStats(scoped);
+  const progress = P.pipelineProgress(scoped, project);
+  const owner = ownerFilter ? users.find(u => u.id === ownerFilter) : undefined;
   const needle = q.trim().toLowerCase();
   const shown = scoped.filter(d => {
     if (filter === "open" && d.status !== "open") return false;
@@ -101,6 +104,16 @@ export function PipelineView({ project, items, users, showOwners, canAdd, onOpen
 
   return (
     <div className="space-y-4">
+      {scoped.length > 0 && (
+        <section className="rounded-3xl border border-slate-200 bg-white p-5">
+          <div className="flex justify-center">
+            <StepGauge value={progress} steps={project.milestones.length}
+              caption={`Average progress of ${owner ? `${owner.name}'s` : showOwners ? "all" : "your"} ${stats.open + stats.won} active ${plural(label).toLowerCase()}`} />
+          </div>
+          <StageStrip project={project} items={scoped} />
+        </section>
+      )}
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label={`Open ${plural(label).toLowerCase()}`} value={String(stats.open)} sub={stats.openValue ? P.formatINR(stats.openValue) : undefined} />
         <Stat label="Follow-ups due" value={String(stats.followUpsDue)} color={stats.followUpsDue ? "#d97706" : undefined} />
@@ -206,6 +219,25 @@ function ListView({ project, items, showOwners, userOf, onOpen }: {
   );
 }
 
+/** How many open items sit on each step, under the gauge. */
+function StageStrip({ project, items }: { project: P.Project; items: P.Deliverable[] }) {
+  const n = project.milestones.length;
+  return (
+    <div className="mt-3 flex gap-1 overflow-x-auto">
+      {project.milestones.map((m, i) => {
+        const count = items.filter(d => d.status === "open" && d.milestoneId === m.id).length;
+        const pct = Math.round(((i + 0.5) / n) * 100);
+        return (
+          <div key={m.id} className="min-w-[64px] flex-1 rounded-xl bg-slate-50 px-1.5 py-1.5 text-center">
+            <div className="text-base font-bold tabular-nums" style={{ color: count ? P.progressColor(pct) : "#cbd5e1" }}>{count}</div>
+            <div className="truncate text-[10px] text-slate-500" title={m.name}>{m.name}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Awaiting approval → follow-up overdue → due today → step overdue → newest. */
 function byUrgency(a: P.Deliverable, b: P.Deliverable) {
   const rank = (d: P.Deliverable) => {
@@ -251,8 +283,11 @@ function ItemCard({ project, d, owner, onOpen, wide }: {
         {d.status === "lost" && !wide && <span className="inline-flex items-center gap-0.5 rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600"><XCircle className="h-3 w-3" /> {d.lostReason || "Lost"}</span>}
       </div>
       {d.status === "open" && (
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
-          <div className="h-full rounded-full" style={{ width: `${Math.max(pct, 3)}%`, background: P.progressColor(pct) }} />
+        <div className="mt-2 flex items-center gap-2">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+            <div className="h-full rounded-full" style={{ width: `${Math.max(pct, 3)}%`, background: P.progressColor(pct) }} />
+          </div>
+          <span className="w-8 text-right text-[10px] font-bold tabular-nums" style={{ color: P.progressColor(pct) }}>{pct}%</span>
         </div>
       )}
     </button>
@@ -273,8 +308,10 @@ function Stat({ label, value, sub, color }: { label: string; value: string; sub?
 export function PipelineTeam({ project, items, users, selected, onSelect }: {
   project: P.Project; items: P.Deliverable[]; users: User[]; selected?: string; onSelect: (id: string) => void;
 }) {
-  const rows = project.memberIds.map(id => ({ u: users.find(x => x.id === id), s: P.pipelineStats(items.filter(d => d.ownerUserId === id)) }))
-    .filter(r => r.u) as { u: User; s: ReturnType<typeof P.pipelineStats> }[];
+  const rows = project.memberIds.map(id => {
+    const mine = items.filter(d => d.ownerUserId === id);
+    return { u: users.find(x => x.id === id), s: P.pipelineStats(mine), pct: P.pipelineProgress(mine, project) };
+  }).filter(r => r.u) as { u: User; s: ReturnType<typeof P.pipelineStats>; pct: number }[];
   rows.sort((a, b) => b.s.won - a.s.won || b.s.open - a.s.open);
   if (!rows.length) return null;
   return (
@@ -284,6 +321,7 @@ export function PipelineTeam({ project, items, users, selected, onSelect }: {
           <thead>
             <tr className="border-b border-slate-100 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400">
               <th className="px-4 py-2.5">Member</th>
+              <th className="px-2 py-2.5">Progress</th>
               <th className="px-2 py-2.5 text-right">Open</th>
               <th className="px-2 py-2.5 text-right">Due</th>
               <th className="px-2 py-2.5 text-right">Won</th>
@@ -293,7 +331,7 @@ export function PipelineTeam({ project, items, users, selected, onSelect }: {
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ u, s }) => (
+            {rows.map(({ u, s, pct }) => (
               <tr key={u.id} onClick={() => onSelect(selected === u.id ? "" : u.id)}
                 className={`cursor-pointer border-b border-slate-50 last:border-0 hover:bg-slate-50 ${selected === u.id ? "bg-indigo-50/60" : ""}`}>
                 <td className="px-4 py-2.5">
@@ -301,6 +339,14 @@ export function PipelineTeam({ project, items, users, selected, onSelect }: {
                     <img src={u.avatar} alt="" className="h-7 w-7 rounded-full object-cover" />
                     <span className="truncate font-semibold text-slate-800">{u.name}</span>
                     {s.pending > 0 && <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">{s.pending} to approve</span>}
+                  </div>
+                </td>
+                <td className="px-2 py-2.5">
+                  <div className="flex min-w-[90px] items-center gap-1.5">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: P.progressColor(pct) }} />
+                    </div>
+                    <span className="w-8 text-right text-[11px] font-bold tabular-nums" style={{ color: P.progressColor(pct) }}>{pct}%</span>
                   </div>
                 </td>
                 <td className="px-2 py-2.5 text-right tabular-nums">{s.open}</td>

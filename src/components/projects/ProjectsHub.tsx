@@ -125,7 +125,8 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
               const mine = P.runFor(runs, p.id, activeUser.id);
               const team = teamStats(p, runs);
               const myIdx = P.currentStepIndex(mine, p);
-              const pipe = p.kind === "pipeline" ? P.pipelineStats(P.itemsOf(runs, p.id, manages ? undefined : activeUser.id)) : null;
+              const pipeItems = p.kind === "pipeline" ? P.itemsOf(runs, p.id, manages ? undefined : activeUser.id) : [];
+              const pipe = p.kind === "pipeline" ? P.pipelineStats(pipeItems) : null;
               return (
                 <button key={p.id} onClick={() => { setProjectId(p.id); setTab(isMember ? "mine" : "team"); setOwnerFilter(""); }}
                   className="group overflow-hidden rounded-3xl border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg cursor-pointer">
@@ -133,13 +134,20 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
                   <div className="p-5">
                     <div className="truncate text-base font-bold text-slate-900">{p.name}</div>
                     <div className="mt-0.5 line-clamp-2 text-xs text-slate-500">{p.description || `${p.milestones.length} steps`}</div>
-                    {pipe ? (
-                      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                    {pipe ? (<>
+                      <div className="mt-3 flex items-center gap-3">
+                        <StepGauge value={P.pipelineProgress(pipeItems, p)} steps={p.milestones.length} size={110} compact />
+                        <div className="min-w-0 text-xs">
+                          <div className="font-semibold text-slate-800">{manages ? "Team pipeline" : `Your ${plural(p.itemLabel).toLowerCase()}`}</div>
+                          <div className="text-slate-500">Average progress · {pipe.conversion}% conversion</div>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                         <MiniStat value={pipe.open} label={`Open ${plural(p.itemLabel).toLowerCase()}`} />
                         <MiniStat value={pipe.followUpsDue} label="Follow-ups due" color={pipe.followUpsDue ? "#d97706" : undefined} />
                         <MiniStat value={pipe.won} label={pipe.wonValue ? P.formatINR(pipe.wonValue) + " won" : "Won"} color={pipe.won ? "#059669" : undefined} />
                       </div>
-                    ) : isMember ? (
+                    </>) : isMember ? (
                       <div className="mt-3 flex items-center gap-3">
                         <StepGauge value={P.stepProgress(mine, p)} steps={p.milestones.length} size={110} compact />
                         <div className="min-w-0 text-xs">

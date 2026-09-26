@@ -506,6 +506,17 @@ export function followUpState(d: Deliverable): "none" | "overdue" | "today" | "l
   return f < start ? "overdue" : f < end ? "today" : "later";
 }
 
+/**
+ * 0–100 pipeline progress: the average step progress of the items still in
+ * play — won counts 100, open counts how far along its steps it is, lost is
+ * left out (it no longer moves).
+ */
+export function pipelineProgress(items: Deliverable[], project: Project): number {
+  const live = items.filter(d => d.status !== "lost");
+  if (!live.length) return 0;
+  return Math.round(live.reduce((a, d) => a + stepProgress(d, project), 0) / live.length);
+}
+
 /** Pipeline numbers for a set of items. Conversion = won / (won + lost). */
 export function pipelineStats(items: Deliverable[]) {
   const won = items.filter(d => d.status === "won");
