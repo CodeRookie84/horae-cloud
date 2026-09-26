@@ -40,7 +40,9 @@ export function StepRun({ project, run: d, owner, actor, canManage, onChanged }:
   const ms = project.milestones;
   const curIdx = P.currentStepIndex(d, project);
   const complete = d.status === "won";
-  const canEdit = canManage || d.ownerUserId === actor.id;
+  const lost = d.status === "lost";
+  // A lost pipeline item is read-only until someone reopens it.
+  const canEdit = !lost && (canManage || d.ownerUserId === actor.id);
   const pct = P.stepProgress(d, project);
   const overdue = P.isOverdue(d, project);
 
@@ -71,14 +73,14 @@ export function StepRun({ project, run: d, owner, actor, canManage, onChanged }:
       <section className="rounded-3xl border border-slate-200 bg-white p-5">
         <div className="flex justify-center">
           <StepGauge value={pct} steps={ms.length}
-            caption={complete ? "All steps completed" : `Step ${curIdx + 1} of ${ms.length} · ${ms[curIdx]?.name || ""}`} />
+            caption={complete ? "All steps completed" : `${lost ? "Lost at " : ""}Step ${curIdx + 1} of ${ms.length} · ${ms[curIdx]?.name || ""}`} />
         </div>
         <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs">
           {complete && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700"><Trophy className="h-3.5 w-3.5" /> Completed {shortDate(d.closedAt)}</span>}
           {overdue && <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {P.daysInMilestone(d)} days on this step (limit {ms[curIdx]?.slaDays}d)</span>}
-          {!complete && !overdue && ms[curIdx] && <span className="text-slate-400">{P.daysInMilestone(d)}d on this step · limit {ms[curIdx].slaDays}d</span>}
+          {!complete && !lost && !overdue && ms[curIdx] && <span className="text-slate-400">{P.daysInMilestone(d)}d on this step · limit {ms[curIdx].slaDays}d</span>}
         </div>
-        {canManage && (complete || curIdx > 0) && (
+        {canManage && !lost && (complete || curIdx > 0) && (
           <div className="mt-3 flex justify-center">
             <button disabled={!!busy} onClick={() => run("back", () => P.moveBack(d, project, actor))}
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
@@ -93,7 +95,7 @@ export function StepRun({ project, run: d, owner, actor, canManage, onChanged }:
       <ol className="space-y-3">
         {ms.map((m, i) => {
           const done = i < curIdx;
-          const current = i === curIdx && !complete;
+          const current = i === curIdx && !complete && !lost;
           const locked = i > curIdx;
           const open = openIdx === i && !locked;
           const items = m.checklist.length;

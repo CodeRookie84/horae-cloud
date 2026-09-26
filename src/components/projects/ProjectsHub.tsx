@@ -3,16 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * ProjectsHub — the Projects module. The client admin creates a project with
- * ordered steps and assigns members; every member works through ALL the steps
- * on their own, shown as a 0–100 half-circle gauge (one segment per step,
- * red → green).
+ * ordered steps and assigns members. Two kinds:
+ *   • checklist — every member works through ALL the steps on their own, shown
+ *                 as a 0–100 half-circle gauge (one segment per step, red → green).
+ *   • pipeline  — members add many items (leads, orders…) that each move through
+ *                 the steps and end Won or Lost (PipelineView).
  *
  * Views:
- *   • My progress — the member's own run (StepRun): uploads, updates, complete step.
- *   • Team        — admin + the project's authorised managers: every member's
- *                   progress, pending approvals, overdue steps; open anyone's run.
+ *   • My progress / My leads — the member's own run, or their own items.
+ *   • Team        — admin + the project's authorised managers: everyone's
+ *                   progress / items, pending approvals, overdue steps.
  *   • Settings    — client admin only: steps, members, managers.
- * Members see only their own progress.
+ * Members see only their own.
  */
 import React, { useEffect, useState } from "react";
 import {
@@ -22,7 +24,10 @@ import type { User } from "../../types";
 import * as P from "../../services/projectsService";
 import StepGauge from "./StepGauge";
 import { StepRun, StepRunDrawer } from "./StepRun";
-import ProjectSettings, { PROJECT_COLORS, UserPicker } from "./ProjectSettings";
+import ProjectSettings, { PROJECT_COLORS, UserPicker, StepsEditor } from "./ProjectSettings";
+import { PipelineView, PipelineTeam, AddItemModal, ItemDrawer } from "./PipelineView";
+
+const plural = (label: string) => (/s$/i.test(label) ? label : `${label}s`);
 
 interface Props {
   activeUser: User;
@@ -45,6 +50,8 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
   const [projectId, setProjectId] = useState<string>("");
   const [tab, setTab] = useState<Tab>("mine");
   const [openRunId, setOpenRunId] = useState<string>("");
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [ownerFilter, setOwnerFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -63,7 +70,8 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
   };
   useEffect(() => { load(); }, [clientId]);
 
-  const replaceRun = (d: P.Deliverable) => setRuns(rs => rs.map(x => x.id === d.id ? d : x));
+  const replaceRun = (d: P.Deliverable) => setRuns(rs => rs.some(x => x.id === d.id) ? rs.map(x => x.id === d.id ? d : x) : [...rs, d]);
+  const removeRun = (id: string) => { setRuns(rs => rs.filter(x => x.id !== id)); setOpenRunId(""); };
   const userOf = (id: string) => clientUsers.find(u => u.id === id);
 
   if (loading) {
@@ -117,14 +125,21 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
               const mine = P.runFor(runs, p.id, activeUser.id);
               const team = teamStats(p, runs);
               const myIdx = P.currentStepIndex(mine, p);
+              const pipe = p.kind === "pipeline" ? P.pipelineStats(P.itemsOf(runs, p.id, manages ? undefined : activeUser.id)) : null;
               return (
-                <button key={p.id} onClick={() => { setProjectId(p.id); setTab(isMember ? "mine" : "team"); }}
+                <button key={p.id} onClick={() => { setProjectId(p.id); setTab(isMember ? "mine" : "team"); setOwnerFilter(""); }}
                   className="group overflow-hidden rounded-3xl border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg cursor-pointer">
                   <div className={`h-2 bg-gradient-to-r ${PROJECT_COLORS[p.color] || PROJECT_COLORS.indigo}`} />
                   <div className="p-5">
                     <div className="truncate text-base font-bold text-slate-900">{p.name}</div>
                     <div className="mt-0.5 line-clamp-2 text-xs text-slate-500">{p.description || `${p.milestones.length} steps`}</div>
-                    {isMember ? (
+                    {pipe ? (
+                      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                        <MiniStat value={pipe.open} label={`Open ${plural(p.itemLabel).toLowerCase()}`} />
+                        <MiniStat value={pipe.followUpsDue} label="Follow-ups due" color={pipe.followUpsDue ? "#d97706" : undefined} />
+                        <MiniStat value={pipe.won} label={pipe.wonValue ? P.formatINR(pipe.wonValue) + " won" : "Won"} color={pipe.won ? "#059669" : undefined} />
+                      </div>
+                    ) : isMember ? (
                       <div className="mt-3 flex items-center gap-3">
                         <StepGauge value={P.stepProgress(mine, p)} steps={p.milestones.length} size={110} compact />
                         <div className="min-w-0 text-xs">
@@ -141,9 +156,10 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
                       </div>
                     )}
                     <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{pipe ? "Pipeline" : "Checklist"}</span>
                       <span className="flex items-center gap-1"><Users className="h-3 w-3" />{p.memberIds.length} members</span>
-                      {manages && <span><b className="text-emerald-600">{team.completed}</b> completed</span>}
-                      {manages && team.pending > 0 && <span className="font-semibold text-amber-600">{team.pending} awaiting approval</span>}
+                      {manages && !pipe && <span><b className="text-emerald-600">{team.completed}</b> completed</span>}
+                      {manages && (pipe ? pipe.pending : team.pending) > 0 && <span className="font-semibold text-amber-600">{pipe ? pipe.pending : team.pending} awaiting approval</span>}
                     </div>
                   </div>
                 </button>
@@ -167,8 +183,9 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
   // ── One project ────────────────────────────────────────────────────────────
   const isMember = project.memberIds.includes(activeUser.id);
   const manages = P.canManageProject(activeUser, project);
+  const isPipeline = project.kind === "pipeline";
   const tabs: { id: Tab; label: string; icon: React.ReactNode; show: boolean }[] = [
-    { id: "mine", label: "My progress", icon: <UserIcon className="h-4 w-4" />, show: isMember },
+    { id: "mine", label: isPipeline ? `My ${plural(project.itemLabel).toLowerCase()}` : "My progress", icon: <UserIcon className="h-4 w-4" />, show: isMember },
     { id: "team", label: "Team", icon: <Users className="h-4 w-4" />, show: manages },
     { id: "settings", label: "Settings", icon: <Settings2 className="h-4 w-4" />, show: isAdmin },
   ];
@@ -183,7 +200,7 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
         <div className="relative flex items-center gap-3">
           <button onClick={() => { setProjectId(""); setOpenRunId(""); }} className="rounded-xl bg-white/15 p-2 hover:bg-white/25 cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div className="min-w-0">
-            <div className="text-xs font-semibold uppercase tracking-wider text-white/70">Project{project.status === "archived" ? " · archived" : ""} · {project.milestones.length} steps</div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-white/70">{isPipeline ? `${project.itemLabel} pipeline` : "Checklist project"}{project.status === "archived" ? " · archived" : ""} · {project.milestones.length} steps</div>
             <h1 className="truncate text-xl font-bold">{project.name}</h1>
             {project.description && <p className="mt-0.5 line-clamp-2 text-xs text-white/80">{project.description}</p>}
           </div>
@@ -200,19 +217,41 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
         )}
       </div>
 
-      {activeTab === "mine" && (myRun
+      {isPipeline && activeTab === "mine" && (
+        <PipelineView project={project} items={P.itemsOf(runs, project.id, activeUser.id)} users={clientUsers}
+          showOwners={false} canAdd={project.status === "active"} onOpen={setOpenRunId} onAdd={() => setShowAddItem(true)} />
+      )}
+      {isPipeline && activeTab === "team" && (
+        <div className="space-y-4">
+          <PipelineTeam project={project} items={P.itemsOf(runs, project.id)} users={clientUsers} selected={ownerFilter} onSelect={setOwnerFilter} />
+          <PipelineView project={project} items={P.itemsOf(runs, project.id)} users={clientUsers}
+            showOwners canAdd={project.status === "active" && project.memberIds.length > 0} onOpen={setOpenRunId} onAdd={() => setShowAddItem(true)}
+            ownerFilter={ownerFilter} onOwnerFilter={setOwnerFilter} />
+        </div>
+      )}
+      {!isPipeline && activeTab === "mine" && (myRun
         ? <StepRun project={project} run={myRun} owner={activeUser} actor={actor} canManage={manages} onChanged={replaceRun} />
         : <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">
             {project.milestones.length ? "Setting up your steps… refresh in a moment." : "This project has no steps yet."}
           </div>)}
-      {activeTab === "team" && (
+      {!isPipeline && activeTab === "team" && (
         <TeamView project={project} runs={runs} users={clientUsers} onOpen={setOpenRunId} />
       )}
       {activeTab === "settings" && (
         <ProjectSettings key={project.id + project.milestones.length} project={project} users={clientUsers} runs={runs} onSaved={load} />
       )}
 
-      {openRun && (
+      {isPipeline && openRun && (
+        <ItemDrawer project={project} item={openRun} users={clientUsers} allItems={P.itemsOf(runs, project.id)} actor={actor}
+          canManage={manages} onChanged={replaceRun} onDeleted={removeRun} onClose={() => setOpenRunId("")} />
+      )}
+      {isPipeline && showAddItem && (
+        <AddItemModal project={project} users={clientUsers} allItems={P.itemsOf(runs, project.id)}
+          canAssign={manages} defaultOwner={activeTab === "team" && ownerFilter ? ownerFilter : activeUser.id}
+          onClose={() => setShowAddItem(false)}
+          onCreate={async (ownerId, f) => { replaceRun(await P.createItem(project, ownerId, f, actor)); setShowAddItem(false); }} />
+      )}
+      {!isPipeline && openRun && (
         <StepRunDrawer project={project} run={openRun} owner={userOf(openRun.ownerUserId)} actor={actor}
           canManage={manages} onChanged={replaceRun} onClose={() => setOpenRunId("")} />
       )}
@@ -300,6 +339,15 @@ function ProgressBar({ pct, steps = 0 }: { pct: number; steps?: number }) {
   );
 }
 
+function MiniStat({ value, label, color }: { value: number; label: string; color?: string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-1 py-2">
+      <div className="text-lg font-bold tabular-nums" style={{ color: color || "#0f172a" }}>{value}</div>
+      <div className="truncate text-[10px] font-medium text-slate-500">{label}</div>
+    </div>
+  );
+}
+
 function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
@@ -328,10 +376,15 @@ const inputCls = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 t
 
 function CreateProjectModal({ users, onClose, onCreate }: {
   users: User[]; onClose: () => void;
-  onCreate: (input: { name: string; description: string; color: string; milestones: P.Milestone[]; memberIds: string[]; managerIds: string[] }) => Promise<void>;
+  onCreate: (input: { name: string; description: string; color: string; kind: P.ProjectKind; itemLabel: string; milestones: P.Milestone[]; memberIds: string[]; managerIds: string[] }) => Promise<void>;
 }) {
   const [tplId, setTplId] = useState(P.PROJECT_TEMPLATES[0].id);
+  // A fresh, editable copy of the chosen template's steps — the template itself never changes.
+  const [milestones, setMilestones] = useState<P.Milestone[]>(() => P.milestonesFromTemplate(P.PROJECT_TEMPLATES[0]));
+  const [editSteps, setEditSteps] = useState(false);
+  const [itemLabel, setItemLabel] = useState(P.PROJECT_TEMPLATES[0].itemLabel || "Item");
   const tpl = P.PROJECT_TEMPLATES.find(t => t.id === tplId)!;
+  const pickTemplate = (t: P.ProjectTemplate) => { setTplId(t.id); setMilestones(P.milestonesFromTemplate(t)); setItemLabel(t.itemLabel || "Item"); };
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState("indigo");
@@ -348,35 +401,68 @@ function CreateProjectModal({ users, onClose, onCreate }: {
         if (!memberIds.length) { setErr("Assign at least one member."); return; }
         setBusy(true); setErr("");
         try {
-          await onCreate({ name: name.trim(), description: description.trim(), color,
-            milestones: P.milestonesFromTemplate(tpl), memberIds, managerIds });
+          await onCreate({ name: name.trim(), description: description.trim(), color, kind: tpl.kind, itemLabel: itemLabel.trim() || "Item",
+            milestones: milestones.map(m => ({ ...m, name: m.name.trim() || "Untitled", checklist: m.checklist.filter(it => it.text.trim()) })),
+            memberIds, managerIds });
         } catch (e: any) { setErr(e?.message || "Could not create the project."); setBusy(false); }
       }}>
         {err && <div className="rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{err}</div>}
         <div>
           <div className="mb-2 text-xs font-semibold text-slate-500">Start from a template</div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {P.PROJECT_TEMPLATES.map(t => (
-              <button type="button" key={t.id} onClick={() => setTplId(t.id)}
-                className={`rounded-2xl border p-3 text-left transition cursor-pointer ${tplId === t.id ? "border-indigo-500 bg-indigo-50/60 ring-1 ring-indigo-500" : "border-slate-200 hover:border-slate-300"}`}>
-                <div className="text-sm font-bold text-slate-900">{t.name}</div>
-                <div className="mt-0.5 text-[11px] text-slate-500">{t.blurb}</div>
-              </button>
-            ))}
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
-            {tpl.milestones.map((m, i) => (
-              <React.Fragment key={i}>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">{i + 1}. {m.name}</span>
-                {i < tpl.milestones.length - 1 && <span className="text-slate-300">→</span>}
-              </React.Fragment>
-            ))}
-          </div>
-          <p className="mt-1 text-[11px] text-slate-400">You can rename, reorder and add steps and required uploads afterwards in Settings.</p>
+          {([
+            ["pipeline", "Pipelines", "Each member adds many items (leads, orders…) that move through the steps and end Won or Lost."],
+            ["checklist", "Checklists", "Every member works through all the steps once."],
+          ] as const).map(([kind, title, hint]) => (
+            <div key={kind} className="mb-3">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-700">{title}</div>
+              <p className="mb-1.5 text-[11px] text-slate-400">{hint}</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {P.PROJECT_TEMPLATES.filter(t => t.kind === kind).map(t => (
+                  <button type="button" key={t.id} onClick={() => pickTemplate(t)}
+                    className={`rounded-2xl border p-3 text-left transition cursor-pointer ${tplId === t.id ? "border-indigo-500 bg-indigo-50/60 ring-1 ring-indigo-500" : "border-slate-200 hover:border-slate-300"}`}>
+                    <div className="text-sm font-bold text-slate-900">{t.name}</div>
+                    <div className="mt-0.5 text-[11px] text-slate-500">{t.blurb}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          {editSteps ? (
+            <div className="mt-3 rounded-2xl border border-slate-200 p-3">
+              <StepsEditor milestones={milestones} onChange={setMilestones} kind={tpl.kind} />
+              <div className="mt-3 flex justify-between">
+                <button type="button" onClick={() => { const t = P.PROJECT_TEMPLATES.find(x => x.id === tplId); if (t) setMilestones(P.milestonesFromTemplate(t)); }}
+                  className="text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer">Reset to template</button>
+                <button type="button" onClick={() => setEditSteps(false)}
+                  className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer">Done editing</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="mt-3 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
+                {milestones.map((m, i) => (
+                  <React.Fragment key={m.id}>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">{i + 1}. {m.name}</span>
+                    {i < milestones.length - 1 && <span className="text-slate-300">→</span>}
+                  </React.Fragment>
+                ))}
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                <span>Use as is, or</span>
+                <button type="button" onClick={() => setEditSteps(true)}
+                  className="font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer">customise the steps</button>
+                <span>— rename, reorder, add/remove steps and required uploads. You can also change them later in Settings.</span>
+              </div>
+            </>
+          )}
         </div>
 
         <label className="block space-y-1"><span className="text-xs font-semibold text-slate-500">Project name</span>
           <input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Whitefield outlet opening" autoFocus /></label>
+        {tpl.kind === "pipeline" && (
+          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-500">What do you call each item?</span>
+            <input className={inputCls} value={itemLabel} onChange={e => setItemLabel(e.target.value)} placeholder="Lead, Order, Candidate…" /></label>
+        )}
         <label className="block space-y-1"><span className="text-xs font-semibold text-slate-500">Description (optional)</span>
           <input className={inputCls} value={description} onChange={e => setDescription(e.target.value)} /></label>
         <div className="flex items-center gap-2">
@@ -387,11 +473,11 @@ function CreateProjectModal({ users, onClose, onCreate }: {
         </div>
 
         <div>
-          <div className="text-xs font-semibold text-slate-500">Members — each works through all the steps</div>
+          <div className="text-xs font-semibold text-slate-500">{tpl.kind === "pipeline" ? `Members — each adds and works their own ${plural(itemLabel || "item").toLowerCase()}` : "Members — each works through all the steps"}</div>
           <UserPicker users={users} selected={memberIds} onChange={setMemberIds} />
         </div>
         <div>
-          <div className="text-xs font-semibold text-slate-500">Managers (optional) — can see everyone's progress and approve steps</div>
+          <div className="text-xs font-semibold text-slate-500">Managers (optional) — can see everyone's {tpl.kind === "pipeline" ? plural(itemLabel || "item").toLowerCase() : "progress"}, approve steps{tpl.kind === "pipeline" ? " and assign" : ""}</div>
           <UserPicker users={users.filter(u => !P.isProjectAdmin(u))} selected={managerIds} onChange={setManagerIds} />
         </div>
 

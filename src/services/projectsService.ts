@@ -6,15 +6,21 @@
  *
  * Model: the client admin creates a project with ordered STEPS (stored as
  * `milestones`, each with a gating checklist + optional approval) and assigns
- * members. EVERY member works through ALL the steps on their own — one
- * `project_deliverables` row per (project, member) is that member's "run".
+ * members. A project is one of two kinds:
+ *   • checklist — EVERY member works through ALL the steps once: one
+ *                 `project_deliverables` row per (project, member) is that
+ *                 member's "run" (run_key = member id).
+ *   • pipeline  — members add MANY items (leads, orders, candidates…, named by
+ *                 `item_label`), each moving through the steps and ending Won
+ *                 (last step completed) or Lost (with a reason). run_key NULL.
  * The admin (and the per-project managers they authorise) see every member's
- * run and approve steps; members see only their own.
+ * runs/items and approve steps; members see only their own.
  *
- * Tables (migrations 20260924210446_projects.sql + 20260925221341_projects_steps_per_member.sql),
+ * Tables (migrations 20260924210446_projects.sql, 20260925221341_projects_steps_per_member.sql,
+ * 20260926215120_projects_pipeline_type.sql),
  * all client-scoped:
  *   projects               — steps (+ checklists) as jsonb, member_ids, manager_ids
- *   project_deliverables   — one run per member: current step, checklist answers, approvals
+ *   project_deliverables   — checklist runs / pipeline items: current step, checklist answers, approvals
  *   project_activity       — append-only history per run; step-scoped updates (+ file)
  *
  * Gating rule: a run can leave a step only when every REQUIRED checklist item of
@@ -45,11 +51,16 @@ export interface Milestone {
   checklist: MilestoneChecklistItem[];
 }
 
+export type ProjectKind = "checklist" | "pipeline";
+
 export interface Project {
   id: string;
   clientId: string;
   name: string;
   description: string;
+  kind: ProjectKind;
+  /** What a pipeline calls its items: "Lead", "Order", "Candidate"… */
+  itemLabel: string;
   color: string;
   status: "active" | "archived";
   milestones: Milestone[];
@@ -69,7 +80,7 @@ export interface ApprovalState {
   note?: string;
 }
 
-/** One member's run through a project's steps. */
+/** A checklist member's run, or one pipeline item (lead / order / …). */
 export interface Deliverable {
   id: string;
   projectId: string;
@@ -77,8 +88,15 @@ export interface Deliverable {
   title: string;
   ownerUserId: string;
   milestoneId: string;
-  /** 'won' = every step completed. */
+  /** 'won' = every step completed; 'lost' = pipeline item closed with a reason. */
   status: "open" | "won" | "lost";
+  contactName: string;
+  contactPhone: string;
+  value: number;
+  source: string;
+  notes: string;
+  followUpAt?: string;
+  lostReason?: string;
   checklist: Record<string, Record<string, ChecklistAnswer>>;
   approvals: Record<string, ApprovalState>;
   milestoneEnteredAt: string;
@@ -111,11 +129,114 @@ export const canManageProject = (u: Pick<User, "id" | "role">, p: Project) => is
 
 // ─── Templates ───────────────────────────────────────────────────────────────
 type TplMilestone = { name: string; slaDays?: number; approval?: boolean; items: [string, ChecklistItemType, boolean?][] };
-export interface ProjectTemplate { id: string; name: string; blurb: string; milestones: TplMilestone[] }
+export interface ProjectTemplate {
+  id: string; name: string; blurb: string; kind: ProjectKind;
+  /** Pipeline item name. */
+  itemLabel?: string;
+  milestones: TplMilestone[];
+}
 
 export const PROJECT_TEMPLATES: ProjectTemplate[] = [
+  // ── Pipelines: each member adds many items that move through the steps ──
   {
-    id: "outlet-opening", name: "New outlet opening",
+    id: "sales", name: "Sales pipeline", kind: "pipeline", itemLabel: "Deal",
+    blurb: "Qualify, meet, propose, negotiate and close deals.",
+    milestones: [
+      { name: "Qualified", slaDays: 2, items: [["Need & budget confirmed", "tick"], ["Deal value (₹)", "amount", false]] },
+      { name: "Contact made", slaDays: 3, items: [["First call / visit done", "tick"], ["Decision maker identified", "text", false]] },
+      { name: "Meeting / demo", slaDays: 7, items: [["Meeting date", "date"], ["Meeting notes", "text", false]] },
+      { name: "Proposal sent", slaDays: 5, items: [["Proposal / quotation", "file"]] },
+      { name: "Negotiation", slaDays: 10, approval: true, items: [["Final price (₹)", "amount"], ["Terms agreed", "tick"]] },
+      { name: "Closed", slaDays: 7, items: [["PO / signed confirmation", "file"], ["Advance received", "tick", false]] },
+    ],
+  },
+  {
+    id: "real-estate", name: "Real estate sales", kind: "pipeline", itemLabel: "Lead",
+    blurb: "Enquiry to site visit, booking, agreement and commission invoice.",
+    milestones: [
+      { name: "New lead", slaDays: 1, items: [["Client name & phone captured", "tick"], ["Budget (₹)", "amount"], ["Lead source", "text", false]] },
+      { name: "Contacted", slaDays: 3, items: [["First call done", "tick"], ["Requirement noted", "text"]] },
+      { name: "Site visit", slaDays: 7, items: [["Visit date", "date"], ["Site visit photo", "file"], ["Client feedback", "text", false]] },
+      { name: "Negotiation", slaDays: 10, items: [["Offer price (₹)", "amount"], ["Payment plan shared", "tick"]] },
+      { name: "Booking", slaDays: 7, approval: true, items: [["Booking amount (₹)", "amount"], ["Booking receipt", "file"]] },
+      { name: "Agreement", slaDays: 15, items: [["Signed agreement", "file"], ["KYC documents collected", "tick"]] },
+      { name: "Invoice & commission", slaDays: 7, approval: true, items: [["Invoice number", "text"], ["Invoice copy", "file"]] },
+    ],
+  },
+  {
+    id: "marketing", name: "Marketing / lead generation", kind: "pipeline", itemLabel: "Lead",
+    blurb: "Qualify leads, send proposals, win and invoice.",
+    milestones: [
+      { name: "Lead captured", slaDays: 1, items: [["Contact details verified", "tick"], ["Source / campaign", "text", false]] },
+      { name: "Qualified", slaDays: 3, items: [["Need & budget confirmed", "tick"], ["Estimated value (₹)", "amount"]] },
+      { name: "Proposal sent", slaDays: 5, items: [["Proposal document", "file"], ["Follow-up call done", "tick"]] },
+      { name: "Won", slaDays: 5, approval: true, items: [["Signed PO / confirmation", "file"], ["Final value (₹)", "amount"]] },
+      { name: "Invoiced", slaDays: 7, items: [["Invoice number", "text"], ["Payment received", "tick", false]] },
+    ],
+  },
+  {
+    id: "bulk-orders", name: "Bulk / catering orders", kind: "pipeline", itemLabel: "Order",
+    blurb: "Enquiry, quote, advance, production, delivery and final payment.",
+    milestones: [
+      { name: "Enquiry", slaDays: 1, items: [["Event / delivery date", "date"], ["Quantity & items noted", "text"]] },
+      { name: "Quote sent", slaDays: 2, items: [["Quotation", "file"], ["Quoted amount (₹)", "amount"]] },
+      { name: "Advance received", slaDays: 3, approval: true, items: [["Advance amount (₹)", "amount"], ["Payment proof", "file"]] },
+      { name: "In production", slaDays: 5, items: [["Order sheet shared with kitchen", "tick"], ["Packing photo", "file", false]] },
+      { name: "Delivered", slaDays: 1, items: [["Delivery photo / signed challan", "file"]] },
+      { name: "Fully paid", slaDays: 7, items: [["Balance received", "tick"], ["Invoice number", "text"]] },
+    ],
+  },
+  {
+    id: "hiring", name: "Hiring", kind: "pipeline", itemLabel: "Candidate",
+    blurb: "Applications through screening, interview, offer and joining.",
+    milestones: [
+      { name: "Applied", slaDays: 2, items: [["CV / profile", "file", false], ["Position", "text"]] },
+      { name: "Screening", slaDays: 3, items: [["Phone screen done", "tick"], ["Expected salary (₹)", "amount", false]] },
+      { name: "Interview", slaDays: 7, items: [["Interview date", "date"], ["Interview feedback", "text"]] },
+      { name: "Offer", slaDays: 5, approval: true, items: [["Offered salary (₹)", "amount"], ["Offer letter", "file"]] },
+      { name: "Joined", slaDays: 14, items: [["Joining date", "date"], ["Documents collected", "tick"]] },
+    ],
+  },
+  {
+    id: "complaints", name: "Complaints / support", kind: "pipeline", itemLabel: "Ticket",
+    blurb: "Log, assign, resolve and close customer complaints.",
+    milestones: [
+      { name: "New", slaDays: 1, items: [["Complaint details", "text"], ["Photo / proof", "file", false]] },
+      { name: "In progress", slaDays: 2, items: [["Customer contacted", "tick"], ["Root cause", "text", false]] },
+      { name: "Resolved", slaDays: 2, approval: true, items: [["Resolution given", "text"], ["Refund / replacement (₹)", "amount", false]] },
+      { name: "Closed", slaDays: 3, items: [["Customer confirmed satisfied", "tick"]] },
+    ],
+  },
+  {
+    id: "content", name: "Content calendar", kind: "pipeline", itemLabel: "Post",
+    blurb: "Ideas to draft, review, scheduling and publishing.",
+    milestones: [
+      { name: "Idea", slaDays: 3, items: [["Topic / brief", "text"]] },
+      { name: "Draft", slaDays: 3, items: [["Draft / creative", "file"]] },
+      { name: "Review", slaDays: 2, approval: true, items: [["Caption final", "text"]] },
+      { name: "Scheduled", slaDays: 5, items: [["Publish date", "date"]] },
+      { name: "Published", slaDays: 2, items: [["Post link / screenshot", "file"]] },
+    ],
+  },
+  {
+    id: "agency", name: "Agency deliverables", kind: "pipeline", itemLabel: "Deliverable",
+    blurb: "Brief to draft, client review, delivery and billing.",
+    milestones: [
+      { name: "Brief received", slaDays: 2, items: [["Brief document", "file", false], ["Deadline agreed", "date"]] },
+      { name: "In progress", slaDays: 5, items: [["Draft shared internally", "tick"]] },
+      { name: "Client review", slaDays: 5, items: [["Sent to client", "tick"], ["Feedback noted", "text", false]] },
+      { name: "Delivered", slaDays: 3, approval: true, items: [["Final files", "file"]] },
+      { name: "Billed", slaDays: 7, items: [["Invoice number", "text"]] },
+    ],
+  },
+  { id: "blank-pipeline", name: "Blank pipeline", kind: "pipeline", itemLabel: "Item",
+    blurb: "Three simple stages — build your own pipeline.",
+    milestones: [{ name: "New", items: [] }, { name: "In progress", items: [] }, { name: "Done", items: [] }],
+  },
+
+  // ── Checklists: every member works through all the steps once ──
+  {
+    id: "outlet-opening", name: "New outlet opening", kind: "checklist",
     blurb: "Site, licences, interiors, hiring and launch.",
     milestones: [
       { name: "Site finalised", slaDays: 7, items: [["Site photos", "file"], ["Rent agreement signed", "file"]] },
@@ -126,7 +247,7 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
     ],
   },
   {
-    id: "onboarding", name: "Staff onboarding",
+    id: "onboarding", name: "Staff onboarding", kind: "checklist",
     blurb: "Documents, induction, training and sign-off for a new joiner.",
     milestones: [
       { name: "Documents", slaDays: 3, items: [["ID proof", "file"], ["Address proof", "file"], ["Bank details submitted", "tick"]] },
@@ -136,7 +257,7 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
     ],
   },
   {
-    id: "campaign", name: "Marketing campaign",
+    id: "campaign", name: "Marketing campaign", kind: "checklist",
     blurb: "Plan, create, publish and report on a campaign.",
     milestones: [
       { name: "Plan", slaDays: 3, items: [["Campaign brief", "text"], ["Budget (₹)", "amount"]] },
@@ -145,12 +266,36 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
       { name: "Report", slaDays: 7, items: [["Leads / sales generated", "number"], ["Report", "file", false]] },
     ],
   },
-  { id: "blank", name: "Blank", blurb: "Start with three simple steps and build your own.",
+  {
+    id: "event-launch", name: "Event / product launch", kind: "checklist",
+    blurb: "Plan, line up vendors, promote, run the day and review.",
+    milestones: [
+      { name: "Plan", slaDays: 5, items: [["Event date", "date"], ["Budget (₹)", "amount"], ["Plan document", "file", false]] },
+      { name: "Vendors booked", slaDays: 7, approval: true, items: [["Vendor quotes", "file"], ["Venue confirmed", "tick"]] },
+      { name: "Promotion", slaDays: 7, items: [["Invites / posts sent", "tick"], ["Creative", "file", false]] },
+      { name: "Event day", slaDays: 2, items: [["Event photos", "file"], ["Attendance / footfall", "number"]] },
+      { name: "Review", slaDays: 5, items: [["What went well / to improve", "text"], ["Final spend (₹)", "amount"]] },
+    ],
+  },
+  {
+    id: "audit-rollout", name: "Audit / compliance rollout", kind: "checklist",
+    blurb: "Each member (or outlet) completes the same compliance steps.",
+    milestones: [
+      { name: "Self-assessment", slaDays: 3, items: [["Current checklist filled", "file"], ["Gaps found", "text"]] },
+      { name: "Fixes done", slaDays: 10, items: [["Before / after photos", "file"], ["All gaps closed", "tick"]] },
+      { name: "Records updated", slaDays: 5, items: [["Registers / logs up to date", "tick"], ["Certificates copy", "file", false]] },
+      { name: "Audit sign-off", slaDays: 3, approval: true, items: [["Audit score", "number"], ["Auditor remarks", "text", false]] },
+    ],
+  },
+  { id: "blank", name: "Blank checklist", kind: "checklist", blurb: "Three simple steps — build your own.",
     milestones: [
       { name: "Step 1", items: [] }, { name: "Step 2", items: [] }, { name: "Step 3", items: [] },
     ],
   },
 ];
+
+/** Quick-pick reasons when a pipeline item is marked Lost. */
+export const LOST_REASONS = ["Too expensive", "Not interested", "Went with a competitor", "No response", "Budget / timing", "Duplicate"];
 
 export function milestonesFromTemplate(tpl: ProjectTemplate): Milestone[] {
   return tpl.milestones.map(m => ({
@@ -170,6 +315,7 @@ export const newChecklistItem = (): MilestoneChecklistItem =>
 // ─── Mappers ─────────────────────────────────────────────────────────────────
 const mapProject = (r: any): Project => ({
   id: r.id, clientId: r.client_id, name: r.name, description: r.description || "",
+  kind: r.kind === "pipeline" ? "pipeline" : "checklist", itemLabel: r.item_label || "Item",
   color: r.color || "indigo",
   status: r.status === "archived" ? "archived" : "active",
   milestones: Array.isArray(r.milestones) ? r.milestones : [],
@@ -183,6 +329,9 @@ const mapDeliverable = (r: any): Deliverable => ({
   ownerUserId: r.owner_user_id || "",
   milestoneId: r.milestone_id || "", status: r.status || "open",
   checklist: r.checklist || {}, approvals: r.approvals || {},
+  contactName: r.contact_name || "", contactPhone: r.contact_phone || "",
+  value: Number(r.value) || 0, source: r.source || "", notes: r.notes || "",
+  followUpAt: r.follow_up_at || undefined, lostReason: r.lost_reason || undefined,
   milestoneEnteredAt: r.milestone_entered_at, closedAt: r.closed_at || undefined,
   createdAt: r.created_at, updatedAt: r.updated_at,
 });
@@ -196,11 +345,12 @@ export async function getProjects(clientId: string): Promise<Project[]> {
 }
 
 export async function createProject(input: {
-  clientId: string; name: string; description: string; color: string;
+  clientId: string; name: string; description: string; color: string; kind: ProjectKind; itemLabel: string;
   milestones: Milestone[]; memberIds: string[]; managerIds: string[]; createdBy: string;
 }): Promise<Project> {
   const row = {
     id: newId("prj"), client_id: input.clientId, name: input.name, description: input.description,
+    kind: input.kind, item_label: input.itemLabel || "Item",
     color: input.color, milestones: input.milestones,
     member_ids: input.memberIds, manager_ids: input.managerIds, created_by: input.createdBy,
   };
@@ -210,9 +360,10 @@ export async function createProject(input: {
 }
 
 export async function updateProject(id: string, patch: Partial<Pick<Project,
-  "name" | "description" | "color" | "status" | "milestones" | "memberIds" | "managerIds">>): Promise<void> {
+  "name" | "description" | "itemLabel" | "color" | "status" | "milestones" | "memberIds" | "managerIds">>): Promise<void> {
   const row: Record<string, unknown> = {};
   if (patch.name !== undefined) row.name = patch.name;
+  if (patch.itemLabel !== undefined) row.item_label = patch.itemLabel;
   if (patch.description !== undefined) row.description = patch.description;
   if (patch.color !== undefined) row.color = patch.color;
   if (patch.status !== undefined) row.status = patch.status;
@@ -237,9 +388,13 @@ export async function getDeliverables(projectIds: string[]): Promise<Deliverable
   return (data || []).map(mapDeliverable);
 }
 
-/** The member's run for a project (undefined until ensureMemberRuns creates it). */
+/** The member's run for a checklist project (undefined until ensureMemberRuns creates it). */
 export const runFor = (runs: Deliverable[], projectId: string, userId: string) =>
   runs.find(d => d.projectId === projectId && d.ownerUserId === userId);
+
+/** A pipeline project's items, optionally only one member's. */
+export const itemsOf = (runs: Deliverable[], projectId: string, ownerId?: string) =>
+  runs.filter(d => d.projectId === projectId && (!ownerId || d.ownerUserId === ownerId));
 
 async function logActivity(d: Pick<Deliverable, "id" | "projectId" | "clientId">, actor: Actor, kind: string,
   text?: string, extra: { milestoneId?: string; fileUrl?: string } = {}) {
@@ -259,22 +414,22 @@ export async function ensureMemberRuns(projects: Project[], runs: Deliverable[],
   opts: { all: (p: Project) => boolean; self: string }): Promise<Deliverable[]> {
   const rows: Record<string, unknown>[] = [];
   for (const p of projects) {
-    if (p.status !== "active" || !p.milestones.length) continue;
+    if (p.kind !== "checklist" || p.status !== "active" || !p.milestones.length) continue;
     const ids = opts.all(p) ? p.memberIds : p.memberIds.filter(id => id === opts.self);
     for (const uid of ids) {
       if (runFor(runs, p.id, uid)) continue;
       rows.push({
         id: newId("run"), project_id: p.id, client_id: p.clientId,
-        title: users.find(u => u.id === uid)?.name || "Member", owner_user_id: uid,
+        title: users.find(u => u.id === uid)?.name || "Member", owner_user_id: uid, run_key: uid,
         milestone_id: p.milestones[0].id, created_by: opts.self,
       });
     }
   }
   if (!rows.length) return [];
   // ignoreDuplicates: two devices creating the same run at once is harmless —
-  // the unique (project_id, owner_user_id) index keeps exactly one.
+  // the unique (project_id, run_key) index keeps exactly one.
   const { data, error } = await supabase.from("project_deliverables")
-    .upsert(rows, { onConflict: "project_id,owner_user_id", ignoreDuplicates: true }).select();
+    .upsert(rows, { onConflict: "project_id,run_key", ignoreDuplicates: true }).select();
   if (error) throw error;
   return (data || []).map(mapDeliverable);
 }
@@ -284,6 +439,86 @@ async function patchDeliverable(id: string, row: Record<string, unknown>): Promi
     .update({ ...row, updated_at: new Date().toISOString() }).eq("id", id).select().single();
   if (error) throw error;
   return mapDeliverable(data);
+}
+
+// ─── Pipeline items ──────────────────────────────────────────────────────────
+export interface ItemFields {
+  title: string; contactName: string; contactPhone: string; value: number;
+  source: string; notes: string; followUpAt?: string;
+}
+
+const itemRow = (f: Partial<ItemFields>) => {
+  const row: Record<string, unknown> = {};
+  if (f.title !== undefined) row.title = f.title;
+  if (f.contactName !== undefined) row.contact_name = f.contactName || null;
+  if (f.contactPhone !== undefined) row.contact_phone = f.contactPhone || null;
+  if (f.value !== undefined) row.value = f.value || 0;
+  if (f.source !== undefined) row.source = f.source || null;
+  if (f.notes !== undefined) row.notes = f.notes || null;
+  if (f.followUpAt !== undefined) row.follow_up_at = f.followUpAt || null;
+  return row;
+};
+
+export async function createItem(project: Project, ownerId: string, f: ItemFields, actor: Actor): Promise<Deliverable> {
+  const { data, error } = await supabase.from("project_deliverables").insert({
+    id: newId("itm"), project_id: project.id, client_id: project.clientId,
+    owner_user_id: ownerId, milestone_id: project.milestones[0]?.id || null, created_by: actor.id,
+    ...itemRow(f),
+  }).select().single();
+  if (error) throw error;
+  const d = mapDeliverable(data);
+  await logActivity(d, actor, "created", `Added ${project.itemLabel.toLowerCase()} “${f.title}”`, { milestoneId: d.milestoneId });
+  return d;
+}
+
+export async function updateItem(d: Deliverable, f: Partial<ItemFields> & { ownerUserId?: string }): Promise<Deliverable> {
+  const row = itemRow(f);
+  if (f.ownerUserId !== undefined) row.owner_user_id = f.ownerUserId;
+  return patchDeliverable(d.id, row);
+}
+
+export async function markLost(d: Deliverable, reason: string, actor: Actor): Promise<Deliverable> {
+  const next = await patchDeliverable(d.id, { status: "lost", lost_reason: reason || null, closed_at: new Date().toISOString() });
+  await logActivity(d, actor, "lost", `Marked lost${reason ? ` — ${reason}` : ""}`, { milestoneId: d.milestoneId });
+  return next;
+}
+
+export async function deleteItem(id: string): Promise<void> {
+  const { error } = await supabase.from("project_deliverables").delete().eq("id", id);
+  if (error) throw error;
+}
+
+const phoneKey = (p: string) => p.replace(/\D/g, "").slice(-10);
+
+/** Another item in this project with the same phone number (last 10 digits). */
+export function findDuplicatePhone(runs: Deliverable[], projectId: string, phone: string, exceptId?: string): Deliverable | undefined {
+  const key = phoneKey(phone);
+  if (key.length < 10) return undefined;
+  return runs.find(d => d.projectId === projectId && d.id !== exceptId && phoneKey(d.contactPhone) === key);
+}
+
+/** Follow-up state of an open item relative to today (device-local day). */
+export function followUpState(d: Deliverable): "none" | "overdue" | "today" | "later" {
+  if (d.status !== "open" || !d.followUpAt) return "none";
+  const f = new Date(d.followUpAt);
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end = new Date(start.getTime() + 86400000);
+  return f < start ? "overdue" : f < end ? "today" : "later";
+}
+
+/** Pipeline numbers for a set of items. Conversion = won / (won + lost). */
+export function pipelineStats(items: Deliverable[]) {
+  const won = items.filter(d => d.status === "won");
+  const lost = items.filter(d => d.status === "lost").length;
+  const open = items.filter(d => d.status === "open");
+  return {
+    total: items.length, open: open.length, won: won.length, lost,
+    conversion: won.length + lost ? Math.round((won.length / (won.length + lost)) * 100) : 0,
+    wonValue: won.reduce((a, d) => a + d.value, 0),
+    openValue: open.reduce((a, d) => a + d.value, 0),
+    followUpsDue: open.filter(d => { const f = followUpState(d); return f === "overdue" || f === "today"; }).length,
+    pending: open.filter(d => d.approvals[d.milestoneId]?.status === "pending").length,
+  };
 }
 
 export async function setChecklistAnswer(d: Deliverable, milestoneId: string, itemId: string,
@@ -351,7 +586,7 @@ export async function advanceDeliverable(d: Deliverable, project: Project, actor
 export async function moveBack(d: Deliverable, project: Project, actor: Actor): Promise<Deliverable> {
   const now = new Date().toISOString();
   if (d.status !== "open") {
-    const next = await patchDeliverable(d.id, { status: "open", closed_at: null, milestone_entered_at: now });
+    const next = await patchDeliverable(d.id, { status: "open", closed_at: null, lost_reason: null, milestone_entered_at: now });
     await logActivity(d, actor, "reopened", "Reopened", { milestoneId: d.milestoneId });
     return next;
   }

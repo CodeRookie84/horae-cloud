@@ -30,6 +30,8 @@ interface Props {
 export default function ProjectSettings({ project, users, runs, onSaved }: Props) {
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
+  const [itemLabel, setItemLabel] = useState(project.itemLabel);
+  const isPipeline = project.kind === "pipeline";
   const [color, setColor] = useState(project.color);
   const [milestones, setMilestones] = useState<P.Milestone[]>(project.milestones);
   const [memberIds, setMemberIds] = useState<string[]>(project.memberIds);
@@ -39,19 +41,11 @@ export default function ProjectSettings({ project, users, runs, onSaved }: Props
 
   const inUse = (mid: string) => runs.some(d => d.projectId === project.id && d.milestoneId === mid && d.status === "open");
 
-  const patchM = (i: number, patch: Partial<P.Milestone>) => setMilestones(ms => ms.map((m, j) => j === i ? { ...m, ...patch } : m));
-  const move = (i: number, dir: -1 | 1) => setMilestones(ms => {
-    const j = i + dir; if (j < 0 || j >= ms.length) return ms;
-    const next = [...ms]; [next[i], next[j]] = [next[j], next[i]]; return next;
-  });
-  const patchItem = (i: number, k: number, patch: Partial<P.MilestoneChecklistItem>) =>
-    patchM(i, { checklist: milestones[i].checklist.map((it, j) => j === k ? { ...it, ...patch } : it) });
-
   const save = async () => {
     setSaving(true); setMsg("");
     try {
       const cleaned = milestones.map(m => ({ ...m, name: m.name.trim() || "Untitled", checklist: m.checklist.filter(it => it.text.trim()) }));
-      await P.updateProject(project.id, { name: name.trim() || project.name, description, color, milestones: cleaned, memberIds, managerIds });
+      await P.updateProject(project.id, { name: name.trim() || project.name, description, color, ...(isPipeline ? { itemLabel: itemLabel.trim() || project.itemLabel } : {}), milestones: cleaned, memberIds, managerIds });
       setMsg("Saved.");
       onSaved();
     } catch (e: any) {
@@ -70,6 +64,11 @@ export default function ProjectSettings({ project, users, runs, onSaved }: Props
           <input className={input} value={name} onChange={e => setName(e.target.value)} /></label>
         <label className="mt-3 block space-y-1"><span className="text-xs font-semibold text-slate-500">Description</span>
           <textarea className={input} rows={2} value={description} onChange={e => setDescription(e.target.value)} /></label>
+        {isPipeline && (
+          <label className="mt-3 block space-y-1"><span className="text-xs font-semibold text-slate-500">What each item is called</span>
+            <input className={input} value={itemLabel} onChange={e => setItemLabel(e.target.value)} placeholder="Lead, Order, Candidate…" /></label>
+        )}
+        <p className="mt-3 text-[11px] text-slate-400">Type: <b className="text-slate-600">{isPipeline ? "Pipeline" : "Checklist"}</b> — {isPipeline ? "members add many items that move through the steps." : "every member works through all the steps once."}</p>
         <div className="mt-3 flex items-center gap-2">
           <span className="text-xs font-semibold text-slate-500">Colour</span>
           {Object.entries(PROJECT_COLORS).map(([k, g]) => (
@@ -78,73 +77,22 @@ export default function ProjectSettings({ project, users, runs, onSaved }: Props
         </div>
       </section>
 
-      {/* Milestones */}
+      {/* Steps */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">Steps</h3>
-            <p className="text-xs text-slate-500">Every member works through these in order. Required items must be done before a step can be completed.</p>
-          </div>
-          <button onClick={() => setMilestones(ms => [...ms, P.newMilestone(`Step ${ms.length + 1}`)])}
-            className="inline-flex items-center gap-1 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 cursor-pointer"><Plus className="h-3.5 w-3.5" /> Add step</button>
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {milestones.map((m, i) => (
-            <div key={m.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">{i + 1}</span>
-                <input className="min-w-[160px] flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-semibold focus:outline-none focus:border-indigo-400"
-                  value={m.name} onChange={e => patchM(i, { name: e.target.value })} />
-                <label className="flex items-center gap-1 text-xs text-slate-600">Limit
-                  <input type="number" min={1} className="w-14 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs focus:outline-none"
-                    value={m.slaDays} onChange={e => patchM(i, { slaDays: Math.max(1, Number(e.target.value) || 1) })} />d</label>
-                <label className={`flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold ${m.requiresApproval ? "bg-amber-100 text-amber-800" : "bg-white text-slate-500 ring-1 ring-slate-200"}`}>
-                  <input type="checkbox" className="hidden" checked={m.requiresApproval} onChange={e => patchM(i, { requiresApproval: e.target.checked })} />
-                  <ShieldCheck className="h-3.5 w-3.5" /> Approval
-                </label>
-                <div className="flex items-center">
-                  <IconBtn disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp className="h-3.5 w-3.5" /></IconBtn>
-                  <IconBtn disabled={i === milestones.length - 1} onClick={() => move(i, 1)}><ArrowDown className="h-3.5 w-3.5" /></IconBtn>
-                  <IconBtn disabled={milestones.length <= 1 || inUse(m.id)} title={inUse(m.id) ? "Members are on this step — move them first" : "Remove"}
-                    onClick={() => setMilestones(ms => ms.filter((_, j) => j !== i))}><Trash2 className="h-3.5 w-3.5" /></IconBtn>
-                </div>
-              </div>
-
-              <div className="mt-2 space-y-1.5 pl-9">
-                {m.checklist.map((it, k) => (
-                  <div key={it.id} className="flex flex-wrap items-center gap-1.5">
-                    <input className="min-w-[140px] flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-400"
-                      placeholder="Required item, e.g. Site photo" value={it.text} onChange={e => patchItem(i, k, { text: e.target.value })} />
-                    <select className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs focus:outline-none" value={it.type}
-                      onChange={e => patchItem(i, k, { type: e.target.value as P.ChecklistItemType })}>
-                      {Object.entries(TYPE_LABELS).map(([k2, l]) => <option key={k2} value={k2}>{l}</option>)}
-                    </select>
-                    <label className="flex items-center gap-1 text-[11px] text-slate-600">
-                      <input type="checkbox" checked={it.required} onChange={e => patchItem(i, k, { required: e.target.checked })} className="accent-indigo-600" /> Required
-                    </label>
-                    <IconBtn onClick={() => patchM(i, { checklist: m.checklist.filter((_, j) => j !== k) })}><Trash2 className="h-3 w-3" /></IconBtn>
-                  </div>
-                ))}
-                <button onClick={() => patchM(i, { checklist: [...m.checklist, P.newChecklistItem()] })}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer"><Plus className="h-3 w-3" /> Add item</button>
-              </div>
-            </div>
-          ))}
-        </div>
+        <StepsEditor milestones={milestones} onChange={setMilestones} inUse={inUse} kind={project.kind} />
       </section>
 
       {/* Members */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <h3 className="text-sm font-bold text-slate-900">Members</h3>
-        <p className="text-xs text-slate-500">Each member gets their own copy of the steps and sees only their own progress.</p>
+        <p className="text-xs text-slate-500">{isPipeline ? "Each member adds and works their own items and sees only their own." : "Each member gets their own copy of the steps and sees only their own progress."}</p>
         <UserPicker users={users} selected={memberIds} onChange={setMemberIds} />
       </section>
 
       {/* Managers */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <h3 className="text-sm font-bold text-slate-900">Managers</h3>
-        <p className="text-xs text-slate-500">Can see every member's progress and approve steps. Client admins always can.</p>
+        <p className="text-xs text-slate-500">Can see every member's {isPipeline ? "items, assign them" : "progress"} and approve steps. Client admins always can.</p>
         <UserPicker users={users.filter(u => !P.isProjectAdmin(u))} selected={managerIds} onChange={setManagerIds} />
       </section>
 
@@ -162,6 +110,77 @@ export default function ProjectSettings({ project, users, runs, onSaved }: Props
         </div>
       </div>
     </div>
+  );
+}
+
+/** Ordered steps with their required uploads/entries — used by Settings and New project. */
+export function StepsEditor({ milestones, onChange, inUse = () => false, kind = "checklist" }: {
+  milestones: P.Milestone[]; onChange: React.Dispatch<React.SetStateAction<P.Milestone[]>>; inUse?: (mid: string) => boolean; kind?: P.ProjectKind;
+}) {
+  const setMilestones = onChange;
+  const patchM = (i: number, patch: Partial<P.Milestone>) => setMilestones(ms => ms.map((m, j) => j === i ? { ...m, ...patch } : m));
+  const move = (i: number, dir: -1 | 1) => setMilestones(ms => {
+    const j = i + dir; if (j < 0 || j >= ms.length) return ms;
+    const next = [...ms]; [next[i], next[j]] = [next[j], next[i]]; return next;
+  });
+  const patchItem = (i: number, k: number, patch: Partial<P.MilestoneChecklistItem>) =>
+    patchM(i, { checklist: milestones[i].checklist.map((it, j) => j === k ? { ...it, ...patch } : it) });
+
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-bold text-slate-900">Steps</h3>
+          <p className="text-xs text-slate-500">{kind === "pipeline" ? "Every item moves through these in order; completing the last step marks it Won." : "Every member works through these in order."} Required items must be done before a step can be completed.</p>
+        </div>
+        <button type="button" onClick={() => setMilestones(ms => [...ms, P.newMilestone(`Step ${ms.length + 1}`)])}
+          className="inline-flex items-center gap-1 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 cursor-pointer"><Plus className="h-3.5 w-3.5" /> Add step</button>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {milestones.map((m, i) => (
+          <div key={m.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">{i + 1}</span>
+              <input className="min-w-[160px] flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-semibold focus:outline-none focus:border-indigo-400"
+                value={m.name} onChange={e => patchM(i, { name: e.target.value })} />
+              <label className="flex items-center gap-1 text-xs text-slate-600">Limit
+                <input type="number" min={1} className="w-14 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs focus:outline-none"
+                  value={m.slaDays} onChange={e => patchM(i, { slaDays: Math.max(1, Number(e.target.value) || 1) })} />d</label>
+              <label className={`flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold ${m.requiresApproval ? "bg-amber-100 text-amber-800" : "bg-white text-slate-500 ring-1 ring-slate-200"}`}>
+                <input type="checkbox" className="hidden" checked={m.requiresApproval} onChange={e => patchM(i, { requiresApproval: e.target.checked })} />
+                <ShieldCheck className="h-3.5 w-3.5" /> Approval
+              </label>
+              <div className="flex items-center">
+                <IconBtn disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp className="h-3.5 w-3.5" /></IconBtn>
+                <IconBtn disabled={i === milestones.length - 1} onClick={() => move(i, 1)}><ArrowDown className="h-3.5 w-3.5" /></IconBtn>
+                <IconBtn disabled={milestones.length <= 1 || inUse(m.id)} title={inUse(m.id) ? "Open items are on this step — move them first" : "Remove"}
+                  onClick={() => setMilestones(ms => ms.filter((_, j) => j !== i))}><Trash2 className="h-3.5 w-3.5" /></IconBtn>
+              </div>
+            </div>
+
+            <div className="mt-2 space-y-1.5 pl-9">
+              {m.checklist.map((it, k) => (
+                <div key={it.id} className="flex flex-wrap items-center gap-1.5">
+                  <input className="min-w-[140px] flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-400"
+                    placeholder="Required item, e.g. Site photo" value={it.text} onChange={e => patchItem(i, k, { text: e.target.value })} />
+                  <select className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs focus:outline-none" value={it.type}
+                    onChange={e => patchItem(i, k, { type: e.target.value as P.ChecklistItemType })}>
+                    {Object.entries(TYPE_LABELS).map(([k2, l]) => <option key={k2} value={k2}>{l}</option>)}
+                  </select>
+                  <label className="flex items-center gap-1 text-[11px] text-slate-600">
+                    <input type="checkbox" checked={it.required} onChange={e => patchItem(i, k, { required: e.target.checked })} className="accent-indigo-600" /> Required
+                  </label>
+                  <IconBtn onClick={() => patchM(i, { checklist: m.checklist.filter((_, j) => j !== k) })}><Trash2 className="h-3 w-3" /></IconBtn>
+                </div>
+              ))}
+              <button type="button" onClick={() => patchM(i, { checklist: [...m.checklist, P.newChecklistItem()] })}
+                className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer"><Plus className="h-3 w-3" /> Add item</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
