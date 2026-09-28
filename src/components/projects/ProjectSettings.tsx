@@ -5,9 +5,10 @@
  * ProjectSettings — client-admin editor for a project: steps (rename,
  * reorder, time limit, approval, required uploads/entries), members (each works
  * through every step) and managers (can see everyone's progress and approve).
+ * The steps can be saved as a new template; the project can be deleted.
  */
 import React, { useState } from "react";
-import { ArrowUp, ArrowDown, Plus, Trash2, ShieldCheck, Save, Loader2, Archive, ArchiveRestore } from "lucide-react";
+import { ArrowUp, ArrowDown, Plus, Trash2, ShieldCheck, Save, Loader2, Archive, ArchiveRestore, BookmarkPlus } from "lucide-react";
 import type { User } from "../../types";
 import * as P from "../../services/projectsService";
 
@@ -25,9 +26,13 @@ interface Props {
   users: User[];
   runs: P.Deliverable[];
   onSaved: () => void;
+  /** Asks for confirmation, then deletes the project. */
+  onDelete: () => void;
+  /** Saves the given steps as a new template for this client. */
+  onSaveTemplate: (name: string, milestones: P.Milestone[], itemLabel: string) => Promise<unknown>;
 }
 
-export default function ProjectSettings({ project, users, runs, onSaved }: Props) {
+export default function ProjectSettings({ project, users, runs, onSaved, onDelete, onSaveTemplate }: Props) {
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
   const [itemLabel, setItemLabel] = useState(project.itemLabel);
@@ -39,12 +44,28 @@ export default function ProjectSettings({ project, users, runs, onSaved }: Props
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
+  const [tplName, setTplName] = useState("");
+  const [tplBusy, setTplBusy] = useState(false);
+  const [tplMsg, setTplMsg] = useState("");
+
+  const cleanSteps = () => milestones.map(m => ({ ...m, name: m.name.trim() || "Untitled", checklist: m.checklist.filter(it => it.text.trim()) }));
+
+  const saveAsTemplate = async () => {
+    if (!tplName.trim()) { setTplMsg("Name the new template."); return; }
+    setTplBusy(true); setTplMsg("");
+    try {
+      await onSaveTemplate(tplName.trim(), cleanSteps(), itemLabel.trim() || project.itemLabel);
+      setTplMsg(`Saved as template “${tplName.trim()}” — pick it next time you create a project.`); setTplName("");
+    } catch (e: any) { setTplMsg(e?.message || "Could not save the template."); }
+    finally { setTplBusy(false); }
+  };
+
   const inUse = (mid: string) => runs.some(d => d.projectId === project.id && d.milestoneId === mid && d.status === "open");
 
   const save = async () => {
     setSaving(true); setMsg("");
     try {
-      const cleaned = milestones.map(m => ({ ...m, name: m.name.trim() || "Untitled", checklist: m.checklist.filter(it => it.text.trim()) }));
+      const cleaned = cleanSteps();
       await P.updateProject(project.id, { name: name.trim() || project.name, description, color, ...(isPipeline ? { itemLabel: itemLabel.trim() || project.itemLabel } : {}), milestones: cleaned, memberIds, managerIds });
       setMsg("Saved.");
       onSaved();
@@ -80,12 +101,23 @@ export default function ProjectSettings({ project, users, runs, onSaved }: Props
       {/* Steps */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <StepsEditor milestones={milestones} onChange={setMilestones} inUse={inUse} kind={project.kind} />
+        <div className="mt-4 rounded-xl bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-600">Save these steps as a new template</div>
+          <div className="mt-1.5 flex gap-2">
+            <input className={input} value={tplName} onChange={e => setTplName(e.target.value)} placeholder={`e.g. ${project.name} steps`} />
+            <button type="button" onClick={saveAsTemplate} disabled={tplBusy}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-60 cursor-pointer">
+              {tplBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BookmarkPlus className="h-3.5 w-3.5" />} Save as template
+            </button>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">{tplMsg || "Reuse this set of steps for future projects. The template you started from stays unchanged."}</p>
+        </div>
       </section>
 
       {/* Members */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <h3 className="text-sm font-bold text-slate-900">Members</h3>
-        <p className="text-xs text-slate-500">{isPipeline ? "Each member adds and works their own items and sees only their own." : "Each member gets their own copy of the steps and sees only their own progress."}</p>
+        <p className="text-xs text-slate-500">{isPipeline ? "Each member adds and works their own items and sees only their own." : "Each member gets their own copy of the steps and sees only their own progress."} To take someone off and clear their progress, use the remove button on the Team tab.</p>
         <UserPicker users={users} selected={memberIds} onChange={setMemberIds} />
       </section>
 
@@ -97,10 +129,16 @@ export default function ProjectSettings({ project, users, runs, onSaved }: Props
       </section>
 
       <div className="sticky bottom-3 flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur">
-        <button onClick={async () => { await P.updateProject(project.id, { status: project.status === "archived" ? "active" : "archived" }); onSaved(); }}
-          className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer">
-          {project.status === "archived" ? <><ArchiveRestore className="h-4 w-4" /> Restore project</> : <><Archive className="h-4 w-4" /> Archive project</>}
-        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={async () => { await P.updateProject(project.id, { status: project.status === "archived" ? "active" : "archived" }); onSaved(); }}
+            className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer">
+            {project.status === "archived" ? <><ArchiveRestore className="h-4 w-4" /> Restore</> : <><Archive className="h-4 w-4" /> Archive</>}
+          </button>
+          <button onClick={onDelete}
+            className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer">
+            <Trash2 className="h-4 w-4" /> Delete
+          </button>
+        </div>
         <div className="flex items-center gap-3">
           {msg && <span className="text-xs font-medium text-slate-500">{msg}</span>}
           <button onClick={save} disabled={saving}

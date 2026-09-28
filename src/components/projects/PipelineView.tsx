@@ -18,7 +18,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus, Search, LayoutGrid, List, Phone, MessageCircle, CalendarClock, AlertTriangle, ShieldCheck, Trophy,
-  XCircle, X, Loader2, Save, Undo2, Trash2, IndianRupee,
+  XCircle, X, Loader2, Save, Undo2, Trash2, IndianRupee, UserMinus,
 } from "lucide-react";
 import type { User } from "../../types";
 import * as P from "../../services/projectsService";
@@ -305,8 +305,10 @@ function Stat({ label, value, sub, color }: { label: string; value: string; sub?
 }
 
 // ─── Team numbers ────────────────────────────────────────────────────────────
-export function PipelineTeam({ project, items, users, selected, onSelect }: {
+export function PipelineTeam({ project, items, users, selected, onSelect, onRemove }: {
   project: P.Project; items: P.Deliverable[]; users: User[]; selected?: string; onSelect: (id: string) => void;
+  /** Client admin only: take a member off the project. */
+  onRemove?: (u: User) => void;
 }) {
   const rows = project.memberIds.map(id => {
     const mine = items.filter(d => d.ownerUserId === id);
@@ -328,6 +330,7 @@ export function PipelineTeam({ project, items, users, selected, onSelect }: {
               <th className="px-2 py-2.5 text-right">Lost</th>
               <th className="px-2 py-2.5 text-right">Conv.</th>
               <th className="px-4 py-2.5 text-right">Won ₹</th>
+              {onRemove && <th className="w-8" />}
             </tr>
           </thead>
           <tbody>
@@ -355,6 +358,12 @@ export function PipelineTeam({ project, items, users, selected, onSelect }: {
                 <td className="px-2 py-2.5 text-right tabular-nums text-slate-500">{s.lost}</td>
                 <td className="px-2 py-2.5 text-right font-semibold tabular-nums" style={{ color: s.won + s.lost ? P.progressColor(s.conversion) : "#94a3b8" }}>{s.won + s.lost ? `${s.conversion}%` : "—"}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{s.wonValue ? P.formatINR(s.wonValue) : "—"}</td>
+                {onRemove && (
+                  <td className="pr-3">
+                    <button title="Remove from project" onClick={e => { e.stopPropagation(); onRemove(u); }}
+                      className="rounded-lg p-1.5 text-slate-300 hover:bg-red-50 hover:text-red-600 cursor-pointer"><UserMinus className="h-4 w-4" /></button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

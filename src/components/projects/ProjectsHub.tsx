@@ -18,7 +18,7 @@
  */
 import React, { useEffect, useState } from "react";
 import {
-  ArrowLeft, Plus, FolderKanban, Loader2, ShieldCheck, AlertTriangle, X, Users, Settings2, User as UserIcon, Trophy,
+  ArrowLeft, Plus, FolderKanban, Loader2, ShieldCheck, AlertTriangle, X, Users, Settings2, User as UserIcon, Trophy, UserMinus, BookmarkPlus,
 } from "lucide-react";
 import type { User } from "../../types";
 import * as P from "../../services/projectsService";
@@ -54,6 +54,10 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
   const [ownerFilter, setOwnerFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  // Templates this client may use: the built-ins the super admin enabled + its own saved ones.
+  const [tplAccess, setTplAccess] = useState<string[] | null>(null);
+  const [savedTpls, setSavedTpls] = useState<P.SavedTemplate[]>([]);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
 
   const load = async () => {
     setLoadErr("");
@@ -64,6 +68,14 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
       const created = await P.ensureMemberRuns(ps, rs, clientUsers,
         { all: p => P.canManageProject(activeUser, p), self: activeUser.id }).catch(() => []);
       setProjects(ps); setRuns([...rs, ...created]);
+      if (isAdmin) {
+        // Missing template tables (migration not applied) → fall back to every built-in.
+        const [acc, saved] = await Promise.all([
+          P.getTemplateAccess(clientId).catch(() => null),
+          P.getSavedTemplates(clientId).catch(() => [] as P.SavedTemplate[]),
+        ]);
+        setTplAccess(acc); setSavedTpls(saved);
+      }
     } catch (e: any) {
       setLoadErr(e?.message || "Could not load projects.");
     } finally { setLoading(false); }
@@ -73,6 +85,33 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
   const replaceRun = (d: P.Deliverable) => setRuns(rs => rs.some(x => x.id === d.id) ? rs.map(x => x.id === d.id ? d : x) : [...rs, d]);
   const removeRun = (id: string) => { setRuns(rs => rs.filter(x => x.id !== id)); setOpenRunId(""); };
   const userOf = (id: string) => clientUsers.find(u => u.id === id);
+  const templates = P.templateOptions(tplAccess, savedTpls);
+  const saveTemplate = async (input: { name: string; kind: P.ProjectKind; itemLabel: string; milestones: P.Milestone[]; basedOn?: string; blurb?: string }) => {
+    const t = await P.saveTemplate({ ...input, blurb: input.blurb || "", clientId, createdBy: activeUser.id });
+    setSavedTpls(ts => [...ts, t]);
+    return t;
+  };
+  const askDeleteTemplate = (t: P.TemplateOption) => setConfirm({
+    title: `Delete template “${t.name}”?`,
+    body: "Projects already created from it are not affected.",
+    action: "Delete template",
+    run: async () => { await P.deleteSavedTemplate(t.id); setSavedTpls(ts => ts.filter(x => x.id !== t.id)); },
+  });
+  const askRemoveMember = (p: P.Project, u: User) => setConfirm({
+    title: `Remove ${u.name} from “${p.name}”?`,
+    body: p.kind === "checklist"
+      ? "Their progress on this project (steps, uploads and updates) will be deleted. You can add them again later — they'll start from step 1."
+      : `They won't see this project any more. Their ${plural(p.itemLabel).toLowerCase()} stay in the pipeline for the team.`,
+    action: "Remove",
+    run: async () => { await P.removeMember(p, u.id); setOpenRunId(""); await load(); },
+  });
+  const askDeleteProject = (p: P.Project) => setConfirm({
+    title: `Delete “${p.name}”?`,
+    body: `This permanently deletes the project for everyone, with all members' progress${p.kind === "pipeline" ? `, ${plural(p.itemLabel).toLowerCase()}` : ""} and uploads history. To just hide it, archive it instead.`,
+    action: "Delete project",
+    run: async () => { await P.deleteProject(p.id); setProjectId(""); setOpenRunId(""); await load(); },
+  });
+  const confirmModal = confirm && <ConfirmModal state={confirm} onClose={() => setConfirm(null)} />;
 
   if (loading) {
     return <div className="flex h-64 items-center justify-center text-slate-400"><Loader2 className="h-6 w-6 animate-spin" /></div>;
@@ -177,13 +216,15 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
         )}
 
         {showCreate && (
-          <CreateProjectModal users={clientUsers} onClose={() => setShowCreate(false)} onCreate={async (input) => {
+          <CreateProjectModal users={clientUsers} templates={templates} onSaveTemplate={saveTemplate} onDeleteTemplate={askDeleteTemplate}
+            onClose={() => setShowCreate(false)} onCreate={async (input) => {
             const p = await P.createProject({ ...input, clientId, createdBy: activeUser.id });
             setShowCreate(false);
             await load();
             setProjectId(p.id); setTab("team");
           }} />
         )}
+        {confirmModal}
       </div>
     );
   }
@@ -231,7 +272,8 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
       )}
       {isPipeline && activeTab === "team" && (
         <div className="space-y-4">
-          <PipelineTeam project={project} items={P.itemsOf(runs, project.id)} users={clientUsers} selected={ownerFilter} onSelect={setOwnerFilter} />
+          <PipelineTeam project={project} items={P.itemsOf(runs, project.id)} users={clientUsers} selected={ownerFilter} onSelect={setOwnerFilter}
+            onRemove={isAdmin ? u => askRemoveMember(project, u) : undefined} />
           <PipelineView project={project} items={P.itemsOf(runs, project.id)} users={clientUsers}
             showOwners canAdd={project.status === "active" && project.memberIds.length > 0} onOpen={setOpenRunId} onAdd={() => setShowAddItem(true)}
             ownerFilter={ownerFilter} onOwnerFilter={setOwnerFilter} />
@@ -243,10 +285,13 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
             {project.milestones.length ? "Setting up your steps… refresh in a moment." : "This project has no steps yet."}
           </div>)}
       {!isPipeline && activeTab === "team" && (
-        <TeamView project={project} runs={runs} users={clientUsers} onOpen={setOpenRunId} />
+        <TeamView project={project} runs={runs} users={clientUsers} onOpen={setOpenRunId}
+          onRemove={isAdmin ? u => askRemoveMember(project, u) : undefined} />
       )}
       {activeTab === "settings" && (
-        <ProjectSettings key={project.id + project.milestones.length} project={project} users={clientUsers} runs={runs} onSaved={load} />
+        <ProjectSettings key={project.id + project.milestones.length} project={project} users={clientUsers} runs={runs} onSaved={load}
+          onDelete={() => askDeleteProject(project)}
+          onSaveTemplate={(name, milestones, itemLabel) => saveTemplate({ name, kind: project.kind, itemLabel, milestones, blurb: `Saved from “${project.name}”` })} />
       )}
 
       {isPipeline && openRun && (
@@ -263,6 +308,7 @@ export default function ProjectsHub({ activeUser, clientId, clientUsers, onBack 
         <StepRunDrawer project={project} run={openRun} owner={userOf(openRun.ownerUserId)} actor={actor}
           canManage={manages} onChanged={replaceRun} onClose={() => setOpenRunId("")} />
       )}
+      {confirmModal}
     </div>
   );
 }
@@ -279,8 +325,10 @@ function teamStats(p: P.Project, runs: P.Deliverable[]) {
   };
 }
 
-function TeamView({ project, runs, users, onOpen }: {
+function TeamView({ project, runs, users, onOpen, onRemove }: {
   project: P.Project; runs: P.Deliverable[]; users: User[]; onOpen: (runId: string) => void;
+  /** Client admin only: take a member off the project. */
+  onRemove?: (u: User) => void;
 }) {
   const s = teamStats(project, runs);
   const rows = project.memberIds.map(id => {
@@ -309,8 +357,8 @@ function TeamView({ project, runs, users, onOpen }: {
             const pending = run.status === "open" && run.approvals[run.milestoneId]?.status === "pending";
             const overdue = P.isOverdue(run, project);
             return (
-              <li key={u.id}>
-                <button onClick={() => onOpen(run.id)} className="flex w-full items-center gap-3 rounded-2xl px-2 py-3 text-left hover:bg-slate-50 cursor-pointer">
+              <li key={u.id} className="flex items-center">
+                <button onClick={() => onOpen(run.id)} className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl px-2 py-3 text-left hover:bg-slate-50 cursor-pointer">
                   <img src={u.avatar} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -326,6 +374,10 @@ function TeamView({ project, runs, users, onOpen }: {
                   </div>
                   <span className="w-12 shrink-0 text-right text-sm font-bold tabular-nums" style={{ color: P.progressColor(pct) }}>{pct}%</span>
                 </button>
+                {onRemove && (
+                  <button title="Remove from project" onClick={() => onRemove(u)}
+                    className="ml-1 shrink-0 rounded-lg p-2 text-slate-300 hover:bg-red-50 hover:text-red-600 cursor-pointer"><UserMinus className="h-4 w-4" /></button>
+                )}
               </li>
             );
           })}
@@ -382,17 +434,37 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 
 const inputCls = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none";
 
-function CreateProjectModal({ users, onClose, onCreate }: {
-  users: User[]; onClose: () => void;
+function CreateProjectModal({ users, templates, onSaveTemplate, onDeleteTemplate, onClose, onCreate }: {
+  users: User[]; templates: P.TemplateOption[]; onClose: () => void;
+  onSaveTemplate: (input: { name: string; kind: P.ProjectKind; itemLabel: string; milestones: P.Milestone[]; basedOn?: string }) => Promise<P.SavedTemplate>;
+  onDeleteTemplate: (t: P.TemplateOption) => void;
   onCreate: (input: { name: string; description: string; color: string; kind: P.ProjectKind; itemLabel: string; milestones: P.Milestone[]; memberIds: string[]; managerIds: string[] }) => Promise<void>;
 }) {
-  const [tplId, setTplId] = useState(P.PROJECT_TEMPLATES[0].id);
+  const [tplId, setTplId] = useState(templates[0]?.id || "");
   // A fresh, editable copy of the chosen template's steps — the template itself never changes.
-  const [milestones, setMilestones] = useState<P.Milestone[]>(() => P.milestonesFromTemplate(P.PROJECT_TEMPLATES[0]));
+  const [milestones, setMilestones] = useState<P.Milestone[]>(() => templates[0]?.build() || []);
   const [editSteps, setEditSteps] = useState(false);
-  const [itemLabel, setItemLabel] = useState(P.PROJECT_TEMPLATES[0].itemLabel || "Item");
-  const tpl = P.PROJECT_TEMPLATES.find(t => t.id === tplId)!;
-  const pickTemplate = (t: P.ProjectTemplate) => { setTplId(t.id); setMilestones(P.milestonesFromTemplate(t)); setItemLabel(t.itemLabel || "Item"); };
+  const [itemLabel, setItemLabel] = useState(templates[0]?.itemLabel || "Item");
+  // Kept separately: the chosen template may be deleted while the dialog is open.
+  const [kind, setKind] = useState<P.ProjectKind>(templates[0]?.kind || "checklist");
+  const tpl = templates.find(t => t.id === tplId);
+  const pickTemplate = (t: P.TemplateOption) => { setTplId(t.id); setKind(t.kind); setMilestones(t.build()); setItemLabel(t.itemLabel || "Item"); setTplName(""); setTplMsg(""); };
+  // "Save as template" — the edited steps under a new name; the original stays as is.
+  const [tplName, setTplName] = useState("");
+  const [tplBusy, setTplBusy] = useState(false);
+  const [tplMsg, setTplMsg] = useState("");
+  const saveAsTemplate = async () => {
+    const n = tplName.trim();
+    if (!n) { setTplMsg("Name the new template."); return; }
+    if (templates.some(t => t.name.toLowerCase() === n.toLowerCase())) { setTplMsg("A template with that name already exists."); return; }
+    setTplBusy(true); setTplMsg("");
+    try {
+      const saved = await onSaveTemplate({ name: n, kind, itemLabel: itemLabel.trim() || "Item", basedOn: tplId,
+        milestones: milestones.map(m => ({ ...m, name: m.name.trim() || "Untitled", checklist: m.checklist.filter(it => it.text.trim()) })) });
+      setTplId(saved.id); setTplName(""); setTplMsg(`Saved as “${saved.name}”.`);
+    } catch (e: any) { setTplMsg(e?.message || "Could not save the template."); }
+    finally { setTplBusy(false); }
+  };
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState("indigo");
@@ -409,7 +481,7 @@ function CreateProjectModal({ users, onClose, onCreate }: {
         if (!memberIds.length) { setErr("Assign at least one member."); return; }
         setBusy(true); setErr("");
         try {
-          await onCreate({ name: name.trim(), description: description.trim(), color, kind: tpl.kind, itemLabel: itemLabel.trim() || "Item",
+          await onCreate({ name: name.trim(), description: description.trim(), color, kind, itemLabel: itemLabel.trim() || "Item",
             milestones: milestones.map(m => ({ ...m, name: m.name.trim() || "Untitled", checklist: m.checklist.filter(it => it.text.trim()) })),
             memberIds, managerIds });
         } catch (e: any) { setErr(e?.message || "Could not create the project."); setBusy(false); }
@@ -420,27 +492,47 @@ function CreateProjectModal({ users, onClose, onCreate }: {
           {([
             ["pipeline", "Pipelines", "Each member adds many items (leads, orders…) that move through the steps and end Won or Lost."],
             ["checklist", "Checklists", "Every member works through all the steps once."],
-          ] as const).map(([kind, title, hint]) => (
-            <div key={kind} className="mb-3">
+          ] as const).filter(([k]) => templates.some(t => t.kind === k)).map(([kindOf, title, hint]) => (
+            <div key={kindOf} className="mb-3">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-700">{title}</div>
               <p className="mb-1.5 text-[11px] text-slate-400">{hint}</p>
               <div className="grid gap-2 sm:grid-cols-2">
-                {P.PROJECT_TEMPLATES.filter(t => t.kind === kind).map(t => (
-                  <button type="button" key={t.id} onClick={() => pickTemplate(t)}
-                    className={`rounded-2xl border p-3 text-left transition cursor-pointer ${tplId === t.id ? "border-indigo-500 bg-indigo-50/60 ring-1 ring-indigo-500" : "border-slate-200 hover:border-slate-300"}`}>
-                    <div className="text-sm font-bold text-slate-900">{t.name}</div>
+                {templates.filter(t => t.kind === kindOf).map(t => (
+                  <div key={t.id} role="button" tabIndex={0} onClick={() => pickTemplate(t)} onKeyDown={e => { if (e.key === "Enter") pickTemplate(t); }}
+                    className={`relative rounded-2xl border p-3 text-left transition cursor-pointer ${tplId === t.id ? "border-indigo-500 bg-indigo-50/60 ring-1 ring-indigo-500" : "border-slate-200 hover:border-slate-300"}`}>
+                    <div className="flex items-center gap-1.5 pr-6 text-sm font-bold text-slate-900">
+                      <span className="truncate">{t.name}</span>
+                      {t.custom && <span className="shrink-0 rounded-md bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-violet-700">Saved</span>}
+                    </div>
                     <div className="mt-0.5 text-[11px] text-slate-500">{t.blurb}</div>
-                  </button>
+                    {t.custom && (
+                      <button type="button" title="Delete this saved template" onClick={e => { e.stopPropagation(); onDeleteTemplate(t); }}
+                        className="absolute right-2 top-2 rounded-lg p-1 text-slate-300 hover:bg-red-50 hover:text-red-600 cursor-pointer"><X className="h-3.5 w-3.5" /></button>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>
           ))}
           {editSteps ? (
             <div className="mt-3 rounded-2xl border border-slate-200 p-3">
-              <StepsEditor milestones={milestones} onChange={setMilestones} kind={tpl.kind} />
+              <StepsEditor milestones={milestones} onChange={setMilestones} kind={kind} />
+              <div className="mt-3 rounded-xl bg-slate-50 p-2.5">
+                <div className="text-[11px] font-semibold text-slate-600">Save these steps as a new template for later</div>
+                <div className="mt-1.5 flex gap-2">
+                  <input className={inputCls} value={tplName} onChange={e => setTplName(e.target.value)}
+                    placeholder={`e.g. ${tpl?.name || "My template"} (our version)`}
+                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); saveAsTemplate(); } }} />
+                  <button type="button" onClick={saveAsTemplate} disabled={tplBusy}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-60 cursor-pointer">
+                    {tplBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BookmarkPlus className="h-3.5 w-3.5" />} Save as template
+                  </button>
+                </div>
+                <p className="mt-1 text-[10px] text-slate-400">{tplMsg || `“${tpl?.name || "The original"}” stays as it is.`}</p>
+              </div>
               <div className="mt-3 flex justify-between">
-                <button type="button" onClick={() => { const t = P.PROJECT_TEMPLATES.find(x => x.id === tplId); if (t) setMilestones(P.milestonesFromTemplate(t)); }}
-                  className="text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer">Reset to template</button>
+                <button type="button" onClick={() => { if (tpl) setMilestones(tpl.build()); }} disabled={!tpl}
+                  className="text-xs font-semibold text-slate-500 hover:text-slate-800 disabled:opacity-40 cursor-pointer">Reset to template</button>
                 <button type="button" onClick={() => setEditSteps(false)}
                   className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer">Done editing</button>
               </div>
@@ -459,7 +551,7 @@ function CreateProjectModal({ users, onClose, onCreate }: {
                 <span>Use as is, or</span>
                 <button type="button" onClick={() => setEditSteps(true)}
                   className="font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer">customise the steps</button>
-                <span>— rename, reorder, add/remove steps and required uploads. You can also change them later in Settings.</span>
+                <span>— rename, reorder, add/remove steps and required uploads, and save your version as a new template. You can also change them later in Settings.</span>
               </div>
             </>
           )}
@@ -467,7 +559,7 @@ function CreateProjectModal({ users, onClose, onCreate }: {
 
         <label className="block space-y-1"><span className="text-xs font-semibold text-slate-500">Project name</span>
           <input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Whitefield outlet opening" autoFocus /></label>
-        {tpl.kind === "pipeline" && (
+        {kind === "pipeline" && (
           <label className="block space-y-1"><span className="text-xs font-semibold text-slate-500">What do you call each item?</span>
             <input className={inputCls} value={itemLabel} onChange={e => setItemLabel(e.target.value)} placeholder="Lead, Order, Candidate…" /></label>
         )}
@@ -481,11 +573,11 @@ function CreateProjectModal({ users, onClose, onCreate }: {
         </div>
 
         <div>
-          <div className="text-xs font-semibold text-slate-500">{tpl.kind === "pipeline" ? `Members — each adds and works their own ${plural(itemLabel || "item").toLowerCase()}` : "Members — each works through all the steps"}</div>
+          <div className="text-xs font-semibold text-slate-500">{kind === "pipeline" ? `Members — each adds and works their own ${plural(itemLabel || "item").toLowerCase()}` : "Members — each works through all the steps"}</div>
           <UserPicker users={users} selected={memberIds} onChange={setMemberIds} />
         </div>
         <div>
-          <div className="text-xs font-semibold text-slate-500">Managers (optional) — can see everyone's {tpl.kind === "pipeline" ? plural(itemLabel || "item").toLowerCase() : "progress"}, approve steps{tpl.kind === "pipeline" ? " and assign" : ""}</div>
+          <div className="text-xs font-semibold text-slate-500">Managers (optional) — can see everyone's {kind === "pipeline" ? plural(itemLabel || "item").toLowerCase() : "progress"}, approve steps{kind === "pipeline" ? " and assign" : ""}</div>
           <UserPicker users={users.filter(u => !P.isProjectAdmin(u))} selected={managerIds} onChange={setManagerIds} />
         </div>
 
@@ -497,6 +589,32 @@ function CreateProjectModal({ users, onClose, onCreate }: {
         </div>
       </form>
     </Modal>
+  );
+}
+
+// ─── Confirm (in-app: native confirm() can be suppressed in the installed PWA) ─
+interface ConfirmState { title: string; body: string; action: string; run: () => Promise<void> }
+
+function ConfirmModal({ state, onClose }: { state: ConfirmState; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-[2px]" onClick={() => !busy && onClose()}>
+      <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-base font-bold text-slate-900">{state.title}</h3>
+        <p className="mt-1.5 text-sm text-slate-600">{state.body}</p>
+        {err && <div className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{err}</div>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
+          <button disabled={busy} onClick={async () => {
+            setBusy(true); setErr("");
+            try { await state.run(); onClose(); } catch (e: any) { setErr(e?.message || "Something went wrong."); setBusy(false); }
+          }} className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60 cursor-pointer">
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />} {state.action}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

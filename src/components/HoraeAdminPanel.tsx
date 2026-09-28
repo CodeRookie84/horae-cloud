@@ -32,6 +32,7 @@ import WhatsAppBillingReport from "./WhatsAppBillingReport";
 import ChangePasswordModal from "./ChangePasswordModal";
 import { store } from "../services/store";
 import * as plans from "../services/plans";
+import * as projects from "../services/projectsService";
 
 /** Read-only preview of the features a plan (+ Training add-on) grants. */
 function PlanFeaturePreview({ plan, trainingAddon }: { plan: plans.PlanId; trainingAddon: boolean }) {
@@ -69,6 +70,48 @@ function TrainingAddonToggle({ plan, value, onChange }: { plan: plans.PlanId; va
       />
       <span>Add <span className="text-indigo-700">Training</span> as a combo add-on</span>
     </label>
+  );
+}
+
+/** Which built-in Projects templates this client may use — only shown when the
+ *  plan includes Projects. The blank templates are always available. */
+function ProjectTemplatePicker({ plan, trainingAddon, value, onChange, loading }: {
+  plan: plans.PlanId; trainingAddon: boolean; value: string[]; onChange: (ids: string[]) => void; loading?: boolean;
+}) {
+  if (!plans.planFeatures(plan, { trainingAddon, createdAt: new Date().toISOString() }).includes("projects")) return null;
+  const choosable = projects.PROJECT_TEMPLATES.filter(t => !projects.ALWAYS_AVAILABLE_TEMPLATES.includes(t.id));
+  const toggle = (id: string, on: boolean) => onChange(on ? [...value, id] : value.filter(x => x !== id));
+  return (
+    <div className="space-y-2 text-left border border-slate-100 p-3 rounded-xl bg-slate-50/50">
+      <div className="flex items-center justify-between">
+        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Project Templates</label>
+        <div className="flex gap-2 text-[10px] font-semibold">
+          <button type="button" onClick={() => onChange(choosable.map(t => t.id))} className="text-indigo-600 hover:text-indigo-800 cursor-pointer">All</button>
+          <button type="button" onClick={() => onChange([])} className="text-slate-400 hover:text-slate-600 cursor-pointer">None</button>
+        </div>
+      </div>
+      {loading ? (
+        <p className="text-[10px] text-slate-400 font-semibold">Loading…</p>
+      ) : (
+        (["pipeline", "checklist"] as const).map(kind => (
+          <div key={kind}>
+            <div className="text-[10px] font-semibold text-slate-400 mb-1">{kind === "pipeline" ? "Pipelines" : "Checklists"}</div>
+            <div className="flex flex-wrap gap-1.5">
+              {choosable.filter(t => t.kind === kind).map(t => {
+                const on = value.includes(t.id);
+                return (
+                  <button type="button" key={t.id} title={t.blurb} onClick={() => toggle(t.id, !on)}
+                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border cursor-pointer transition-colors ${on ? "text-indigo-700 bg-indigo-50 border-indigo-200" : "text-slate-400 bg-white border-slate-200 hover:border-slate-300"}`}>
+                    {on && "✓ "}{t.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))
+      )}
+      <p className="text-[10px] text-slate-400">Blank pipeline / checklist are always available. The client admin can also save their own edited versions.</p>
+    </div>
   );
 }
 
@@ -136,6 +179,7 @@ export default function HoraeAdminPanel({
   const [clientPlan, setClientPlan] = useState<plans.PlanId>("Pro");
   const [clientTrainingAddon, setClientTrainingAddon] = useState<boolean>(false);
   const [clientLanguages, setClientLanguages] = useState<string[]>(["hi", "kn", "ta"]);
+  const [clientProjectTemplates, setClientProjectTemplates] = useState<string[]>([]);
   const [clientSuccessMsg, setClientSuccessMsg] = useState("");
 
   // State for provisioning a demo sandbox.
@@ -186,6 +230,8 @@ export default function HoraeAdminPanel({
   const [editTrainingAddon, setEditTrainingAddon] = useState<boolean>(false);
   const [editDigestEnabled, setEditDigestEnabled] = useState<boolean>(true);
   const [editLanguages, setEditLanguages] = useState<string[]>([]);
+  const [editProjectTemplates, setEditProjectTemplates] = useState<string[]>([]);
+  const [editProjectTemplatesLoading, setEditProjectTemplatesLoading] = useState(false);
 
   // State for deleting a client
   const [deletingClientId, setDeletingClientId] = useState<string | null>(null);
@@ -282,7 +328,12 @@ export default function HoraeAdminPanel({
   const handleCreateClient = (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientId.trim() || !clientName.trim()) return;
-    onAddClient(clientId.toLowerCase().replace(/[^a-z0-9-]/g, ''), clientName, clientLogo, clientPlan, plans.trainingAddonApplies(clientPlan) && clientTrainingAddon, clientLanguages);
+    const newClientId = clientId.toLowerCase().replace(/[^a-z0-9-]/g, '');
+    onAddClient(newClientId, clientName, clientLogo, clientPlan, plans.trainingAddonApplies(clientPlan) && clientTrainingAddon, clientLanguages);
+    // Only the templates picked here are offered to this client (blank ones always are).
+    projects.setTemplateAccess(newClientId, clientProjectTemplates)
+      .catch(err => alert(`Client created, but saving its project templates failed: ${err?.message || err}. Set them via Edit.`));
+    setClientProjectTemplates([]);
     setClientSuccessMsg(`Successfully onboarded Client: ${clientName} (ID: ${clientId.toLowerCase().replace(/[^a-z0-9-]/g, '')})!`);
     setClientId("");
     setClientName("");
@@ -626,6 +677,9 @@ export default function HoraeAdminPanel({
                   <TrainingAddonToggle plan={clientPlan} value={clientTrainingAddon} onChange={setClientTrainingAddon} />
                   <PlanFeaturePreview plan={clientPlan} trainingAddon={clientTrainingAddon} />
 
+                  {/* Projects templates this client may use */}
+                  <ProjectTemplatePicker plan={clientPlan} trainingAddon={clientTrainingAddon} value={clientProjectTemplates} onChange={setClientProjectTemplates} />
+
                   {/* Translation languages available to this client's staff */}
                   <LanguageMultiSelect value={clientLanguages} onChange={setClientLanguages} />
 
@@ -690,6 +744,12 @@ export default function HoraeAdminPanel({
                                 setEditTrainingAddon(!!client.trainingAddon);
                                 setEditDigestEnabled(client.digestEnabled !== false);
                                 setEditLanguages(client.languages || []);
+                                // No access row yet = legacy client, which sees every template.
+                                setEditProjectTemplatesLoading(true);
+                                projects.getTemplateAccess(client.id)
+                                  .then(ids => setEditProjectTemplates(ids ?? projects.PROJECT_TEMPLATES.map(t => t.id).filter(id => !projects.ALWAYS_AVAILABLE_TEMPLATES.includes(id))))
+                                  .catch(() => setEditProjectTemplates([]))
+                                  .finally(() => setEditProjectTemplatesLoading(false));
                               }}
                               className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
                               title="Edit Client"
@@ -1229,6 +1289,10 @@ export default function HoraeAdminPanel({
                 onSubmit={(e) => {
                   e.preventDefault();
                   onUpdateClient(editingClient.id, editName, editLogo, editPlan, plans.trainingAddonApplies(editPlan) && editTrainingAddon, editLanguages, editDigestEnabled);
+                  if (!editProjectTemplatesLoading) {
+                    projects.setTemplateAccess(editingClient.id, editProjectTemplates)
+                      .catch(err => alert(`Saving project templates failed: ${err?.message || err}`));
+                  }
                   setEditingClient(null);
                 }}
                 className="space-y-4"
@@ -1299,6 +1363,10 @@ export default function HoraeAdminPanel({
 
                 {/* Daily-digest kill switch */}
                 <DigestToggle value={editDigestEnabled} onChange={setEditDigestEnabled} />
+
+                {/* Projects templates this client may use */}
+                <ProjectTemplatePicker plan={editPlan} trainingAddon={editTrainingAddon} value={editProjectTemplates}
+                  onChange={setEditProjectTemplates} loading={editProjectTemplatesLoading} />
 
                 {/* Translation languages available to this client's staff */}
                 <LanguageMultiSelect value={editLanguages} onChange={setEditLanguages} />

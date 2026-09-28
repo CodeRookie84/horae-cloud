@@ -893,14 +893,14 @@ export default function TaskManagerWorkflows({
   const renderPriorityBadge = (p: string) => {
     switch(p) {
       case "Critical":
-        return <span className="bg-red-50 text-red-750 font-medium border border-red-200 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0"><span className="h-1.5 w-1.5 rounded-full bg-red-600 animate-ping" />🔴 Critical (Within 2 Hrs)</span>;
+        return <span className="bg-red-50 text-red-750 font-medium border border-red-200 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0"><span className="h-1.5 w-1.5 rounded-full bg-red-600 animate-ping" />🔴 Critical</span>;
       case "High":
-        return <span className="bg-orange-50 text-orange-750 font-medium border border-orange-200 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0">🟠 High (EOD)</span>;
+        return <span className="bg-orange-50 text-orange-750 font-medium border border-orange-200 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0">🟠 High</span>;
       case "Medium":
-        return <span className="bg-amber-50 text-slate-700 font-medium border border-amber-250 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0">🟡 Medium (EOD Tomorrow)</span>;
+        return <span className="bg-amber-50 text-slate-700 font-medium border border-amber-250 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0">🟡 Medium</span>;
       case "Low":
       default:
-        return <span className="bg-emerald-50 text-emerald-700 font-medium border border-emerald-255 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0">🟢 Low (&gt; 2 Days)</span>;
+        return <span className="bg-emerald-50 text-emerald-700 font-medium border border-emerald-255 px-2 py-0.5 rounded-lg text-[11px] tracking-wide flex items-center gap-1 shrink-0">🟢 Low</span>;
     }
   };
 
@@ -1173,10 +1173,9 @@ export default function TaskManagerWorkflows({
                 
                 const headerColorClass = 'bg-[#162D4E] text-white';
                                          
-                const prioLabel = prio === 'Critical' ? 'Critical - Within 2 hours' : 
-                                  prio === 'High' ? 'High - EOD' : 
-                                  prio === 'Medium' ? 'Medium - Tomorrow' : 
-                                  'Low - More than 2 days';
+                // Priority can be set manually now, so the group shows just the name —
+                // a timing hint ("EOD", "within 2 hours") could contradict the due date.
+                const prioLabel = prio;
                 
                 return (
                   <React.Fragment key={prio}>
@@ -2054,10 +2053,9 @@ export default function TaskManagerWorkflows({
                                          prio === 'Medium' ? 'bg-amber-100/80 text-amber-800 border-amber-200' :
                                          'bg-emerald-100/80 text-emerald-800 border-emerald-200';
                                          
-                const prioLabel = prio === 'Critical' ? 'Critical - Within 2 hours' : 
-                                  prio === 'High' ? 'High - EOD' : 
-                                  prio === 'Medium' ? 'Medium - Tomorrow' : 
-                                  'Low - More than 2 days';
+                // Priority can be set manually now, so the group shows just the name —
+                // a timing hint ("EOD", "within 2 hours") could contradict the due date.
+                const prioLabel = prio;
                 return (
                   <div key={prio} className="mb-3 last:mb-0">
                     <div className={`px-3 py-1.5 text-[12px] font-bold sticky top-0 z-10 border-b uppercase tracking-wider flex items-center justify-between ${headerColorClass}`}>

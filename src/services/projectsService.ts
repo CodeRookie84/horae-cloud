@@ -307,6 +307,89 @@ export function milestonesFromTemplate(tpl: ProjectTemplate): Milestone[] {
   }));
 }
 
+// ─── Per-client templates ────────────────────────────────────────────────────
+/** Blank templates are always offered — they're "build your own", not content. */
+export const ALWAYS_AVAILABLE_TEMPLATES = ["blank-pipeline", "blank"];
+
+/** A template the New-project dialog can offer: a built-in or the client's own. */
+export interface TemplateOption {
+  id: string; name: string; blurb: string; kind: ProjectKind; itemLabel?: string;
+  /** true = the client's own saved template (can be deleted). */
+  custom: boolean;
+  /** A fresh copy of the steps with new ids — the template itself never changes. */
+  build: () => Milestone[];
+}
+
+export interface SavedTemplate {
+  id: string; clientId: string; name: string; blurb: string; kind: ProjectKind;
+  itemLabel: string; milestones: Milestone[]; basedOn?: string; createdAt: string;
+}
+
+const mapSavedTemplate = (r: any): SavedTemplate => ({
+  id: r.id, clientId: r.client_id, name: r.name, blurb: r.blurb || "",
+  kind: r.kind === "pipeline" ? "pipeline" : "checklist", itemLabel: r.item_label || "Item",
+  milestones: Array.isArray(r.milestones) ? r.milestones : [], basedOn: r.based_on || undefined,
+  createdAt: r.created_at,
+});
+
+/** Re-key a saved step list so a new project never shares step/item ids with its template. */
+const cloneMilestones = (ms: Milestone[]): Milestone[] =>
+  ms.map(m => ({ ...m, id: newId("ms"), checklist: m.checklist.map(it => ({ ...it, id: newId("ci") })) }));
+
+/**
+ * Built-in template ids the super admin enabled for a client, or null when the
+ * client has no access row yet (legacy client → every built-in template).
+ */
+export async function getTemplateAccess(clientId: string): Promise<string[] | null> {
+  const { data, error } = await supabase.from("project_template_access").select("template_ids")
+    .eq("client_id", clientId).maybeSingle();
+  if (error) throw error;
+  return data && Array.isArray(data.template_ids) ? data.template_ids : null;
+}
+
+export async function setTemplateAccess(clientId: string, templateIds: string[]): Promise<void> {
+  const { error } = await supabase.from("project_template_access")
+    .upsert({ client_id: clientId, template_ids: templateIds, updated_at: new Date().toISOString() }, { onConflict: "client_id" });
+  if (error) throw error;
+}
+
+export async function getSavedTemplates(clientId: string): Promise<SavedTemplate[]> {
+  const { data, error } = await supabase.from("project_templates").select("*")
+    .eq("client_id", clientId).order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapSavedTemplate);
+}
+
+export async function saveTemplate(input: {
+  clientId: string; name: string; blurb: string; kind: ProjectKind; itemLabel: string;
+  milestones: Milestone[]; basedOn?: string; createdBy: string;
+}): Promise<SavedTemplate> {
+  const { data, error } = await supabase.from("project_templates").insert({
+    id: newId("tpl"), client_id: input.clientId, name: input.name, blurb: input.blurb || null,
+    kind: input.kind, item_label: input.itemLabel || "Item", milestones: input.milestones,
+    based_on: input.basedOn || null, created_by: input.createdBy,
+  }).select().single();
+  if (error) throw error;
+  return mapSavedTemplate(data);
+}
+
+export async function deleteSavedTemplate(id: string): Promise<void> {
+  const { error } = await supabase.from("project_templates").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/** What the New-project dialog offers: enabled built-ins, then the client's own. */
+export function templateOptions(access: string[] | null, saved: SavedTemplate[]): TemplateOption[] {
+  const builtIn = PROJECT_TEMPLATES
+    .filter(t => access === null || access.includes(t.id) || ALWAYS_AVAILABLE_TEMPLATES.includes(t.id))
+    .map<TemplateOption>(t => ({ id: t.id, name: t.name, blurb: t.blurb, kind: t.kind, itemLabel: t.itemLabel, custom: false, build: () => milestonesFromTemplate(t) }));
+  const own = saved.map<TemplateOption>(t => ({
+    id: t.id, name: t.name, blurb: t.blurb || `${t.milestones.length} steps · saved template`, kind: t.kind,
+    itemLabel: t.itemLabel, custom: true, build: () => cloneMilestones(t.milestones),
+  }));
+  return [...builtIn, ...own];
+}
+
 export const newMilestone = (name = "New step"): Milestone =>
   ({ id: newId("ms"), name, slaDays: 7, requiresApproval: false, checklist: [] });
 export const newChecklistItem = (): MilestoneChecklistItem =>
@@ -377,6 +460,20 @@ export async function updateProject(id: string, patch: Partial<Pick<Project,
 export async function deleteProject(id: string): Promise<void> {
   const { error } = await supabase.from("projects").delete().eq("id", id);
   if (error) throw error;
+}
+
+/**
+ * Take a member off a project. A checklist member's run (their progress and its
+ * history) is deleted; a pipeline member's items are kept so the team's leads
+ * aren't lost — managers still see them.
+ */
+export async function removeMember(project: Project, userId: string): Promise<void> {
+  await updateProject(project.id, { memberIds: project.memberIds.filter(id => id !== userId) });
+  if (project.kind === "checklist") {
+    const { error } = await supabase.from("project_deliverables").delete()
+      .eq("project_id", project.id).eq("run_key", userId);
+    if (error) throw error;
+  }
 }
 
 // ─── Member runs ─────────────────────────────────────────────────────────────
