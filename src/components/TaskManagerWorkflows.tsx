@@ -44,6 +44,7 @@ import { supabase } from '../services/supabaseClient';
 import { store, translateText, transliterateText } from "../services/store";
 import MemberPicker, { resolveMemberIds, EMPTY_SELECTION, type MemberPickerSelection } from "./MemberPicker";
 import { resolveLanguages } from "../services/languages";
+import { compressImage } from "../kot/lib/image";
 
 const DEFAULT_LANG_CODES = ['hi', 'kn', 'ta'];
 
@@ -66,6 +67,21 @@ interface TaskManagerWorkflowsProps {
   onCapturePrefilled?: () => void;
   /** Translation languages this client chose at onboarding (ISO codes). */
   languages?: string[];
+  /** Tasks load as open + last 30 days; true once the older history is loaded too. */
+  olderTasksLoaded?: boolean;
+  onLoadOlderTasks?: () => Promise<void>;
+}
+
+/** Shrink a picked photo before it's stored as a data URI on the task — a raw
+ *  phone photo is several MB and every refresh re-downloads it. */
+async function photoToDataUri(file: File): Promise<string> {
+  const blob = await compressImage(file, { maxDim: 1280, quality: 0.7 });
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Could not read photo"));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 /**
@@ -112,7 +128,10 @@ export default function TaskManagerWorkflows({
   prefillCaptureId,
   onCapturePrefilled,
   languages = [],
+  olderTasksLoaded = false,
+  onLoadOlderTasks,
 }: TaskManagerWorkflowsProps) {
+  const [loadingOlder, setLoadingOlder] = useState(false);
   // Display-translation languages: English first, then the client's chosen set.
   const displayLangs = [
     { code: "en", native: "English" },
@@ -221,13 +240,9 @@ export default function TaskManagerWorkflows({
       return;
     }
     files.forEach(file => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setTaskPhotos(prev => [...prev, reader.result as string].slice(0, 3));
-        }
-      };
-      reader.readAsDataURL(file);
+      photoToDataUri(file)
+        .then(uri => setTaskPhotos(prev => [...prev, uri].slice(0, 3)))
+        .catch(() => alert("Could not read that photo — try another."));
     });
     e.target.value = ""; // allow re-picking / retaking the same photo
   };
@@ -236,15 +251,13 @@ export default function TaskManagerWorkflows({
     setTaskPhotos(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Add a photo to an EXISTING task (detail view). Reads the picked file as a
+  // Add a photo to an EXISTING task (detail view). Compresses the picked file to a
   // base64 data URI and hands it to the parent, which persists it on the task.
   const readAndAddPhoto = (taskId: string, file: File | undefined | null) => {
     if (!file || !onAddPhoto) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      if (typeof reader.result === "string") onAddPhoto(taskId, reader.result);
-    };
-    reader.readAsDataURL(file);
+    photoToDataUri(file)
+      .then(uri => onAddPhoto(taskId, uri))
+      .catch(() => alert("Could not read that photo — try another."));
   };
 
   // Layout switcher and voice translation states
@@ -1684,6 +1697,21 @@ export default function TaskManagerWorkflows({
             </div>
           ) : (
             renderTaskTableView()
+          )}
+
+          {/* Only open tasks + the last 30 days are loaded by default. */}
+          {onLoadOlderTasks && !olderTasksLoaded && (
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[12px] text-slate-400">
+              <span>Showing open tasks and anything from the last 30 days.</span>
+              <button
+                type="button"
+                disabled={loadingOlder}
+                onClick={async () => { setLoadingOlder(true); try { await onLoadOlderTasks(); } finally { setLoadingOlder(false); } }}
+                className="font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-60 cursor-pointer"
+              >
+                {loadingOlder ? "Loading…" : "Load older tasks"}
+              </button>
+            </div>
           )}
 
         </div>

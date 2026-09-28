@@ -509,6 +509,7 @@ export class StoreService {
     // End the Supabase Auth session (clears the persisted JWT) as well as the
     // app's local identity cache.
     supabase.auth.signOut().catch(() => {});
+    this.taskHistoryLoaded = false;
     localStorage.removeItem("horae_logged_in_email");
     localStorage.removeItem("horae_active_user_id");
     localStorage.removeItem("horae_active_client_id");
@@ -1854,13 +1855,44 @@ export class StoreService {
    * @param opts.withMessages  include each task's chat (default true). The light
    *   background sync passes `false` to skip the whole `task_messages` fetch.
    */
-  public async getTasks(opts?: { withMessages?: boolean; since?: string }): Promise<Task[]> {
+  // Task history window. By default only open tasks plus anything touched in the
+  // last TASK_WINDOW_DAYS are loaded — a client's closed history grows forever and
+  // was re-downloaded on every refresh. "Load older tasks" flips this for the
+  // session; CSV exports ask for `allHistory` explicitly.
+  public static readonly TASK_WINDOW_DAYS = 30;
+  private taskHistoryLoaded = false;
+  public get isTaskHistoryLoaded() { return this.taskHistoryLoaded; }
+  public setTaskHistoryLoaded(v: boolean) { this.taskHistoryLoaded = v; }
+
+  /** One task by id (any age), or null if it's gone or not visible to this user. */
+  public async getTask(taskId: string): Promise<Task | null> {
+    return (await this.getTasks({ ids: [taskId] }))[0] || null;
+  }
+
+  public async getTasks(opts?: { withMessages?: boolean; since?: string; ids?: string[]; allHistory?: boolean }): Promise<Task[]> {
     const withMessages = opts?.withMessages !== false;
     const curUser = await this.getActiveUser();
     const tenants = await this.getTenantsByClient(this.activeClientId);
     const tenantIds = tenants.map(t => t.id);
     let tasksQuery = supabase.from('tasks').select('*').in('tenant_id', tenantIds);
-    if (opts?.since) tasksQuery = tasksQuery.gt('updated_at', opts.since);
+    if (opts?.ids) tasksQuery = tasksQuery.in('id', opts.ids);
+    else if (opts?.since) tasksQuery = tasksQuery.gt('updated_at', opts.since);
+    else if (!opts?.allHistory && !this.taskHistoryLoaded) {
+      const cutoff = new Date(Date.now() - StoreService.TASK_WINDOW_DAYS * 86400000).toISOString();
+      tasksQuery = tasksQuery.or(`status.not.in.(Completed,Closed),updated_at.gte.${cutoff}`);
+    }
+    // Non-admins only ever see tasks they're on — filter on the server instead of
+    // downloading the whole client's tasks to the phone. The final and() covers
+    // legacy rows whose assignees live only in the description metadata (the
+    // client-side filter below still decides exactly).
+    const isAdmin = curUser.role === Role.ADMIN || curUser.role === Role.SUPER_ADMIN;
+    if (!isAdmin && curUser.id) {
+      const u = curUser.id;
+      tasksQuery = tasksQuery.or(
+        `assigned_user_id.eq.${u},assigned_user_ids.cs.{${u}},cc_user_ids.cs.{${u}},created_by_user_id.eq.${u},` +
+        `and(assigned_user_ids.eq.{},description.ilike.*${u}*),and(assigned_user_ids.is.null,description.ilike.*${u}*)`
+      );
+    }
     const { data: tasksData, error: tasksError } = await tasksQuery;
     if (opts?.since && tasksError) throw tasksError; // let the caller fall back to a full sync
 
@@ -2126,8 +2158,7 @@ export class StoreService {
       },
     }).catch(() => { /* non-fatal — best-effort */ });
 
-    const tasks = await this.getTasks();
-    return tasks.find(t => t.id === taskId) || null;
+    return this.getTask(taskId);
   }
 
   private async userName(userId: string): Promise<string> {
@@ -2170,8 +2201,7 @@ export class StoreService {
       // decision: only a NEW task assignment sends an external notification.)
     }
 
-    const tasks = await this.getTasks();
-    return tasks.find(t => t.id === taskId) || null;
+    return this.getTask(taskId);
   }
 
   public async updateTaskPriority(taskId: string, priority: string): Promise<Task | null> {
@@ -2180,8 +2210,7 @@ export class StoreService {
       .update({ priority })
       .eq('id', taskId);
 
-    const tasks = await this.getTasks();
-    return tasks.find(t => t.id === taskId) || null;
+    return this.getTask(taskId);
   }
 
   /**
@@ -2203,8 +2232,7 @@ export class StoreService {
       .update({ description: `${clean}\n\n---HORAE-METADATA---\n${JSON.stringify(meta)}` })
       .eq('id', taskId);
 
-    const tasks = await this.getTasks();
-    return tasks.find(t => t.id === taskId) || null;
+    return this.getTask(taskId);
   }
 
   // ── Personal reminders / notes (pull-only; created here or from WhatsApp) ──────
@@ -2251,8 +2279,7 @@ export class StoreService {
     let userIds: string[];
 
     if (kind === "task") {
-      const tasks = await this.getTasks();
-      const task = tasks.find(t => t.id === recordId);
+      const task = await this.getTask(recordId);
       if (!task) return;
       record = { id: task.id, title: task.title };
       userIds = task.assignedUserIds && task.assignedUserIds.length ? task.assignedUserIds : (task.assignedUserId ? [task.assignedUserId] : []);
@@ -2313,8 +2340,7 @@ export class StoreService {
       // messages are surfaced in the twice-daily digest instead.
     }
 
-    const tasks = await this.getTasks();
-    return tasks.find(t => t.id === taskId) || null;
+    return this.getTask(taskId);
   }
 
   public async deleteTask(taskId: string): Promise<void> {

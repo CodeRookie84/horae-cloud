@@ -840,6 +840,20 @@ function AppInner() {
     }
   };
 
+  // Tasks load as "open + last 30 days" by default; this pulls the rest for the session.
+  const [olderTasksLoaded, setOlderTasksLoaded] = useState(store.isTaskHistoryLoaded);
+  const handleLoadOlderTasks = async () => {
+    store.setTaskHistoryLoaded(true);
+    setOlderTasksLoaded(true);
+    try {
+      setTasks(await store.getTasks());
+    } catch (err: any) {
+      store.setTaskHistoryLoaded(false);
+      setOlderTasksLoaded(false);
+      triggerToast(err?.message || "Could not load older tasks.");
+    }
+  };
+
   const handleUpdateTaskStatus = async (taskId: string, status: "Assigned" | "In Progress" | "Pending" | "On Hold" | "Completed" | "Closed") => {
     // Optimistic update
     setTasks(prevTasks => prevTasks.map(t => t.id === taskId ? { ...t, status } : t));
@@ -1384,6 +1398,8 @@ function AppInner() {
                       prefillCaptureId={prefillCaptureId}
                       onCapturePrefilled={() => setPrefillCaptureId(undefined)}
                       languages={activeClient?.languages || []}
+                      olderTasksLoaded={olderTasksLoaded}
+                      onLoadOlderTasks={handleLoadOlderTasks}
                     />
                   )}
 
@@ -1469,6 +1485,7 @@ function AppInner() {
 
                   {activeTab === "admin-panel" && activeUser.role === Role.ADMIN && (
                     <ClientAdminPanel
+                      loadAllTasks={() => store.getTasks({ allHistory: true })}
                       allUsers={allUsers}
                       notices={notices}
                       onPostNotice={handlePostNotice}

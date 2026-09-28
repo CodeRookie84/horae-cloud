@@ -83,6 +83,8 @@ interface ClientAdminPanelProps {
   onComplianceSaved?: () => void | Promise<void>;
   
   tasks: Task[];
+  /** Full task history (the `tasks` prop is only open + recent) — used by the CSV exports. */
+  loadAllTasks?: () => Promise<Task[]>;
   allUsers: AppUser[];
   tenantUsers: AppUser[];
   tenants: Tenant[];
@@ -112,6 +114,7 @@ interface ClientAdminPanelProps {
 }
 
 export default function ClientAdminPanel({
+  loadAllTasks,
   notices,
   onPostNotice,
   onDeleteNotice,
@@ -1071,10 +1074,16 @@ export default function ClientAdminPanel({
     setChatInputText("");
   };
 
-  const downloadTaskCSV = () => {
+  // Exports cover the FULL history, not just the open + recent tasks on screen.
+  const tasksForExport = async (): Promise<Task[]> => {
+    const all = loadAllTasks ? await loadAllTasks().catch(() => tasks) : tasks;
+    return selectedOutletFilter === "ALL" ? all : all.filter(t => t.tenantId === selectedOutletFilter);
+  };
+
+  const downloadTaskCSV = async () => {
     let csvContent = "data:text/csv;charset=utf-8,";
     csvContent += "Task,Description,Outlet,Priority,Status,Due Date,Assignee,Days Pending\n";
-    filteredTasks.forEach(t => {
+    (await tasksForExport()).forEach(t => {
       const title = `"${t.title.replace(/"/g, '""')}"`;
       const desc = `"${t.description.replace(/"/g, '""')}"`;
       const outlet = `"${tenants.find(ten => ten.id === t.tenantId)?.name || t.tenantId}"`;
@@ -1093,11 +1102,11 @@ export default function ClientAdminPanel({
     document.body.removeChild(link);
   };
 
-  const downloadDetailedTasksCSV = () => {
+  const downloadDetailedTasksCSV = async () => {
     let csvContent = "data:text/csv;charset=utf-8,";
     csvContent += "Task ID,Title,Description,Outlet/Tenant,Priority,Status,Due Date,Creation Date,Assignees,Created By,Days Pending,Chat Transcript\n";
-    
-    filteredTasks.forEach(t => {
+
+    (await tasksForExport()).forEach(t => {
       const getTaskNumberStr = (task: Task) => {
         const parts = task.id.split("-");
         return parts[parts.length - 1];
