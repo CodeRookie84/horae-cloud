@@ -223,7 +223,7 @@ export default function WhatsAppBillingReport({ clients, tenants, users }: { cli
                       <td className="py-2 pr-3 text-slate-600">
                         {clientName(r.client_id)}{t ? <span className="text-slate-400"> · {t.name}</span> : null}
                       </td>
-                      <td className="py-2 pr-3 text-slate-600">{ev ? (EVENT_LABELS[ev] || ev) : "Chat reply / other"}</td>
+                      <td className="py-2 pr-3 text-slate-600">{ev ? (EVENT_LABELS[ev] || ev) : (r.sent_at && Date.now() - new Date(r.sent_at).getTime() > 7 * 86400000 ? "—" : "Chat reply / other")}</td>
                       <td className="py-2 pr-3 capitalize">{r.category || "—"}</td>
                       <td className="py-2 pr-3">
                         <span className="font-semibold text-slate-700">{fmtInr(cost(r))}</span>

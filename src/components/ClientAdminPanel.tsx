@@ -1151,7 +1151,7 @@ export default function ClientAdminPanel({
   };
 
   // WhatsApp Engagement: sent/delivered/read/replied per staff member, over
-  // the last 30 days, scoped by the same outlet Scope filter as every other
+  // the last 7 days (WhatsApp logs are auto-deleted after 7), scoped by the same outlet Scope filter as every other
   // Reports card. Built from `waReport` (fetched via effect above).
   const waReportByUser = new Map(waReport.map(r => [r.userId, r]));
   const waSummary = scopedClientUsers.reduce((acc, u) => {
@@ -2790,7 +2790,7 @@ export default function ClientAdminPanel({
               </p>
             </div>
 
-            {/* WhatsApp Engagement — at-a-glance strip, last 30 days */}
+            {/* WhatsApp Engagement — at-a-glance strip, last 7 days */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5">
                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">WA Sent</p>
@@ -2879,7 +2879,7 @@ export default function ClientAdminPanel({
                     WhatsApp Engagement
                   </h4>
                   <p className="text-xs text-slate-500 leading-normal">
-                    Download sent/delivered/read/replied WhatsApp stats per staff member (last 30 days) — spot who's silently missing task alerts and notices.
+                    Download sent/delivered/read/replied WhatsApp stats per staff member (last 7 days) — spot who's silently missing task alerts and notices.
                   </p>
                 </div>
                 <button

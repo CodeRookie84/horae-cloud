@@ -24,14 +24,27 @@ select cron.schedule(
   $job$
 );
 
--- Log pruning: keep the two fastest-growing log tables bounded. 90-day retention
--- is safe — the WhatsApp engagement report only looks back 30 days, and inbound
--- dedup only needs the last few minutes. Runs daily at 03:15 UTC.
+-- WhatsApp communication retention (changed 2026-10-02 from 90 → 7 days):
+-- message logs, inbound message bodies, menu/conversation state, forwarded-text
+-- captures and digest/KOT send logs are deleted once older than 7 days. Nothing
+-- reads further back than that: notify-dispatcher dedup/caps look back ≤ 1 day,
+-- the 24h-window check 23h, inbound dedup minutes, daily-digest only "today",
+-- and the WhatsApp engagement report was cut to 7 days to match.
+-- whatsapp_message_pricing (super-admin billing, no message content) is kept 90
+-- days to match the billing report's longest range; event labels on billing rows
+-- older than 7 days show as "—" because their notification_log row is gone.
+-- Runs daily at 03:15 UTC.
 select cron.schedule(
   'prune-wa-logs',
   '15 3 * * *',
   $job$
-    delete from public.notification_log         where sent_at     < now() - interval '90 days';
-    delete from public.whatsapp_inbound_messages where received_at < now() - interval '90 days';
+    delete from public.notification_log          where sent_at     < now() - interval '7 days';
+    delete from public.whatsapp_inbound_messages where received_at < now() - interval '7 days';
+    delete from public.whatsapp_conversations    where coalesce(updated_at, created_at) < now() - interval '7 days';
+    delete from public.task_captures             where created_at  < now() - interval '7 days';
+    delete from public.msg_sessions              where updated_at  < now() - interval '7 days';
+    delete from public.digest_tracker            where sent_at     < now() - interval '7 days';
+    delete from public.kot_notification_log      where created_at  < now() - interval '7 days';
+    delete from public.whatsapp_message_pricing  where coalesce(sent_at, created_at) < now() - interval '90 days';
   $job$
 );

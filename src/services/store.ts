@@ -1112,7 +1112,10 @@ export class StoreService {
     const tenants = await this.getTenantsByClient(this.activeClientId);
     const tenantIds = tenants.map(t => t.id);
     let noticesQuery = supabase.from('notices').select('*').in('tenant_id', tenantIds);
+    // Full loads stay bounded as a client's history grows: only notices posted
+    // or edited in the last NOTICE_WINDOW_DAYS (editing an old one revives it).
     if (since) noticesQuery = noticesQuery.gt('updated_at', since);
+    else noticesQuery = noticesQuery.gte('updated_at', new Date(Date.now() - StoreService.NOTICE_WINDOW_DAYS * 86400000).toISOString());
     const { data, error } = await noticesQuery;
     if (since && error) throw error;
 
@@ -1860,6 +1863,10 @@ export class StoreService {
   // was re-downloaded on every refresh. "Load older tasks" flips this for the
   // session; CSV exports ask for `allHistory` explicitly.
   public static readonly TASK_WINDOW_DAYS = 30;
+  // Notices posted/edited longer ago than this aren't loaded on app open.
+  public static readonly NOTICE_WINDOW_DAYS = 90;
+  // In-app notifications older than this aren't loaded on app open.
+  public static readonly NOTIFICATION_WINDOW_DAYS = 30;
   private taskHistoryLoaded = false;
   public get isTaskHistoryLoaded() { return this.taskHistoryLoaded; }
   public setTaskHistoryLoaded(v: boolean) { this.taskHistoryLoaded = v; }
@@ -2353,7 +2360,10 @@ export class StoreService {
     const tenants = await this.getTenantsByClient(this.activeClientId);
     const tenantIds = tenants.map(t => t.id);
     let notifQuery = supabase.from('notifications').select('*').in('tenant_id', tenantIds);
+    // Full loads only fetch the recent feed (the prune-app-data cron deletes
+    // notifications after 90 days anyway).
     if (since) notifQuery = notifQuery.gt('updated_at', since);
+    else notifQuery = notifQuery.gte('created_at', new Date(Date.now() - StoreService.NOTIFICATION_WINDOW_DAYS * 86400000).toISOString());
     const { data, error } = await notifQuery;
     if (since && error) throw error;
 
@@ -2618,9 +2628,10 @@ This guide ensures that cash flows are reconciled correctly at the close of ever
    * `sinceDays` days. Built from `notification_log` (populated by
    * notify-dispatcher on every send, and updated with delivered_at/read_at
    * by the whatsapp-webhook edge function) and `whatsapp_inbound_messages`
-   * (populated by the same webhook when a user replies).
+   * (populated by the same webhook when a user replies). Both are pruned after
+   * 7 days (prune-wa-logs cron), so 7 is also the longest meaningful window.
    */
-  public async getWhatsAppEngagementReport(userIds: string[], sinceDays: number = 30): Promise<WhatsAppEngagementRow[]> {
+  public async getWhatsAppEngagementReport(userIds: string[], sinceDays: number = 7): Promise<WhatsAppEngagementRow[]> {
     if (userIds.length === 0) return [];
     const since = new Date(Date.now() - sinceDays * 86400000).toISOString();
 
