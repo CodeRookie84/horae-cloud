@@ -180,7 +180,7 @@ export default function ClientAdminPanel({
   const [allChecklists, setAllChecklists] = useState<Checklist[]>(checklists);
   useEffect(() => {
     let alive = true;
-    store.getChecklists(undefined, { scope: "all" }).then((list) => { if (alive) setAllChecklists(list); }).catch(() => {});
+    store.getChecklists(undefined, { scope: "all", allHistory: true }).then((list) => { if (alive) setAllChecklists(list); }).catch(() => {});
     return () => { alive = false; };
   }, [checklists]);
 

@@ -1243,13 +1243,25 @@ export class StoreService {
    *  screen, admin included: an unassigned compliance checklist scoped to its
    *  own outlet, an explicitly-assigned one to just that roster, and classic
    *  checklists by dept/role as before. */
-  public async getChecklists(since?: string, opts?: { scope?: "mine" | "all" }): Promise<Checklist[]> {
+  public async getChecklists(since?: string, opts?: { scope?: "mine" | "all"; allHistory?: boolean }): Promise<Checklist[]> {
     const curUser = await this.getActiveUser();
     const tenants = await this.getTenantsByClient(this.activeClientId);
     const tenantIds = tenants.map(t => t.id);
 
-    let checklistsQuery = supabase.from('checklists').select('*').in('tenant_id', tenantIds);
-    if (since) checklistsQuery = checklistsQuery.gt('updated_at', since);
+    // The app gets each classic checklist's submissions trimmed to the recent
+    // window + every person's latest (checklists_recent RPC); nothing is
+    // deleted. Admin reports/CSV pass `allHistory` to read the full table.
+    let checklistsQuery: any;
+    if (opts?.allHistory) {
+      checklistsQuery = supabase.from('checklists').select('*').in('tenant_id', tenantIds);
+      if (since) checklistsQuery = checklistsQuery.gt('updated_at', since);
+    } else {
+      checklistsQuery = supabase.rpc('checklists_recent', {
+        p_tenant_ids: tenantIds,
+        p_since: since ?? null,
+        p_days: StoreService.CHECKLIST_SUBMISSION_WINDOW_DAYS,
+      });
+    }
     const { data: checklistsData, error: checklistsError } = await checklistsQuery;
     if (since && checklistsError) throw checklistsError;
 
@@ -1867,6 +1879,9 @@ export class StoreService {
   public static readonly NOTICE_WINDOW_DAYS = 90;
   // In-app notifications older than this aren't loaded on app open.
   public static readonly NOTIFICATION_WINDOW_DAYS = 30;
+  // Classic checklist submissions older than this (except each person's
+  // latest) aren't sent to the app; the full history stays in the DB.
+  public static readonly CHECKLIST_SUBMISSION_WINDOW_DAYS = 90;
   private taskHistoryLoaded = false;
   public get isTaskHistoryLoaded() { return this.taskHistoryLoaded; }
   public setTaskHistoryLoaded(v: boolean) { this.taskHistoryLoaded = v; }
