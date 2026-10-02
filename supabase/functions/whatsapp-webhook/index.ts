@@ -1119,11 +1119,14 @@ function parseReminderWhen(phrase: string, now: Date): Date | null {
     return istToUtc(curY, curM, d, t.h, t.m);
   }
   // Natural language (tomorrow, next monday, next week, in an hour, today 3pm…).
-  const results = chrono.parse(p, { instant: now, timezone: 330 } as any, { forwardDate: true });
+  // chrono resolves "today/tomorrow/tonight" against the server's (UTC) calendar
+  // day even with timezone: 330, so between 00:00 and 05:30 IST "tomorrow" landed
+  // on today. Feed it the IST wall clock as if it were UTC, then shift back.
+  const results = chrono.parse(p, { instant: ist, timezone: 0 } as any, { forwardDate: true });
   const r = results?.[0];
   if (!r) return null;
-  const dt = r.start.date();
-  const istDay = new Date(dt.getTime() + 5.5 * 3600 * 1000);
+  const istDay = r.start.date();
+  const dt = new Date(istDay.getTime() - 5.5 * 3600 * 1000);
   const Y = istDay.getUTCFullYear(), Mo = istDay.getUTCMonth(), D = istDay.getUTCDate();
   // A relative offset ("in an hour", "in 90 minutes") is an exact instant — never
   // reinterpret its hour.
@@ -1170,7 +1173,8 @@ const TIMEISH_START = /^(?:\d|noon|midnight|morning|afternoon|evening|tonight|to
  */
 function splitReminderWhenNlp(rest: string): { text: string; remindAt: string } | null {
   let results: any[];
-  try { results = chrono.parse(rest, { instant: new Date(), timezone: 330 } as any, { forwardDate: true }); }
+  const now = new Date();
+  try { results = chrono.parse(rest, { instant: new Date(now.getTime() + 5.5 * 3600 * 1000), timezone: 0 } as any, { forwardDate: true }); }
   catch (_) { return null; }
   const r = results?.[0];
   if (!r) return null;
@@ -1185,7 +1189,7 @@ function splitReminderWhenNlp(rest: string): { text: string; remindAt: string } 
     .trim();
   if (!text) return null;
   const matched = r.text.replace(/^\s*(?:at|on|by)\b\s*/i, "");
-  const dt = parseReminderWhen(matched, new Date()) || r.start.date();
+  const dt = parseReminderWhen(matched, now) || new Date(r.start.date().getTime() - 5.5 * 3600 * 1000);
   if (!dt || isNaN(dt.getTime())) return null;
   return { text, remindAt: dt.toISOString() };
 }
