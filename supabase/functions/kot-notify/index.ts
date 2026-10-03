@@ -32,6 +32,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import webpush from "npm:web-push@3.6.7";
+import { toPhoneDigits } from "../_shared/phone.ts";
 
 const SUPABASE_URL     = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -163,11 +164,7 @@ async function logSends(orderId: string, trigger: string, results: WaResult[]) {
  *  mobile (Cakewala is India); a leading trunk "0" is dropped. Numbers that
  *  already carry a country code (11+ digits) pass through unchanged. */
 function toWaNumber(raw: string): string {
-  let d = String(raw || "").replace(/\D/g, "");
-  if (!d) return "";
-  if (d.length === 10) d = "91" + d;
-  else if (d.length === 11 && d.startsWith("0")) d = "91" + d.slice(1);
-  return d;
+  return toPhoneDigits(raw);
 }
 
 async function fanOut(

@@ -25,6 +25,7 @@
 // Remove MSG = delete this file + the `// [MSG]` seam in index.ts + the import.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { translateViaGroq } from "../_shared/ai.ts";
+import { toPhoneDigits, waIdDigits } from "../_shared/phone.ts";
 
 const SUPABASE_URL      = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -113,9 +114,9 @@ interface StaffCtx { userId: string; name?: string | null; }
  *  open session — so normal Horae routing takes over. */
 export async function routeMsgText(text: string, fromPhone: string, staff?: StaffCtx): Promise<boolean> {
   const isKeyword = /^\s*[\/?\\]?msg\b/i.test(text);
-  const last10 = digits10(fromPhone);
-  if (!last10) return false;
-  const session = await getSession(last10);
+  const phoneKey = phoneKeyOf(fromPhone);
+  if (!phoneKey) return false;
+  const session = await getSession(phoneKey);
   if (!isKeyword && !session) return false; // not ours
 
   const who = await resolveMsgParticipant(fromPhone, staff);
@@ -130,7 +131,7 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
   // the session first, then return false so index.ts routes the message through
   // normal Horae handling.
   if (session && !isKeyword && HORAE_COMMAND.test(text)) {
-    await clearSession(last10);
+    await clearSession(phoneKey);
     return false;
   }
 
@@ -138,7 +139,7 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
   // /cancel and any other /command already handed off above; the ✖ Done button
   // closes too. "done"/"menu" are left out here so they're translated normally.)
   if (/^\s*(cancel|stop|back|exit)\b/i.test(text)) {
-    await clearSession(last10);
+    await clearSession(phoneKey);
     await sendText(fromPhone, "✅ Translation closed. Send */menu* for options, or *msg* to translate again.");
     return true;
   }
@@ -149,7 +150,7 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
   // "Edit my 5" button, which appears only AFTER a completed translation.
   const afterKeyword = text.replace(/^\s*[\/?\\]?msg\b/i, "").trim();
   if (/^(langs?|languages?|re-?pick|reset)\s*$/i.test(afterKeyword)) {
-    await startLangPick(fromPhone, who, last10);
+    await startLangPick(fromPhone, who, phoneKey);
     return true;
   }
 
@@ -160,23 +161,23 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
   // invalid one falls through to the normal picker below.
   if (isKeyword && /\d/.test(afterKeyword) && who.languages.length >= 2 &&
       parseSelection(afterKeyword, who.languages.length)) {
-    await handleSelection(fromPhone, who, last10, afterKeyword);
+    await handleSelection(fromPhone, who, phoneKey, afterKeyword);
     return true;
   }
 
   // The keyword always (re)starts: pick languages the first time, else the
   // input→outputs prompt (keeping the 5 they already chose).
   if (isKeyword || !session) {
-    if (who.languages.length < 2) { await startLangPick(fromPhone, who, last10); return true; }
-    await startSelection(fromPhone, who, last10);
+    if (who.languages.length < 2) { await startLangPick(fromPhone, who, phoneKey); return true; }
+    await startSelection(fromPhone, who, phoneKey);
     return true;
   }
 
   switch (session.state) {
-    case "pick_langs":      await handleLangPick(fromPhone, who, last10, text); return true;
-    case "await_selection": await handleSelection(fromPhone, who, last10, text); return true;
+    case "pick_langs":      await handleLangPick(fromPhone, who, phoneKey, text); return true;
+    case "await_selection": await handleSelection(fromPhone, who, phoneKey, text); return true;
     case "await_content":   await handleContent(fromPhone, who, session, text); return true;
-    default:                await startSelection(fromPhone, who, last10); return true;
+    default:                await startSelection(fromPhone, who, phoneKey); return true;
   }
 }
 
@@ -188,9 +189,9 @@ export async function routeMsgText(text: string, fromPhone: string, staff?: Staf
  *  a task voice note) and ask the user to type instead. Re-enable by restoring the
  *  transcribe→handleContent path once a reliable translation engine is in place. */
 export async function routeMsgAudio(_mediaId: string, fromPhone: string, staff?: StaffCtx): Promise<boolean> {
-  const last10 = digits10(fromPhone);
-  if (!last10) return false;
-  const session = await getSession(last10);
+  const phoneKey = phoneKeyOf(fromPhone);
+  if (!phoneKey) return false;
+  const session = await getSession(phoneKey);
   if (!session || session.state !== "await_content") return false;
   const who = await resolveMsgParticipant(fromPhone, staff);
   if (!who) return false;
@@ -203,8 +204,8 @@ export async function routeMsgAudio(_mediaId: string, fromPhone: string, staff?:
  *  it isn't ours (or the sender isn't a participant) so index.ts keeps routing. */
 export async function routeMsgInteractive(id: string, fromPhone: string, staff?: StaffCtx): Promise<boolean> {
   if (!id.startsWith("msg_")) return false;
-  const last10 = digits10(fromPhone);
-  if (!last10) return false;
+  const phoneKey = phoneKeyOf(fromPhone);
+  if (!phoneKey) return false;
   const who = await resolveMsgParticipant(fromPhone, staff);
   if (!who) return false;
 
@@ -215,8 +216,8 @@ export async function routeMsgInteractive(id: string, fromPhone: string, staff?:
     await sendText(fromPhone, "🌐 To switch languages, send */msg 1 to 3,4* — your input number, then the outputs.\n\n(Send */msg* on its own if you need to see your numbered languages.)");
     return true;
   }
-  if (id === "msg_relangs"){ await startLangPick(fromPhone, who, last10); return true; }
-  if (id === "msg_done")   { await clearSession(last10); await sendText(fromPhone, "✅ Translation closed. Send *msg* any time to translate again."); return true; }
+  if (id === "msg_relangs"){ await startLangPick(fromPhone, who, phoneKey); return true; }
+  if (id === "msg_done")   { await clearSession(phoneKey); await sendText(fromPhone, "✅ Translation closed. Send *msg* any time to translate again."); return true; }
   return true;
 }
 
@@ -232,13 +233,13 @@ export async function routeMsgInteractive(id: string, fromPhone: string, staff?:
  *      hidden from the admin panel.
  *  There is no per-client entitlement — translation is a default feature. */
 async function resolveMsgParticipant(fromPhone: string, staff?: StaffCtx): Promise<MsgWho | null> {
-  const last10 = digits10(fromPhone);
-  if (!last10) return null;
+  const phoneKey = phoneKeyOf(fromPhone);
+  if (!phoneKey) return null;
 
   const { data: parts } = await supabase
     .from("msg_participants").select("id, client_id, source, name, phone, languages").eq("active", true);
   const candidates = (parts || []).filter((p: any) =>
-    String(p.phone || "").replace(/\D/g, "").endsWith(last10));
+    toPhoneDigits(p.phone) === phoneKey);
   const asWho = (r: any): MsgWho => ({
     participantId: r.id, clientId: r.client_id ?? null, name: r.name ?? "",
     languages: Array.isArray(r.languages) ? r.languages.filter((c: any) => typeof c === "string") : [],
@@ -254,7 +255,7 @@ async function resolveMsgParticipant(fromPhone: string, staff?: StaffCtx): Promi
     const existing = candidates.find((c: any) => c.source === "staff");
     if (existing) return asWho(existing);
     const id = (globalThis.crypto as any)?.randomUUID?.() || `msg-${Date.now()}`;
-    const row = { id, client_id: null, source: "staff", name: staff.name || "", phone: last10, languages: [] as string[], active: true };
+    const row = { id, client_id: null, source: "staff", name: staff.name || "", phone: `+${phoneKey}`, languages: [] as string[], active: true };
     await supabase.from("msg_participants").insert([row]);
     return asWho(row);
   }
@@ -265,8 +266,8 @@ async function resolveMsgParticipant(fromPhone: string, staff?: StaffCtx): Promi
 // ── Screens / flow steps ─────────────────────────────────────────────────────
 
 /** First-time (or "change languages"): show the full catalogue and ask for 5 numbers. */
-async function startLangPick(fromPhone: string, who: MsgWho, last10: string) {
-  await upsertSession(last10, who, { state: "pick_langs", input_lang: null, output_langs: [] });
+async function startLangPick(fromPhone: string, who: MsgWho, phoneKey: string) {
+  await upsertSession(phoneKey, who, { state: "pick_langs", input_lang: null, output_langs: [] });
   const first = (who.name || "there").split(" ")[0];
   const list = LANGS.map((l, i) => `${i + 1}. ${l.native} (${l.name})`).join("\n");
   await sendText(
@@ -277,7 +278,7 @@ async function startLangPick(fromPhone: string, who: MsgWho, last10: string) {
 }
 
 /** Parse the 5 numbers, save the codes, then move to the input→outputs prompt. */
-async function handleLangPick(fromPhone: string, who: MsgWho, last10: string, text: string) {
+async function handleLangPick(fromPhone: string, who: MsgWho, phoneKey: string, text: string) {
   const picks = parseNumbers(text).filter((n) => n >= 1 && n <= LANGS.length);
   const uniq = [...new Set(picks)].slice(0, 5);
   if (uniq.length < 2) {
@@ -288,12 +289,12 @@ async function handleLangPick(fromPhone: string, who: MsgWho, last10: string, te
   await supabase.from("msg_participants").update({ languages: codes }).eq("id", who.participantId);
   who.languages = codes;
   await sendText(fromPhone, `✅ Saved your languages: ${codes.map(langLabel).join(", ")}.`);
-  await startSelection(fromPhone, who, last10);
+  await startSelection(fromPhone, who, phoneKey);
 }
 
 /** Show the user's chosen 5 numbered, and ask for "input > outputs". */
-async function startSelection(fromPhone: string, who: MsgWho, last10: string) {
-  await upsertSession(last10, who, { state: "await_selection", input_lang: null, output_langs: [] });
+async function startSelection(fromPhone: string, who: MsgWho, phoneKey: string) {
+  await upsertSession(phoneKey, who, { state: "await_selection", input_lang: null, output_langs: [] });
   const list = who.languages.map((c, i) => `${i + 1}. ${langLabel(c)}`).join("\n");
   await sendText(
     fromPhone,
@@ -328,7 +329,7 @@ function parseSelection(text: string, n: number): { inputIdx: number; outIdxs: n
 }
 
 /** Validate the selection, store input_lang + output_langs, ask for content. */
-async function handleSelection(fromPhone: string, who: MsgWho, last10: string, text: string) {
+async function handleSelection(fromPhone: string, who: MsgWho, phoneKey: string, text: string) {
   const n = who.languages.length;
   const sel = parseSelection(text, n);
   if (!sel) {
@@ -337,7 +338,7 @@ async function handleSelection(fromPhone: string, who: MsgWho, last10: string, t
   }
   const inputLang = who.languages[sel.inputIdx - 1];
   const outputLangs = sel.outIdxs.map((i) => who.languages[i - 1]);
-  await upsertSession(last10, who, { state: "await_content", input_lang: inputLang, output_langs: outputLangs });
+  await upsertSession(phoneKey, who, { state: "await_content", input_lang: inputLang, output_langs: outputLangs });
   await sendText(
     fromPhone,
     `✍️ *${langLabel(inputLang)} → ${outputLangs.map(langLabel).join(", ")}*\n\n` +
@@ -559,24 +560,24 @@ function hasNonLatin(text: string): boolean {
 
 // ── Session store ────────────────────────────────────────────────────────────
 
-const digits10 = (phone: string) => {
-  const d = (phone || "").replace(/\D/g, "").slice(-10);
-  return d.length === 10 ? d : "";
-};
+/** Session/participant key = the sender's full international digits (country
+ *  code included). The msg_sessions column is still named phone_last10 from when
+ *  it held the last 10 digits; sessions are short-lived, so old keys just expire. */
+const phoneKeyOf = (phone: string) => waIdDigits(phone);
 
-async function getSession(last10: string): Promise<MsgSession | null> {
+async function getSession(phoneKey: string): Promise<MsgSession | null> {
   const { data } = await supabase.from("msg_sessions")
     .select("phone_last10, state, input_lang, output_langs")
-    .eq("phone_last10", last10).gt("expires_at", new Date().toISOString()).limit(1);
+    .eq("phone_last10", phoneKey).gt("expires_at", new Date().toISOString()).limit(1);
   const r = data?.[0];
   if (!r) return null;
   return { ...r, output_langs: Array.isArray(r.output_langs) ? r.output_langs : [] } as MsgSession;
 }
 
-async function upsertSession(last10: string, who: MsgWho, fields: { state: string; input_lang: string | null; output_langs: string[] }) {
+async function upsertSession(phoneKey: string, who: MsgWho, fields: { state: string; input_lang: string | null; output_langs: string[] }) {
   const now = new Date();
   await supabase.from("msg_sessions").upsert({
-    phone_last10: last10,
+    phone_last10: phoneKey,
     participant_id: who.participantId,
     client_id: who.clientId,
     updated_at: now.toISOString(),
@@ -585,8 +586,8 @@ async function upsertSession(last10: string, who: MsgWho, fields: { state: strin
   }, { onConflict: "phone_last10" });
 }
 
-async function clearSession(last10: string) {
-  await supabase.from("msg_sessions").delete().eq("phone_last10", last10);
+async function clearSession(phoneKey: string) {
+  await supabase.from("msg_sessions").delete().eq("phone_last10", phoneKey);
 }
 
 /** Extract the numbers from a free-text reply, in order. */

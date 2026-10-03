@@ -9,6 +9,7 @@ import type {
   KotOrder, KotOrderItem, KotParticipant, KotStatusEvent, KotStation, KotFulfilment,
 } from "../types";
 import type { KotStatus } from "../status";
+import { toPhoneDigits } from "../../services/phone";
 
 const uid = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
 
@@ -133,12 +134,12 @@ export async function accessibleOutlets(
   const all = await listOutlets(clientId);
   if (isAdmin) return all;
 
-  const digits = (phone || "").replace(/\D/g, "");
+  const digits = toPhoneDigits(phone);
   const { data } = await supabase.from("kot_participants")
     .select("id, phone, linked_user_id").eq("client_id", clientId).eq("active", true);
   const me = (data || []).find((p: any) =>
     (userId && p.linked_user_id === userId) ||
-    (digits && String(p.phone || "").replace(/\D/g, "").endsWith(digits.slice(-10))));
+    (digits && toPhoneDigits(p.phone) === digits));
   if (!me) return [];
 
   const { data: links } = await supabase

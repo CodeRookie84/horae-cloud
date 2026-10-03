@@ -175,7 +175,7 @@ function ParticipantEditor(
         </label>
         <label className="mb-3 block">
           <span className="mb-1 block text-xs font-semibold text-slate-500">WhatsApp phone</span>
-          <input className={inp} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91…" />
+          <input className={inp} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+971… (10 digits = India)" />
         </label>
 
         <div className="mb-3">

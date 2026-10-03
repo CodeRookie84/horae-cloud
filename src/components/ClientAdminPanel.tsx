@@ -17,6 +17,7 @@ import { store, translateText } from "../services/store";
 import { getChecklistStations, saveCustomComplianceChecklist, serializeChecklistItem, installChecklistPack, packsForPlan, getChecklistComplianceSummary, isWithinRecurrenceWindow } from "../services/checklistCompliance";
 import type { ChecklistComplianceSummary } from "../services/checklistCompliance";
 import ChecklistRegister from "./ChecklistRegister";
+import { PhoneInput } from "./PhoneInput";
 
 const CHECKLIST_FREQUENCIES = ["opening", "closing", "shift", "daily", "weekly", "monthly", "audit"];
 
@@ -2547,19 +2548,11 @@ export default function ClientAdminPanel({
 
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                    Mobile Number <span className="text-slate-400 font-medium normal-case">(10 digits — WhatsApp + login)</span>
+                    Mobile Number <span className="text-slate-400 font-medium normal-case">(WhatsApp + login — pick the country code)</span>
                   </label>
-                  <input
-                    type="tel"
-                    placeholder="e.g., 9876543210"
+                  <PhoneInput
                     value={staffPhone}
-                    onChange={(e) => {
-                      // Keep just the 10-digit number (pastes like +91 98765 43210 or 09876543210 work too)
-                      let d = e.target.value.replace(/\D/g, "");
-                      if (d.length > 10 && d.startsWith("91")) d = d.slice(2);
-                      if (d.length === 11 && d.startsWith("0")) d = d.slice(1);
-                      setStaffPhone(d.slice(0, 10));
-                    }}
+                    onChange={setStaffPhone}
                     className="w-full text-xs px-3 py-2 bg-slate-500/10 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white transition-colors"
                   />
                 </div>
@@ -3076,7 +3069,7 @@ export default function ClientAdminPanel({
                 onSubmit={async (e) => {
                   e.preventDefault();
                   if (!editUserEmail.trim() && !editUserPhone.trim()) {
-                    setEditUserErrorMsg("Provide an email address or a 10-digit mobile number.");
+                    setEditUserErrorMsg("Provide an email address or a mobile number.");
                     return;
                   }
                   try {
@@ -3128,12 +3121,11 @@ export default function ClientAdminPanel({
 
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                    Mobile Number <span className="normal-case font-medium text-slate-400">(10 digits, optional if email is given)</span>
+                    Mobile Number <span className="normal-case font-medium text-slate-400">(optional if email is given)</span>
                   </label>
-                  <input
-                    type="tel"
+                  <PhoneInput
                     value={editUserPhone}
-                    onChange={(e) => setEditUserPhone(e.target.value)}
+                    onChange={setEditUserPhone}
                     className="w-full text-xs px-3 py-2 bg-slate-500/10 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white transition-colors"
                   />
                 </div>

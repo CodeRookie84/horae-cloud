@@ -30,6 +30,7 @@
 import { supabase } from "./supabaseClient";
 import { compressImage } from "../kot/lib/image";
 import { Role, type User } from "../types";
+import { toPhoneDigits } from "./phone";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export type ChecklistItemType = "tick" | "number" | "amount" | "text" | "date" | "file";
@@ -585,12 +586,12 @@ export async function deleteItem(id: string): Promise<void> {
   if (error) throw error;
 }
 
-const phoneKey = (p: string) => p.replace(/\D/g, "").slice(-10);
+const phoneKey = (p: string) => toPhoneDigits(p);
 
 /** Another item in this project with the same phone number (last 10 digits). */
 export function findDuplicatePhone(runs: Deliverable[], projectId: string, phone: string, exceptId?: string): Deliverable | undefined {
   const key = phoneKey(phone);
-  if (key.length < 10) return undefined;
+  if (!key) return undefined;
   return runs.find(d => d.projectId === projectId && d.id !== exceptId && phoneKey(d.contactPhone) === key);
 }
 

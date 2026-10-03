@@ -18,6 +18,7 @@
 // that received the message — the separate KOT_* number only sends proactive
 // notifications from kot-notify.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { toPhoneDigits, waIdDigits } from "../_shared/phone.ts";
 
 const SUPABASE_URL      = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -81,18 +82,19 @@ export async function routeKotList(listId: string, fromPhone: string): Promise<b
 
 // ── Participant resolution ─────────────────────────────────────────────────────
 
-/** Match a phone to a KOT participant of a KOT-enabled client. Digits are stripped
- *  on both sides and compared on the last 10 (robust to +91 / spaces), mirroring
+/** Match a phone to a KOT participant of a KOT-enabled client. Both sides are
+ *  normalised to full international digits (a bare 10-digit directory number is
+ *  Indian; Meta's wa_id already carries the country code), mirroring
  *  src/kot/access.ts. The People Directory is small, so fetching active rows and
  *  filtering in JS is cheaper than a leading-wildcard LIKE. */
 async function resolveKotParticipant(fromPhone: string): Promise<KotWho | null> {
-  const last10 = fromPhone.replace(/\D/g, "").slice(-10);
-  if (last10.length !== 10) return null;
+  const fromDigits = waIdDigits(fromPhone);
+  if (!fromDigits) return null;
 
   const { data: parts } = await supabase
     .from("kot_participants").select("id, client_id, name, phone").eq("active", true);
   const candidates = (parts || []).filter((p: any) =>
-    String(p.phone || "").replace(/\D/g, "").endsWith(last10));
+    toPhoneDigits(p.phone) === fromDigits);
   if (!candidates.length) return null;
 
   const clientIds = [...new Set(candidates.map((p: any) => p.client_id))];

@@ -25,6 +25,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as chrono from "https://esm.sh/chrono-node@2.7.7";
 import { transcribeAudio } from "../_shared/ai.ts";
+import { waIdDigits } from "../_shared/phone.ts";
 import { routeKotText, routeKotList } from "./kot.ts"; // [KOT] view-only cake-order flow
 import { routeMsgText, routeMsgAudio, routeMsgInteractive } from "./msg.ts"; // [MSG] self-help translation flow
 
@@ -149,10 +150,10 @@ async function recordPricing(s: any, wamid: string, status: string, ts: string) 
   if (!paid) return;
 
   const recipient = String(s.recipient_id || "");
-  const last10 = recipient.replace(/\D/g, "").slice(-10);
+  const recipientDigits = waIdDigits(recipient);
   let userId: string | null = null, tenantId: string | null = null, clientId: string | null = null;
-  if (last10.length === 10) {
-    const { data: u } = await supabase.from("users").select("id, tenant_id").eq("phone_last10", last10).limit(1);
+  if (recipientDigits) {
+    const { data: u } = await supabase.from("users").select("id, tenant_id").eq("phone_number", `+${recipientDigits}`).limit(1);
     userId = u?.[0]?.id ?? null;
     tenantId = u?.[0]?.tenant_id ?? null;
     if (tenantId) {
@@ -175,20 +176,20 @@ async function handleInboundMessage(m: any, contact: any) {
   const t0 = Date.now();
   const receivedAt = m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : new Date().toISOString();
   const contextWamid: string | undefined = m?.context?.id;
-  const last10 = fromPhone.replace(/\D/g, "").slice(-10);
+  const fromDigits = waIdDigits(fromPhone);
 
   // Two independent reads fired in parallel — one round-trip instead of two:
   //  • dedup: Meta re-delivers webhooks on any non-200/timeout, so skip a message
   //    id we've already recorded (stops button taps double-processing).
-  //  • user match: by the last 10 phone digits (same convention as store.ts's
-  //    normalizePhone), against the indexed generated column `phone_last10` —
-  //    exact match, not a leading-wildcard LIKE, so it stays fast as users grow.
+  //  • user match: on the FULL international number (Meta's wa_id always carries
+  //    the country code; staff numbers are stored "+<digits>", see store.ts's
+  //    normalizePhone) — an exact, indexed match that works for every country.
   const [seenRes, matchRes] = await Promise.all([
     m?.id
       ? supabase.from("whatsapp_inbound_messages").select("id").eq("wa_message_id", m.id).limit(1)
       : Promise.resolve({ data: null as any }),
-    last10.length === 10
-      ? supabase.from("users").select("id, tenant_id").eq("phone_last10", last10).limit(1)
+    fromDigits
+      ? supabase.from("users").select("id, tenant_id").eq("phone_number", `+${fromDigits}`).limit(1)
       : Promise.resolve({ data: null as any }),
   ]);
   if (seenRes.data && (seenRes.data as any[]).length) return;

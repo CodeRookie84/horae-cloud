@@ -8,6 +8,7 @@
  * or phone). Non-KOT clients never see it. The shared floor uses the QR kiosk.
  */
 import { supabase } from "./lib/supabase";
+import { toPhoneDigits } from "../services/phone";
 
 export async function checkKotAccess(
   clientId: string,
@@ -26,11 +27,11 @@ export async function checkKotAccess(
   if (isAdmin) return true;
 
   // Otherwise the user must be a linked participant of this client.
-  const digits = (phone || "").replace(/\D/g, "");
+  const digits = toPhoneDigits(phone);
   const { data } = await supabase.from("kot_participants")
     .select("id, phone, linked_user_id").eq("client_id", clientId).eq("active", true);
   return (data || []).some((p: any) =>
     (userId && p.linked_user_id === userId) ||
-    (digits && String(p.phone || "").replace(/\D/g, "").endsWith(digits.slice(-10))),
+    (digits && toPhoneDigits(p.phone) === digits),
   );
 }

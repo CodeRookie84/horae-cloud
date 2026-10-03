@@ -24,6 +24,7 @@ import {
 import supabase from "./supabaseClient";
 import * as plans from "./plans";
 import { isWithinRecurrenceWindow } from "./checklistCompliance";
+import { toPhoneDigits } from "./phone";
 
 export class StoreService {
   // Active Simulated States (Client & Tenant focus & acting user role validation)
@@ -138,15 +139,16 @@ export class StoreService {
   }
 
   /**
-   * Normalize a mobile number. Staff only ever type the 10-digit number; we
-   * store it as +91XXXXXXXXXX so WhatsApp/notify-dispatcher (which need the
-   * international format) keep working. `last10` is the match key for login,
-   * so "+91 98765 43210", "919876543210" and "9876543210" all find the user.
+   * Normalize a mobile number to international form. Stored as "+<code><number>"
+   * so WhatsApp/notify-dispatcher (which need the international format) work for
+   * any country. A bare 10-digit number is Indian, so "+91 98765 43210",
+   * "919876543210" and "9876543210" all become +919876543210 (same as before
+   * country codes existed). `digits` (no "+") is the match key; `valid` is false
+   * when the input can't be a phone number. See services/phone.ts.
    */
-  public normalizePhone(raw: string): { e164: string; last10: string } {
-    const digits = (raw || "").replace(/\D/g, "");
-    const last10 = digits.slice(-10);
-    return { e164: last10.length === 10 ? `+91${last10}` : raw.trim(), last10 };
+  public normalizePhone(raw: string): { e164: string; digits: string; last10: string; valid: boolean } {
+    const digits = toPhoneDigits(raw);
+    return { e164: digits ? `+${digits}` : (raw || "").trim(), digits, last10: digits.slice(-10), valid: !!digits };
   }
 
   private mapUserRecord(u: any): User {
@@ -228,9 +230,18 @@ export class StoreService {
           if (admin) { this.activeUserId = admin.id; localStorage.setItem("horae_active_user_id", admin.id); return this.mapUserRecord(admin); }
         } else {
           const isEmail = loggedInKey.includes('@');
-          let query = supabase.from('users').select('*');
-          query = isEmail ? query.eq('email', loggedInKey.toLowerCase()) : query.like('phone_number', `%${this.normalizePhone(loggedInKey).last10}`);
-          const { data: matched } = await query.limit(1);
+          let matched: any[] | null = null;
+          if (isEmail) {
+            ({ data: matched } = await supabase.from('users').select('*').eq('email', loggedInKey.toLowerCase()).limit(1));
+          } else {
+            // Exact international match first; the last-10 suffix is a fallback for
+            // a legacy saved key in an unexpected format (Indian numbers only).
+            const phone = this.normalizePhone(loggedInKey);
+            if (phone.valid) ({ data: matched } = await supabase.from('users').select('*').eq('phone_number', phone.e164).limit(1));
+            if (!matched?.length && phone.last10.length === 10 && phone.digits.startsWith('91')) {
+              ({ data: matched } = await supabase.from('users').select('*').like('phone_number', `%${phone.last10}`).limit(1));
+            }
+          }
           if (matched && matched.length > 0) {
             this.activeUserId = matched[0].id;
             localStorage.setItem("horae_active_user_id", matched[0].id);
@@ -440,7 +451,7 @@ export class StoreService {
    * column; anything without an "@" is treated as a phone number and matched
    * Authenticates against Supabase Auth (one-way hashed passwords). `identifier`
    * is an email or a mobile number; phone-only staff resolve to the same shim
-   * email used at provisioning: `91<last10>@horae.local`. No company name is
+   * email used at provisioning: `<country code + number>@horae.local`. No company name is
    * involved — email/phone + password is globally unique across all clients.
    */
   public async verifyLogin(identifier: string, password?: string): Promise<User | null> {
@@ -463,16 +474,28 @@ export class StoreService {
       // real auth email is the DB record's email (admin@horae.ops).
       if (authEmail === 'coderookie84@gmail.com') authEmail = 'admin@horae.ops';
     } else {
-      const last10 = this.normalizePhone(cleanId).last10;
-      if (last10.length < 10) return null;
       // A staff member's auth account lives under their EMAIL if they were
-      // onboarded with one, otherwise under the phone shim `91<last10>@horae.local`.
+      // onboarded with one, otherwise under the phone shim `<digits>@horae.local`
+      // (digits = country code + number, so Indian staff keep `91<10 digits>`).
       // Resolve their real login email from the phone via a SECURITY DEFINER RPC
       // — a plain SELECT can't be used here because it runs pre-login (no session),
       // and the users table's RLS is client-scoped so an anon read returns nothing.
-      // Fall back to the shim when the RPC finds no email (phone-only staff).
-      const { data: linkedEmail } = await supabase.rpc('login_email_for_phone', { p_last10: last10 });
-      authEmail = linkedEmail ? String(linkedEmail).toLowerCase() : `91${last10}@horae.local`;
+      // `p_typed` lets someone abroad type their local number without the code
+      // (accepted only when exactly one staff number ends with it).
+      const phone = this.normalizePhone(cleanId);
+      const typed = cleanId.replace(/\D/g, "");
+      if (!phone.valid && typed.length < 7) return null;
+      const { data: v2Email, error: v2Err } = await supabase.rpc('login_email_for_phone_v2', { p_digits: phone.digits, p_typed: typed });
+      if (!v2Err) {
+        if (v2Email) authEmail = String(v2Email).toLowerCase();
+        else if (phone.valid) authEmail = `${phone.digits}@horae.local`;
+        else return null;
+      } else {
+        // v2 RPC not deployed yet → the original India-only resolver.
+        if (phone.last10.length < 10) return null;
+        const { data: linkedEmail } = await supabase.rpc('login_email_for_phone', { p_last10: phone.last10 });
+        authEmail = linkedEmail ? String(linkedEmail).toLowerCase() : `91${phone.last10}@horae.local`;
+      }
     }
 
     // 1. Authenticate. supabase-js persists the session + JWT, which every
@@ -839,14 +862,14 @@ export class StoreService {
   ): Promise<void> {
     const cleanEmail = (email || "").trim();
     const phone = this.normalizePhone(phoneNumber || "");
-    const cleanPhone = phone.last10.length === 10 ? phone.e164 : "";
+    const cleanPhone = phone.valid ? phone.e164 : "";
 
     // Same rule as onboardingUser: a staff member needs at least one login identifier.
     if (!cleanEmail && !cleanPhone) {
       if ((phoneNumber || "").trim()) {
-        throw new Error("The mobile number must have 10 digits (no +91 needed).");
+        throw new Error("That mobile number isn't valid — Indian numbers need 10 digits; for other countries pick the country code.");
       }
-      throw new Error("Provide an email address or a 10-digit mobile number so this staff member can log in.");
+      throw new Error("Provide an email address or a mobile number so this staff member can log in.");
     }
 
     const normRole = this.normalizeRole(role);
@@ -943,14 +966,14 @@ export class StoreService {
   ): Promise<User & { tempPassword: string }> {
     const cleanEmail = (email || "").trim();
     const phone = this.normalizePhone(phoneNumber || "");
-    const cleanPhone = phone.last10.length === 10 ? phone.e164 : "";
+    const cleanPhone = phone.valid ? phone.e164 : "";
 
     // Email is optional, but a staff member needs at least one login identifier.
     if (!cleanEmail && !cleanPhone) {
       if ((phoneNumber || "").trim()) {
-        throw new Error("The mobile number must have 10 digits (no +91 needed).");
+        throw new Error("That mobile number isn't valid — Indian numbers need 10 digits; for other countries pick the country code.");
       }
-      throw new Error("Provide an email address or a 10-digit mobile number so this staff member can log in.");
+      throw new Error("Provide an email address or a mobile number so this staff member can log in.");
     }
 
     // ── Duplicate identifier guard ─────────────────────────────
@@ -974,10 +997,10 @@ export class StoreService {
       const { data: existing } = await supabase
         .from('users')
         .select('id, phone_number')
-        .like('phone_number', `%${phone.last10}`)
+        .eq('phone_number', phone.e164)
         .limit(1);
       if (existing && existing.length > 0) {
-        throw new Error(`A staff member with the mobile number "${phone.last10}" is already registered. Please use a different number.`);
+        throw new Error(`A staff member with the mobile number "${phone.e164}" is already registered. Please use a different number.`);
       }
     }
     // ──────────────────────────────────────────────────────────
@@ -1016,7 +1039,7 @@ export class StoreService {
 
     // Create the staff member's Supabase Auth login (server-side, service role)
     // and link it. Phone-only staff get the same shim email verifyLogin computes.
-    const loginEmail = cleanEmail ? cleanEmail.toLowerCase() : `91${phone.last10}@horae.local`;
+    const loginEmail = cleanEmail ? cleanEmail.toLowerCase() : `${phone.digits}@horae.local`;
     const { data: prov, error: provErr } = await supabase.functions.invoke('auth-admin', {
       body: { action: 'provision_auth', targetUserId: userId, password: pwd, loginEmail },
     });
@@ -1082,9 +1105,10 @@ export class StoreService {
     phoneNumber: string,
     whatsappOptedIn: boolean
   ): Promise<void> {
+    const phone = this.normalizePhone(phoneNumber);
     await supabase
       .from('users')
-      .update({ phone_number: phoneNumber.trim(), whatsapp_opted_in: whatsappOptedIn })
+      .update({ phone_number: phone.valid ? phone.e164 : phoneNumber.trim(), whatsapp_opted_in: whatsappOptedIn })
       .eq('id', userId);
   }
 

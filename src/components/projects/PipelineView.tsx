@@ -24,6 +24,7 @@ import type { User } from "../../types";
 import * as P from "../../services/projectsService";
 import { StepRun } from "./StepRun";
 import StepGauge from "./StepGauge";
+import { toPhoneDigits } from "../../services/phone";
 
 type Filter = "open" | "due" | "won" | "lost" | "all";
 
@@ -55,9 +56,9 @@ const followUpLabel = (d: P.Deliverable) => {
 };
 
 const waLink = (phone: string) => {
-  const digits = phone.replace(/\D/g, "");
-  const full = digits.length === 10 ? `91${digits}` : digits;
-  return full.length >= 11 ? `https://wa.me/${full}` : "";
+  // Full international number; a bare 10-digit lead number is Indian.
+  const full = toPhoneDigits(phone);
+  return full ? `https://wa.me/${full}` : "";
 };
 
 // ─── Board / list ────────────────────────────────────────────────────────────

@@ -166,7 +166,7 @@ function ParticipantEditor(
     <Modal title={participant ? "Edit person" : "Add person"} onClose={onClose}>
       {err && <p className="mb-2 rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-600">{err}</p>}
       <Labeled label="Name"><input className={inp} value={name} onChange={(e) => setName(e.target.value)} /></Labeled>
-      <Labeled label="Phone (for WhatsApp reminders)"><input className={inp} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91…" /></Labeled>
+      <Labeled label="Phone (for WhatsApp reminders)"><input className={inp} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+971… (10 digits = India)" /></Labeled>
       <Labeled label="Team">
         <div className="flex gap-2">
           {TEAMS.map((t) => (
